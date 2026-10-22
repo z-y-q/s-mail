@@ -115,6 +115,7 @@ pub enum FolderKind {
     Drafts,
     Junk,
     Archive,
+    Trash,
     Plain,
 }
 
@@ -132,6 +133,12 @@ pub fn folder_kind(path: &str) -> FolderKind {
         Junk
     } else if l.contains("archive") || l.contains("归档") || l.contains("all mail") {
         Archive
+    } else if l.contains("trash")
+        || l.contains("deleted")
+        || path.contains("已删除")
+        || path.contains("废纸篓")
+    {
+        Trash
     } else {
         Plain
     }
@@ -204,6 +211,11 @@ pub trait MailBackend: Send {
     /// 「标为垃圾」动作用。默认不支持
     fn ensure_junk_folder(&mut self) -> Result<String> {
         Err(BackendError("该后端不支持垃圾标记".into()))
+    }
+    /// 废纸篓：找到既有（trash/deleted/已删除/废纸篓），没有则新建 Trash。
+    /// 「删除=进废纸篓可恢复」语义用（Foxmail/Outlook 惯例）。默认不支持
+    fn ensure_trash_folder(&mut self) -> Result<String> {
+        Err(BackendError("该后端不支持废纸篓".into()))
     }
 }
 
@@ -370,6 +382,19 @@ impl MailBackend for MelibBackend {
             return Ok(existing.clone());
         }
         let name = "Junk".to_string();
+        self.create_folder(&name)?;
+        Ok(name)
+    }
+
+    fn ensure_trash_folder(&mut self) -> Result<String> {
+        if let Some(existing) = self
+            .folders
+            .keys()
+            .find(|p| folder_kind(p) == FolderKind::Trash)
+        {
+            return Ok(existing.clone());
+        }
+        let name = "Trash".to_string();
         self.create_folder(&name)?;
         Ok(name)
     }

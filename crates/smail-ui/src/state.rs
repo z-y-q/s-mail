@@ -147,6 +147,12 @@ pub(crate) struct State {
     pub(crate) pending_folder_delete: Option<(usize, String)>,
     /// 最近联系人（Cmd::ListContacts 回填，进入 compose 时拉取）
     pub(crate) contacts: Vec<String>,
+    /// 发件箱行（Cmd::ListOutbox 回填；按账号聚合）
+    pub(crate) outbox_rows: Vec<(usize, smail_store::OutboxRow)>,
+    /// 发件箱计数（pending, failed)：侧栏入口显隐
+    pub(crate) outbox_counts: HashMap<usize, (usize, usize)>,
+    /// 每账号连接状态（断连时顶栏持续黄条提示，重连成功自动消除）
+    pub(crate) conn_ok: HashMap<usize, bool>,
     /// 通讯录全量（管理界面；按账号聚合）
     pub(crate) contacts_full: Vec<(usize, Vec<smail_store::ContactRow>)>,
     /// B4：账号 PGP 内联编辑中：（账号索引, 表单）
@@ -245,6 +251,9 @@ impl State {
                     rename_folder: None,
                     pending_folder_delete: None,
                     contacts: vec![],
+                    outbox_rows: vec![],
+                    outbox_counts: HashMap::new(),
+                    conn_ok: HashMap::new(),
                     contacts_full: vec![],
                     pgp_edit: None,
                     signature_edit: None,
@@ -342,6 +351,9 @@ impl State {
                     rename_folder: None,
                     pending_folder_delete: None,
                     contacts: vec![],
+                    outbox_rows: vec![],
+                    outbox_counts: HashMap::new(),
+                    conn_ok: HashMap::new(),
                     contacts_full: vec![],
                     pgp_edit: None,
                     signature_edit: None,
@@ -379,6 +391,19 @@ impl State {
             win: self.win_geom,
             last_view: self.last_view.clone(),
         }
+    }
+
+    /// 当前文件夹是否废纸篓（删除确认文案/语义提示用）
+    pub(crate) fn cur_is_trash_folder(&self) -> bool {
+        self.cur
+            .as_ref()
+            .and_then(|(a, f)| {
+                self.folders
+                    .iter()
+                    .find(|(fa, fi)| fa == a && &fi.path == f)
+            })
+            .map(|(_, fi)| fi.kind == smail_core::FolderKind::Trash)
+            .unwrap_or(false)
     }
 
     pub(crate) fn send(&self, account: usize, cmd: Cmd) {
@@ -427,6 +452,9 @@ pub(crate) fn persist_and_reload(
     state.contacts_full.clear();
     state.contacts.clear();
     state.drafts.clear();
+    state.outbox_rows.clear();
+    state.outbox_counts.clear();
+    state.conn_ok.clear();
     state.list_offset = 0.0;
     state.load_more_pending = false;
     state.load_more_done = false;
@@ -490,6 +518,8 @@ pub(crate) fn persist_and_reload(
             state.rows.clear();
             state.rebuild_display();
             state.drafts.clear();
+            state.outbox_rows.clear();
+            state.outbox_counts.clear();
             state.reading = None;
             state.selected = None;
             state.in_search = false;

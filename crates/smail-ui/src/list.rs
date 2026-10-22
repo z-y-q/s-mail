@@ -262,6 +262,30 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .padding([3, 6])
             .style(move |t, st| theme::sidebar_item(t, st, drafts_cur)),
         );
+        let (ob_p, ob_f) = state.outbox_counts.get(&i).copied().unwrap_or((0, 0));
+        if ob_p + ob_f > 0 {
+            let ob_cur = state
+                .cur
+                .as_ref()
+                .map(|(a, c)| *a == i && c == "__outbox__")
+                == Some(true);
+            let ob_label = format!(
+                "  {} {}",
+                if ob_cur { "▸" } else { " " },
+                if ob_f > 0 {
+                    format!("{}（⏳{ob_p} ✗{ob_f}）", state.l().outbox_label)
+                } else {
+                    format!("{}（⏳{ob_p}）", state.l().outbox_label)
+                }
+            );
+            sidebar = sidebar.push(
+                button(text(ob_label).size(13))
+                    .on_press(Message::FolderSelected(i, "__outbox__".into()))
+                    .padding([3, 6])
+                    .width(Length::Fill)
+                    .style(move |t, st| theme::sidebar_item(t, st, ob_cur)),
+            );
+        }
         for (_a, f) in state.folders.iter().filter(|(a, _)| *a == i) {
             // 服务器 Drafts 由本地草稿行代表（避免双入口双数据源）
             if f.kind == smail_core::FolderKind::Drafts {
@@ -315,6 +339,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             smail_core::FolderKind::Sent => "📤",
                             smail_core::FolderKind::Junk => "🚫",
                             smail_core::FolderKind::Archive => "🗄",
+                            smail_core::FolderKind::Trash => "🗑",
                             _ => " ",
                         },
                         if is_cur { "▸" } else { " " },
@@ -439,6 +464,8 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
 
     let is_drafts =
         !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true);
+    let is_outbox =
+        !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__outbox__") == Some(true);
     let cur_acct = state.cur.as_ref().map(|(a, _)| *a);
 
     // 过滤/排序条（文件夹与统一收件箱视图；草稿/搜索不加）。
@@ -500,6 +527,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .iter()
             .filter(|(a, _)| Some(*a) == cur_acct)
             .count()
+    } else if is_outbox {
+        state
+            .outbox_rows
+            .iter()
+            .filter(|(a, _)| Some(*a) == cur_acct)
+            .count()
     } else {
         mail_display.len()
     };
@@ -529,7 +562,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             container(
                 row![
                     text(crate::lang::f(state.l().folder_del_q, &[&fpath])).size(12),
-                    button(text("永久删除").size(12))
+                    button(text(state.l().perm_delete).size(12))
                         .on_press(Message::FolderDeleteConfirm)
                         .style(button::danger)
                         .padding([2, 8]),
@@ -669,6 +702,60 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 )
                 .on_press(Message::DraftRowClicked(*a, d.id))
                 .padding([6, 8]),
+            );
+        }
+    } else if is_outbox {
+        let items: Vec<_> = state
+            .outbox_rows
+            .iter()
+            .filter(|(a, _)| Some(*a) == cur_acct)
+            .skip(first)
+            .take(last.saturating_sub(first))
+            .collect();
+        for (_a, o) in items {
+            let (icon, err) = if o.status == "failed" {
+                ("✗", o.error.clone())
+            } else {
+                ("⏳", String::new())
+            };
+            list = list.push(
+                column![
+                    row![
+                        text(format!(
+                            "{icon} {}",
+                            if o.subject.is_empty() {
+                                state.l().no_subject
+                            } else {
+                                &o.subject
+                            }
+                        ))
+                        .size(13),
+                        Space::new().width(Length::Fill),
+                        if o.status == "failed" {
+                            button(text(state.l().outbox_retry).size(11))
+                                .on_press(Message::OutboxRetry(o.id))
+                                .padding([2, 6])
+                                .style(theme::accent_button)
+                        } else {
+                            button(text(state.l().outbox_retry).size(11))
+                                .padding([2, 6])
+                                .style(theme::ghost_button)
+                        },
+                        button(text("✕").size(11))
+                            .on_press(Message::OutboxRemove(o.id))
+                            .padding([2, 6])
+                            .style(button::danger),
+                    ]
+                    .spacing(6)
+                    .align_y(iced::alignment::Vertical::Center),
+                    text(format!("→ {}", o.to_addr))
+                        .size(11)
+                        .style(theme::secondary_text),
+                    text(format!("{err}（{}/{}）", o.attempts, 5))
+                        .size(10)
+                        .style(theme::secondary_text),
+                ]
+                .spacing(2),
             );
         }
     } else {
@@ -943,6 +1030,29 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .width(Length::Fill),
         );
     }
+    // 断连黄条（持续提示直到重连成功——密码错/断网不再只是顶栏一闪而过）
+    let disconnected: Vec<String> = (0..state.account_names.len())
+        .filter(|i| state.conn_ok.get(i) == Some(&false))
+        .map(|i| state.account_names[i].clone())
+        .collect();
+    if !disconnected.is_empty() {
+        root = root.push(
+            container(
+                row![
+                    text(state.l().conn_lost).size(12),
+                    text(disconnected.join("、")).size(12),
+                    Space::new().width(Length::Fill),
+                    text(state.l().conn_retrying)
+                        .size(11)
+                        .style(theme::secondary_text),
+                ]
+                .spacing(8),
+            )
+            .padding([6, 16])
+            .width(Length::Fill)
+            .style(|t| theme::status_badage(t, theme::BadgeKind::Warn)),
+        );
+    }
     // AI 隐私门（首次使用前确认一次；ai_ack 记入 ui.json）
     if state.ai.privacy_pending.is_some() {
         root = root.push(
@@ -1122,8 +1232,16 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
         col = col.push(
             container(
                 row![
-                    text(crate::lang::f(state.l().batch_del_q, &[&n])).size(12),
-                    button(text("永久删除").size(12))
+                    text(crate::lang::f(
+                        if state.cur_is_trash_folder() {
+                            state.l().batch_del_q_perm
+                        } else {
+                            state.l().batch_del_q_move
+                        },
+                        &[&n],
+                    ))
+                    .size(12),
+                    button(text(state.l().perm_delete).size(12))
                         .on_press(Message::BatchDeleteConfirm)
                         .style(button::danger)
                         .padding([2, 8]),

@@ -96,7 +96,7 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
                 && !state
                     .cur
                     .as_ref()
-                    .map(|(_, c)| c == "__drafts__")
+                    .map(|(_, c)| c == "__drafts__" || c == "__outbox__")
                     .unwrap_or(false);
             if !gate {
                 return Task::none();

@@ -190,10 +190,27 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             // 未读圆点/加粗字体/会话聚合 unseen 徽标都依赖 flags，重建显示模型
             state.rebuild_display();
         }
-        Event::OutboxPending(n) => {
-            state
-                .statuses
-                .insert(acct, format!("发件队列：{n} 封待发…"));
+        Event::ConnState(ok) => {
+            state.conn_ok.insert(acct, ok);
+            if ok {
+                state.outbox_counts.remove(&acct); // 重连后由 flush 重报
+            }
+        }
+        Event::OutboxListed(rows) => {
+            let acct = ev.account;
+            state.outbox_rows.retain(|(a, _)| *a != acct);
+            for r in rows {
+                state.outbox_rows.push((acct, r));
+            }
+        }
+        Event::OutboxPending { pending, failed } => {
+            state.outbox_counts.insert(acct, (pending, failed));
+            // 发件箱视图打开时刷新列表（计数变化=状态流转）
+            if state.cur.as_ref().map(|(_, f)| f) == Some(&"__outbox__".to_string())
+                && state.cur.as_ref().map(|(a, _)| *a) == Some(acct)
+            {
+                state.send(acct, smail_core::Cmd::ListOutbox);
+            }
         }
         Event::UnifiedRows { rows } => {
             state.unified_contrib.insert(acct, rows);

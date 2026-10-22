@@ -630,6 +630,7 @@ pub(crate) fn organize_go(state: &mut State) -> iced::Task<Message> {
             .filter(|(fa, _)| *fa == a)
             .filter(|(_, f)| f.kind != smail_core::FolderKind::Junk)
             .filter(|(_, f)| f.kind != smail_core::FolderKind::Drafts)
+            .filter(|(_, f)| f.kind != smail_core::FolderKind::Trash)
             .filter(|(_, f)| cur.as_deref() != Some(f.path.as_str()))
             .map(|(_, f)| f.path.clone())
             .collect::<Vec<String>>();

@@ -60,6 +60,12 @@ pub enum Cmd {
         body: String,
     },
     ListDrafts,
+    /// 发件箱视图：全量列表（含 failed）
+    ListOutbox,
+    /// 发件箱：重发一条（回 pending，立即尝试）
+    OutboxRetry(i64),
+    /// 发件箱：删除一条
+    OutboxRemove(i64),
     DeleteDraft(i64),
     MarkSeen(i64, bool),
     ToggleFlagged(i64, bool),
@@ -177,7 +183,15 @@ pub enum Event {
         seen: Option<bool>,
         flagged: Option<bool>,
     },
-    OutboxPending(usize),
+    /// 发件箱计数变化（侧栏入口显隐/刷新信号）
+    OutboxPending {
+        pending: usize,
+        failed: usize,
+    },
+    /// 发件箱全量（发件箱视图）
+    OutboxListed(Vec<smail_store::OutboxRow>),
+    /// 连接状态（true=已连接；断连时 UI 持续提示而非一闪而过的状态行）
+    ConnState(bool),
     // M3
     SearchResults {
         query: String,
@@ -938,6 +952,7 @@ impl ServiceInner {
                             "Connection lost: {}, reconnecting…",
                             &[&reason],
                         )));
+                        self.emit(Event::ConnState(false));
                         conn = Conn::Down {
                             attempts: 0,
                             retry_at: Instant::now(),
@@ -968,6 +983,7 @@ impl ServiceInner {
                             "token 临期，重建连接刷新…",
                             "token near expiry, rebuilding connection…",
                         )));
+                        self.emit(Event::ConnState(false));
                         conn = Conn::Down {
                             attempts: 0,
                             retry_at: Instant::now(),
@@ -1007,6 +1023,7 @@ impl ServiceInner {
                             };
                             self.emit(Event::Status(self.tr("已重连", "Reconnected")));
                             // 先回放离线标记再同步：本地意图先落地，同步 diff 才不会反向覆盖
+                            self.emit(Event::ConnState(true));
                             self.push_pending_flags(backend.as_mut(), &store);
                             // 断网期间其他设备可能改过草稿：重连即对账
                             self.sync_drafts(backend.as_mut(), &store);
@@ -1081,10 +1098,13 @@ impl ServiceInner {
             Ok(mut backend) => {
                 let watch_rx = backend.watch().ok();
                 match watch_rx {
-                    Some(rx) => Conn::Up {
-                        backend,
-                        watch_rx: rx,
-                    },
+                    Some(rx) => {
+                        self.emit(Event::ConnState(true));
+                        Conn::Up {
+                            backend,
+                            watch_rx: rx,
+                        }
+                    }
                     None => {
                         self.emit(Event::Status(
                             self.tr("启动 IDLE 失败", "Failed to start IDLE"),
@@ -1102,6 +1122,7 @@ impl ServiceInner {
                     "Connection failed: {}",
                     &[&e],
                 )));
+                self.emit(Event::ConnState(false));
                 Conn::Down {
                     attempts: 0,
                     retry_at: Instant::now() + Duration::from_secs(2),
@@ -1248,6 +1269,27 @@ impl ServiceInner {
                     ))),
                 }
             }
+            Cmd::ListOutbox => {
+                let rows = store.list_outbox_all().unwrap_or_default();
+                self.emit(Event::OutboxListed(rows));
+            }
+            Cmd::OutboxRetry(id) => {
+                store.outbox_reset(id).ok();
+                self.emit(Event::Status(
+                    self.tr("已重新排队发送…", "Requeued for sending…"),
+                ));
+                if let Conn::Up { backend, .. } = &mut *conn {
+                    self.flush_outbox(backend.as_mut(), store);
+                }
+            }
+            Cmd::OutboxRemove(id) => {
+                store.outbox_remove(id).ok();
+                self.emit(Event::Status(
+                    self.tr("已从发件箱删除", "Removed from outbox"),
+                ));
+                let rows = store.list_outbox_all().unwrap_or_default();
+                self.emit(Event::OutboxListed(rows));
+            }
             Cmd::ListDrafts => {
                 // 双向同步先对账再列（打开草稿箱即拉最新；失败不阻塞本地列表）
                 if let Conn::Up { backend, .. } = &mut *conn {
@@ -1325,7 +1367,12 @@ impl ServiceInner {
                 }
             }
             Cmd::DeleteMessage(hash) => {
-                if let Some(row) = store.get(hash).ok().flatten() {
+                // Foxmail 式删除语义：普通文件夹 → 移废纸篓（可恢复）；
+                // 在废纸篓里删除 → 服务器永久删除（EXPUNGE）
+                let Some(row) = store.get(hash).ok().flatten() else {
+                    return false;
+                };
+                if smail_backend::folder_kind(&row.folder) == smail_backend::FolderKind::Trash {
                     if let Conn::Up { backend, .. } = &mut *conn {
                         let _ = backend
                             .as_mut()
@@ -1334,6 +1381,46 @@ impl ServiceInner {
                     store.delete_message(hash).ok();
                     let _ = std::fs::remove_file(self.body_path(hash));
                     self.emit(Event::MessageDeleted(hash));
+                } else {
+                    let trash = match &mut *conn {
+                        Conn::Up { backend, .. } => backend.as_mut().ensure_trash_folder(),
+                        Conn::Down { .. } => {
+                            self.emit(Event::Status(
+                                self.tr("未连接，稍后重试", "Not connected, will retry later"),
+                            ));
+                            return false;
+                        }
+                    };
+                    match trash {
+                        Ok(dest) => {
+                            self.emit(Event::Status(self.trf(
+                                "移到废纸篓（可恢复）…",
+                                "Moving to Trash (recoverable)…",
+                                &[],
+                            )));
+                            self.move_messages_cmd(conn, store, &[hash], &dest);
+                            // 移动成功=源视图本地行已清（消费方按“已删”语义处理，如 m2 e2e）
+                            if store.get(hash).ok().flatten().is_none() {
+                                self.emit(Event::MessageDeleted(hash));
+                            }
+                        }
+                        Err(e) => {
+                            // 服务器不支持建废纸篓：退回永久删除（确认条已确认过）
+                            self.emit(Event::Status(self.trf(
+                                "废纸篓不可用（{}），改为永久删除",
+                                "Trash unavailable ({}), deleting permanently",
+                                &[&e],
+                            )));
+                            if let Conn::Up { backend, .. } = &mut *conn {
+                                let _ = backend
+                                    .as_mut()
+                                    .delete_messages(&row.folder, &[hash as u64]);
+                            }
+                            store.delete_message(hash).ok();
+                            let _ = std::fs::remove_file(self.body_path(hash));
+                            self.emit(Event::MessageDeleted(hash));
+                        }
+                    }
                 }
             }
             Cmd::Search(query) => {
@@ -1727,6 +1814,11 @@ impl ServiceInner {
     }
 
     fn sync_folder(&self, backend: &mut dyn MailBackend, store: &Store, folder: &str) {
+        self.emit(Event::Status(self.trf(
+            "正在同步 {}…",
+            "Syncing {}…",
+            &[&folder],
+        )));
         let envelopes = match backend.fetch_envelopes(folder) {
             Ok(e) => e,
             Err(e) => {
@@ -1958,7 +2050,36 @@ impl ServiceInner {
             ));
             return;
         };
-        let backend = backend.as_mut();
+        // 同单封语义：废纸篓内的批量删除=永久；其余=移入废纸篓
+        let trash_dest = backend.as_mut().ensure_trash_folder().ok();
+        let (perm, to_trash): (Vec<i64>, Vec<i64>) = hashes.iter().partition(|h| {
+            store
+                .get(**h)
+                .ok()
+                .flatten()
+                .map(|r| smail_backend::folder_kind(&r.folder) == smail_backend::FolderKind::Trash)
+                .unwrap_or(false)
+        });
+        let mut perm = perm;
+        if !to_trash.is_empty() {
+            match &trash_dest {
+                Some(dest) => {
+                    let d = dest.clone();
+                    self.move_messages_cmd(conn, store, &to_trash, &d);
+                    for h in &to_trash {
+                        if store.get(*h).ok().flatten().is_none() {
+                            self.emit(Event::MessageDeleted(*h));
+                        }
+                    }
+                }
+                None => perm.extend(to_trash), // 无废纸篓：退回永久删
+            }
+        }
+        let hashes = &perm;
+        let backend = match &mut *conn {
+            Conn::Up { backend, .. } => backend.as_mut(),
+            Conn::Down { .. } => return,
+        };
         let mut deleted = 0usize;
         for (folder, group) in group_by_folder(store, hashes) {
             let batch: Vec<u64> = group.iter().map(|h| *h as u64).collect();
@@ -2279,7 +2400,11 @@ impl ServiceInner {
         if pending.is_empty() {
             return;
         }
-        self.emit(Event::OutboxPending(pending.len()));
+        let (p, f) = store.outbox_counts().unwrap_or((0, 0));
+        self.emit(Event::OutboxPending {
+            pending: p,
+            failed: f,
+        });
         // 一轮一握手：sender 复用（旧路径每封一次 TCP+TLS+AUTH，断网重试期间尤为浪费）
         let sender = match self.smtp_sender() {
             Ok(s) => s,

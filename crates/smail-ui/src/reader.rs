@@ -154,13 +154,20 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     ]
     .spacing(4);
 
-    // 删除确认（IMAP 端是 \Deleted + EXPUNGE，不可撤销，必须二次确认）
+    // 删除确认：废纸篓语义——普通文件夹=移废纸篓（温和文案），
+    // 废纸篓内=永久删除（强警示）。均为二次确认
+    let cur_is_trash = state.cur_is_trash_folder();
     let confirm: Option<Element<Message>> = state
         .pending_delete
         .filter(|(a, h)| *a == *acct && *h == hash)
         .map(|_| {
             row![
-                text(state.l().del_q).size(13),
+                text(if cur_is_trash {
+                    state.l().del_q_perm
+                } else {
+                    state.l().del_q_move
+                })
+                .size(13),
                 button(text(state.l().perm_delete).size(12))
                     .on_press(Message::DeleteMail(*acct, hash))
                     .style(button::danger)

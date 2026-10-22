@@ -107,6 +107,9 @@ pub(crate) enum Message {
     SendClicked,
     SaveDraftClicked,
     DraftRowClicked(usize, i64),
+    /// 发件箱：重发 / 删除
+    OutboxRetry(i64),
+    OutboxRemove(i64),
     MarkUnread(usize, i64),
     ToggleStar(usize, i64, bool),
     ToggleThreading,
@@ -480,6 +483,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.selected = None;
                 state.reading = None;
                 state.send(acct, Cmd::ListDrafts);
+            } else if folder == "__outbox__" {
+                state.cur = Some((acct, folder));
+                state.rows.clear();
+                state.selected = None;
+                state.reading = None;
+                state.send(acct, Cmd::ListOutbox);
             } else {
                 state.cur = Some((acct, folder.clone()));
                 state.rows.clear();
@@ -805,7 +814,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 && !state.load_more_done
             {
                 if let Some((a, f)) = state.cur.clone() {
-                    if f != "__drafts__" && f != "__all_inbox__" {
+                    if f != "__drafts__" && f != "__outbox__" && f != "__all_inbox__" {
                         let n = state.rows.len();
                         let content_h = state.mail_display.len() as f32 * ROW_H;
                         if n > 0
@@ -1002,6 +1011,16 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::DraftRowClicked(acct, id) => update(state, Message::ComposeFromDraft(acct, id)),
+        Message::OutboxRetry(id) => {
+            let acct = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+            state.send(acct, Cmd::OutboxRetry(id));
+            Task::none()
+        }
+        Message::OutboxRemove(id) => {
+            let acct = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+            state.send(acct, Cmd::OutboxRemove(id));
+            Task::none()
+        }
         Message::MarkUnread(acct, hash) => {
             state.send(acct, Cmd::MarkSeen(hash, false));
             Task::none()

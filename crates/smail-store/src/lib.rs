@@ -737,6 +737,62 @@ impl Store {
         rows.collect::<Result<_, _>>()
     }
 
+    /// 发件箱全量（含 failed——UI 发件箱视图用）
+    pub fn list_outbox_all(&self) -> rusqlite::Result<Vec<OutboxRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, to_addr, cc, bcc, subject, body, attachments, status, attempts, error \
+             FROM outbox ORDER BY id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                let att: String = r.get(6)?;
+                Ok(OutboxRow {
+                    id: r.get(0)?,
+                    to_addr: r.get(1)?,
+                    cc: r.get(2)?,
+                    bcc: r.get(3)?,
+                    subject: r.get(4)?,
+                    body: r.get(5)?,
+                    attachments: att.split('\u{1}').map(|s| s.to_string()).collect(),
+                    status: r.get(7)?,
+                    attempts: r.get(8)?,
+                    error: r.get(9)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 重发：状态回 pending、清计数与错误（下轮 flush 或重连后发送）
+    pub fn outbox_reset(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET status = 'pending', attempts = 0, error = '' WHERE id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    pub fn outbox_remove(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn
+            .execute("DELETE FROM outbox WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// (pending, failed) 计数（侧栏入口显隐）
+    pub fn outbox_counts(&self) -> rusqlite::Result<(usize, usize)> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM outbox WHERE status = 'pending'",
+            [],
+            |r| r.get(0),
+        )?;
+        let f: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM outbox WHERE status = 'failed'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((n as usize, f as usize))
+    }
+
     pub fn outbox_mark(&self, id: i64, status: &str, error: &str) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE outbox SET status=?2, error=?3, attempts = attempts + 1 WHERE id=?1",
