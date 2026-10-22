@@ -417,6 +417,24 @@ impl Store {
         Ok(rows)
     }
 
+    /// 空间回收：空闲页超过阈值才 VACUUM（大量删信后文件不缩的问题）。
+    /// 返回是否执行了 VACUUM。启动早期调用，只在碎片严重时付出一次代价。
+    pub fn maybe_vacuum(&self, threshold_bytes: u64) -> bool {
+        let ok = (|| -> rusqlite::Result<bool> {
+            let freelist: i64 = self
+                .conn
+                .query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+            let page_size: i64 = self.conn.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+            let free_bytes = freelist as u64 * page_size as u64;
+            if free_bytes < threshold_bytes {
+                return Ok(false);
+            }
+            self.conn.execute("VACUUM", [])?;
+            Ok(true)
+        })();
+        ok.unwrap_or(false)
+    }
+
     pub fn count_folder(&self, folder: &str) -> rusqlite::Result<u32> {
         let n: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM messages WHERE folder = ?1",
@@ -888,6 +906,42 @@ pub fn tokenize(input: &str) -> String {
     }
     push_cjk(&mut cjk, &mut tokens);
     tokens.join(" ")
+}
+
+#[cfg(test)]
+mod vacuum_tests {
+    use super::*;
+
+    #[test]
+    fn maybe_vacuum_threshold_respected() {
+        let dir = std::env::temp_dir().join(format!("smail-vac-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Store::open(&dir.join("v.db")).unwrap();
+        // 空库无碎片：高阈值不触发
+        assert!(!s.maybe_vacuum(1 << 30));
+        // 低阈值必触发（页大小 > 0 即空闲可能为 0——freelist 0*page < 1 也可能不触发，
+        // 换 0 阈值强制：0 空闲 < 0 false → 不触发；用插入删除制造碎片后触发）
+        let mut row = MessageRow {
+            envelope_hash: 1,
+            folder: "INBOX".into(),
+            message_id: "a".into(),
+            subject: "s".into(),
+            from_addr: "f".into(),
+            date_unix: 1,
+            seen: false,
+            flagged: false,
+            has_body: false,
+            in_reply_to: String::new(),
+        };
+        for i in 0..500 {
+            row.envelope_hash = i;
+            s.upsert(&row).unwrap();
+        }
+        let hashes: Vec<i64> = (0..500).collect();
+        s.delete_messages_batch(&hashes).unwrap();
+        assert!(s.maybe_vacuum(1), "删除 500 行后应触发 VACUUM");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[cfg(test)]

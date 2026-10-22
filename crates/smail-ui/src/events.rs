@@ -166,6 +166,13 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             }
         }
         Event::DraftSaved { id } => {
+            // 自动保存回填：首存（draft_id None）拿到 id 后续更新同一行
+            //（否则每轮自动保存都会新建草稿）。手动保存已切屏不受影响
+            if let crate::Screen::Compose(c) = &mut state.screen {
+                if c.draft_id.is_none() {
+                    c.draft_id = Some(id);
+                }
+            }
             state.statuses.insert(acct, format!("草稿已保存（#{id}）"));
         }
         Event::DraftDeleted(_) | Event::MessageDeleted(_) => {}

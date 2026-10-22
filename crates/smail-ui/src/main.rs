@@ -104,6 +104,8 @@ pub(crate) enum Message {
     /// 密送（进信封不进邮件头）
     ComposeField(Field, String),
     ComposeBodyEdit(iced::widget::text_editor::Action),
+    /// 自动保存节拍（仅写作屏订阅；静默 20s 后落草稿，防崩溃/断电丢信）
+    AutosaveTick,
     SendClicked,
     SaveDraftClicked,
     DraftRowClicked(usize, i64),
@@ -858,6 +860,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 ai_pending: None,
                 ai_rewrite_mode: false,
                 ai_prev: None,
+                autosave_at: None,
                 draft_id: None,
                 account,
                 pgp_sign: false,
@@ -889,6 +892,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     ai_pending: None,
                     ai_rewrite_mode: false,
                     ai_prev: None,
+                    autosave_at: None,
                     draft_id: Some(d.id),
                     account: acct,
                     pgp_sign: false,
@@ -937,6 +941,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::ComposeField(field, value) => {
             if let Screen::Compose(c) = &mut state.screen {
+                c.autosave_at = Some(std::time::Instant::now());
                 match field {
                     Field::To => c.to = value,
                     Field::Cc => c.cc = value,
@@ -948,6 +953,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::ComposeBodyEdit(action) => {
             if let Screen::Compose(c) = &mut state.screen {
+                c.autosave_at = Some(std::time::Instant::now());
                 c.body.perform(action);
             }
             Task::none()
@@ -964,6 +970,43 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 if c.pgp_encrypt {
                     c.pgp_sign = true; // 我们的加密必签名（防篡改）
                 }
+            }
+            Task::none()
+        }
+        Message::AutosaveTick => {
+            // 静默 20s 且有实质内容才存：不打扰快速写作，也不建空草稿。
+            // 先取快照再发送（send 需要 &self，与 &mut screen 借用冲突）
+            let send_now = (|| {
+                let Screen::Compose(c) = &mut state.screen else {
+                    return None;
+                };
+                let due = c
+                    .autosave_at
+                    .map(|t| t.elapsed().as_secs() >= 20)
+                    .unwrap_or(false);
+                let has_content = !c.to.is_empty()
+                    || !c.subject.is_empty()
+                    || !c.body.text().trim().is_empty()
+                    || !c.attachments.is_empty();
+                if due && has_content {
+                    c.autosave_at = None; // 本轮落盘；继续编辑会重新标脏
+                    Some((
+                        c.account,
+                        Cmd::SaveDraft {
+                            id: c.draft_id,
+                            to: c.to.clone(),
+                            cc: c.cc.clone(),
+                            bcc: c.bcc.clone(),
+                            subject: c.subject.clone(),
+                            body: c.body.text().to_string(),
+                        },
+                    ))
+                } else {
+                    None
+                }
+            })();
+            if let Some((acct, cmd)) = send_now {
+                state.send(acct, cmd);
             }
             Task::none()
         }
@@ -1189,6 +1232,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         ),
         Message::AttachmentsPicked(Some(files)) => {
             if let Screen::Compose(c) = &mut state.screen {
+                c.autosave_at = Some(std::time::Instant::now());
                 for f in files {
                     if let Some(p) = f.to_str() {
                         c.attachments.push(p.to_string());
@@ -1200,6 +1244,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::AttachmentsPicked(None) => Task::none(),
         Message::RemoveAttachment(i) => {
             if let Screen::Compose(c) = &mut state.screen {
+                c.autosave_at = Some(std::time::Instant::now());
                 if i < c.attachments.len() {
                     c.attachments.remove(i);
                 }
@@ -1230,6 +1275,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     }
                     state.screen = Screen::Compose(Compose {
                         ai_instruction: String::new(),
+                        autosave_at: None,
                         ai_busy: false,
                         ai_overwrite_ask: false,
                         ai_pending: None,
@@ -1733,6 +1779,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     ai_pending: None,
                     ai_rewrite_mode: false,
                     ai_prev: None,
+                    autosave_at: None,
                     draft_id: None,
                     account,
                     pgp_sign: false,
@@ -2090,6 +2137,12 @@ fn subscription(state: &State) -> Subscription<Message> {
         _ => None,
     });
     let theme_sub = iced::system::theme_changes().map(Message::SystemTheme);
+    // 写信自动保存节拍（只在写作屏激活；每 5s 检查，静默 20s 落草稿）
+    let autosave_sub = if matches!(state.screen, Screen::Compose(_)) {
+        iced::time::every(std::time::Duration::from_secs(5)).map(|_| Message::AutosaveTick)
+    } else {
+        Subscription::none()
+    };
     // 窗口几何记忆：Resized/Moved 更新内存，节流写盘
     let window_sub = iced::window::events().map(|(_id, ev)| Message::WindowGeometry(ev));
     // 托盘事件（std mpsc → 轮询转 Message；100ms 足够托盘交互）
@@ -2125,7 +2178,7 @@ fn subscription(state: &State) -> Subscription<Message> {
         None => Subscription::none(),
     };
     let Some(events) = state.events.clone() else {
-        return Subscription::batch([keyboard, theme_sub, window_sub, tray_sub]);
+        return Subscription::batch([keyboard, theme_sub, window_sub, autosave_sub, tray_sub]);
     };
     let events_sub = Subscription::run_with(events, |events: &EventTap| {
         let events = events.rx.clone();

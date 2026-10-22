@@ -896,6 +896,13 @@ impl ServiceInner {
 
         // 离线优先：先广播本地文件夹（连接失败/无网时侧栏与缓存邮件照常可用）
         self.emit_folders_local(&store);
+        // 空间回收：空闲页 > 64MB 才 VACUUM（首屏已出，代价一次性且罕见）
+        if store.maybe_vacuum(64 * 1024 * 1024) {
+            self.emit(Event::Status(self.tr(
+                "本地索引已压缩（空间回收）",
+                "Local index compacted (space reclaimed)",
+            )));
+        }
 
         let mut current_folder: Option<String> = None;
         let mut conn = self.connect_initial();

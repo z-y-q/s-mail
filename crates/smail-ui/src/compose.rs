@@ -20,6 +20,8 @@ pub(crate) struct Compose {
     pub(crate) ai_rewrite_mode: bool,
     /// AI 修改前的 (主题, 正文) 快照——「撤销 AI」一步还原
     pub(crate) ai_prev: Option<(String, String)>,
+    /// 最后一次编辑时刻（Some=有未自动保存的修改；定时器静默 20s 后落草稿）
+    pub(crate) autosave_at: Option<std::time::Instant>,
     pub(crate) draft_id: Option<i64>,
     /// 发件账号
     pub(crate) account: usize,
@@ -138,6 +140,7 @@ pub(crate) fn open_compose_with(state: &mut State, acct: usize, hash: i64, kind:
         ai_pending: None,
         ai_rewrite_mode: false,
         ai_prev: None,
+        autosave_at: None,
         draft_id: None,
         account: acct,
         pgp_sign: false,

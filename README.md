@@ -173,3 +173,13 @@ GPL-3.0-or-later（melib 为 EUPL/GPL 双许可，本项目选 GPL 保证合规�
 - [ ] Windows 构建验证进 e2e（CI 已有 check-windows 编译门禁）
 
 设计与里程碑全记录见 [DESIGN.md](DESIGN.md)。
+
+## 打包（macOS .app）
+
+```sh
+sh scripts/build-app.sh   # 产物 dist/s-mail.app（release + 图标 + ad-hoc 签名）
+open dist/s-mail.app
+```
+
+打包解锁：Dock 图标与名称、通知归属本应用、Finder 双击启动与 .eml 文件关联。
+（通知点击跳转到具体邮件需要接 UNUserNotificationCenter 回调，见路线图。）
