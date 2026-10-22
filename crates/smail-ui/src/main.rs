@@ -109,6 +109,10 @@ pub(crate) enum Message {
     DraftRowClicked(usize, i64),
     /// 发件箱：重发 / 删除
     OutboxRetry(i64),
+    /// 清空废纸篓（Trash 视图）：请求 / 确认 / 取消
+    EmptyTrashRequest,
+    EmptyTrashConfirm,
+    EmptyTrashCancel,
     OutboxRemove(i64),
     MarkUnread(usize, i64),
     ToggleStar(usize, i64, bool),
@@ -1011,6 +1015,23 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::DraftRowClicked(acct, id) => update(state, Message::ComposeFromDraft(acct, id)),
+        Message::EmptyTrashRequest => {
+            state.pending_empty_trash = true;
+            Task::none()
+        }
+        Message::EmptyTrashConfirm => {
+            state.pending_empty_trash = false;
+            if let Some((a, f)) = state.cur.clone() {
+                if state.cur_is_trash_folder() {
+                    state.send(a, Cmd::EmptyTrash(f));
+                }
+            }
+            Task::none()
+        }
+        Message::EmptyTrashCancel => {
+            state.pending_empty_trash = false;
+            Task::none()
+        }
         Message::OutboxRetry(id) => {
             let acct = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
             state.send(acct, Cmd::OutboxRetry(id));

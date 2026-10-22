@@ -66,6 +66,8 @@ pub enum Cmd {
     OutboxRetry(i64),
     /// 发件箱：删除一条
     OutboxRemove(i64),
+    /// 清空废纸篓（服务器永久删除该文件夹全部邮件）
+    EmptyTrash(String),
     DeleteDraft(i64),
     MarkSeen(i64, bool),
     ToggleFlagged(i64, bool),
@@ -1209,6 +1211,14 @@ impl ServiceInner {
                 let id = store
                     .enqueue_outbox(&to, &cc, &bcc, &subject, &body, &attachments)
                     .unwrap_or(-1);
+                // 入队即广播计数：离线发送也要立刻看到「发件箱」入口
+                //（此前只在连接正常时的 flush 轮询里报——断网发送=石沉大海）
+                if let Ok((p, f)) = store.outbox_counts() {
+                    self.emit(Event::OutboxPending {
+                        pending: p,
+                        failed: f,
+                    });
+                }
                 // 凭据组装失败（缺 smtp 段/oauth 失败）：留 pending 由 flush 轮重试
                 match self.smtp_sender() {
                     Ok(sender) => {
@@ -1280,6 +1290,22 @@ impl ServiceInner {
                 ));
                 if let Conn::Up { backend, .. } = &mut *conn {
                     self.flush_outbox(backend.as_mut(), store);
+                }
+            }
+            Cmd::EmptyTrash(folder) => {
+                // 复用批量永久删除管线（已在废纸篓内，语义=真删）
+                let hashes = store.hashes_in_folder(&folder).unwrap_or_default();
+                if hashes.is_empty() {
+                    self.emit(Event::Status(
+                        self.tr("废纸篓已是空的", "Trash is already empty"),
+                    ));
+                } else {
+                    self.emit(Event::Status(self.trf(
+                        "正在清空废纸篓（{} 封）…",
+                        "Emptying Trash ({} message(s))…",
+                        &[&hashes.len()],
+                    )));
+                    self.batch_delete(conn, store, &hashes);
                 }
             }
             Cmd::OutboxRemove(id) => {
@@ -2396,15 +2422,17 @@ impl ServiceInner {
                 self.emit(Event::Status(self.trf("{} 封发件重试穷尽，已标 failed（请检查收件人/附件后重发）", "{} outgoing message(s) exhausted retries, marked failed (check recipients/attachments and resend)", &[&n])));
             }
         }
-        let pending = store.pending_outbox().unwrap_or_default();
-        if pending.is_empty() {
-            return;
-        }
+        // counts 先于 early-return：最后一封发走（队列清空）时也要广播 (0,0)，
+        // 否则侧栏徽标永远残留（旧版空队列提前 return，从不归零）
         let (p, f) = store.outbox_counts().unwrap_or((0, 0));
         self.emit(Event::OutboxPending {
             pending: p,
             failed: f,
         });
+        let pending = store.pending_outbox().unwrap_or_default();
+        if pending.is_empty() {
+            return;
+        }
         // 一轮一握手：sender 复用（旧路径每封一次 TCP+TLS+AUTH，断网重试期间尤为浪费）
         let sender = match self.smtp_sender() {
             Ok(s) => s,
@@ -2576,6 +2604,23 @@ impl ServiceInner {
                     to: to.to_string(),
                     subject: subject.to_string(),
                 });
+                // 成功即时归零徽标（不等 30s tick）
+                if let Ok((p, f)) = store.outbox_counts() {
+                    self.emit(Event::OutboxPending {
+                        pending: p,
+                        failed: f,
+                    });
+                }
+                // #9 staging 清理：转发附件的暂存文件发送成功后删掉
+                //（只清「attachments-staging」目录下的，用户自选文件不动）
+                for path in attachment_paths {
+                    let p = std::path::Path::new(path);
+                    if p.parent().and_then(|d| d.file_name())
+                        == Some("attachments-staging".as_ref())
+                    {
+                        let _ = std::fs::remove_file(p);
+                    }
+                }
             }
             Err(e) => {
                 let permanent = pgp_mode.is_some();

@@ -112,3 +112,8 @@ jobs:
           SMAIL_CONFIG: spikes/spike-melib/config.toml
           SMAIL_HOME: /tmp/smail-ci-m17
         run: timeout 120 ./target/debug/examples/m17 60
+      - name: m18 废纸篓两段删除 e2e
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m18
+        run: timeout 120 ./target/debug/examples/m18 90

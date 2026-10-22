@@ -6,6 +6,17 @@ use iced::{Element, Length};
 use crate::{theme, unix_to_local, Message, State};
 
 pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
+    if !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__outbox__") == Some(true) {
+        return container(
+            text(state.l().outbox_hint)
+                .size(13)
+                .style(theme::secondary_text),
+        )
+        .center(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
+    }
     if !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true) {
         return container(text(state.l().draft_hint).size(14))
             .center(Length::Fill)

@@ -32,6 +32,8 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
                 } else {
                     state.screen = Screen::Mail;
                 }
+            } else if state.pending_empty_trash {
+                state.pending_empty_trash = false;
             } else if state.pending_delete.is_some() {
                 state.pending_delete = None;
             } else if state.batch_move_open

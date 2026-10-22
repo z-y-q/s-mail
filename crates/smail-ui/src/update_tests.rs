@@ -75,6 +75,7 @@ fn ts() -> State {
         outbox_rows: vec![],
         outbox_counts: Default::default(),
         conn_ok: Default::default(),
+        pending_empty_trash: false,
         contacts_full: vec![],
         pgp_edit: None,
         signature_edit: None,
@@ -304,6 +305,50 @@ fn folder_selected_remembers_last_view() {
         s.last_view,
         Some(("__unified__".into(), "__all_inbox__".into()))
     );
+}
+
+#[test]
+fn cur_is_trash_folder_detection() {
+    let mut s = ts();
+    s.folders = vec![
+        (0, folder("INBOX", FolderKind::Inbox)),
+        (0, folder("Trash", FolderKind::Trash)),
+    ];
+    s.cur = Some((0, "Trash".into()));
+    assert!(s.cur_is_trash_folder(), "Trash 视图应判定为废纸篓");
+    s.cur = Some((0, "INBOX".into()));
+    assert!(!s.cur_is_trash_folder());
+    s.cur = None;
+    assert!(!s.cur_is_trash_folder(), "无当前视图不误判");
+}
+
+#[test]
+fn esc_clears_empty_trash_confirm() {
+    let mut s = ts();
+    s.pending_empty_trash = true;
+    let _ = update(
+        &mut s,
+        Message::KeyPressed(iced::keyboard::Key::Named(
+            iced::keyboard::key::Named::Escape,
+        )),
+    );
+    assert!(!s.pending_empty_trash, "Esc 应关清空废纸篓确认条");
+}
+
+#[test]
+fn esc_in_search_from_outbox_keeps_view() {
+    let mut s = ts();
+    s.cur = Some((0, "__outbox__".into()));
+    s.in_search = true;
+    s.search_text = "q".into();
+    let _ = update(
+        &mut s,
+        Message::KeyPressed(iced::keyboard::Key::Named(
+            iced::keyboard::key::Named::Escape,
+        )),
+    );
+    assert!(!s.in_search);
+    assert_eq!(s.cur, Some((0, "__outbox__".into())), "发件箱视图保持");
 }
 
 #[test]

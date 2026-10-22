@@ -554,6 +554,38 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     if let Some(fb) = filter_bar {
         list = list.push(fb);
     }
+    // Trash 视图：清空废纸篓（含确认条——不可恢复操作）
+    if !is_drafts && !is_outbox && state.cur_is_trash_folder() && !state.rows.is_empty() {
+        if state.pending_empty_trash {
+            let n = state.rows.len();
+            list = list.push(
+                container(
+                    row![
+                        text(crate::lang::f(state.l().empty_trash_q, &[&n])).size(12),
+                        button(text(state.l().perm_delete).size(12))
+                            .on_press(Message::EmptyTrashConfirm)
+                            .style(button::danger)
+                            .padding([2, 8]),
+                        button(text(state.l().cancel).size(12))
+                            .on_press(Message::EmptyTrashCancel)
+                            .padding([2, 8]),
+                        Space::new().width(Length::Fill),
+                    ]
+                    .spacing(8),
+                )
+                .padding([6, 8])
+                .width(Length::Fill)
+                .style(|t| theme::status_badage(t, theme::BadgeKind::Warn)),
+            );
+        } else {
+            list = list.push(
+                button(text(state.l().empty_trash).size(11))
+                    .on_press(Message::EmptyTrashRequest)
+                    .padding([2, 8])
+                    .style(button::danger),
+            );
+        }
+    }
 
     // M7：文件夹删除确认条（破坏性操作，列表顶部醒目确认）
     if let Some((_fa, fpath)) = &state.pending_folder_delete {

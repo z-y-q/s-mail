@@ -137,7 +137,10 @@ pub(crate) struct Lex {
     pub(crate) conn_lost: &'static str,
     pub(crate) conn_retrying: &'static str,
     pub(crate) outbox_retry: &'static str,
-    pub(crate) drafts_n: &'static str, // {n}
+    pub(crate) outbox_hint: &'static str,
+    pub(crate) empty_trash: &'static str,
+    pub(crate) empty_trash_q: &'static str, // {n}
+    pub(crate) drafts_n: &'static str,      // {n}
     pub(crate) folder_inbox: &'static str,
     pub(crate) folder_sent: &'static str,
     pub(crate) folder_junk: &'static str,
@@ -369,6 +372,9 @@ pub(crate) const ZH: Lex = Lex {
     conn_lost: "⟳ 未连接：",
     conn_retrying: "自动重试中（新邮件/发信将在恢复后处理）",
     outbox_retry: "重发",
+    outbox_hint: "发件箱项目不支持阅读——重发 / 删除在列表行内",
+    empty_trash: "🗑 清空废纸篓",
+    empty_trash_q: "永久删除废纸篓中全部 {} 封邮件？不可恢复。",
     drafts_n: "草稿（{}）",
     folder_inbox: "收件箱",
     folder_sent: "已发送",
@@ -593,6 +599,9 @@ pub(crate) const EN: Lex = Lex {
     conn_lost: "⟳ Disconnected: ",
     conn_retrying: "retrying automatically (mail/send will resume)",
     outbox_retry: "Retry",
+    outbox_hint: "Outbox items are not readable — retry / delete on each row",
+    empty_trash: "🗑 Empty Trash",
+    empty_trash_q: "Permanently delete all {} messages in Trash? Irreversible.",
     drafts_n: "Drafts ({})",
     folder_inbox: "Inbox",
     folder_sent: "Sent",

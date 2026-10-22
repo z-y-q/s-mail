@@ -153,6 +153,8 @@ pub(crate) struct State {
     pub(crate) outbox_counts: HashMap<usize, (usize, usize)>,
     /// 每账号连接状态（断连时顶栏持续黄条提示，重连成功自动消除）
     pub(crate) conn_ok: HashMap<usize, bool>,
+    /// 清空废纸篓确认条
+    pub(crate) pending_empty_trash: bool,
     /// 通讯录全量（管理界面；按账号聚合）
     pub(crate) contacts_full: Vec<(usize, Vec<smail_store::ContactRow>)>,
     /// B4：账号 PGP 内联编辑中：（账号索引, 表单）
@@ -254,6 +256,7 @@ impl State {
                     outbox_rows: vec![],
                     outbox_counts: HashMap::new(),
                     conn_ok: HashMap::new(),
+                    pending_empty_trash: false,
                     contacts_full: vec![],
                     pgp_edit: None,
                     signature_edit: None,
@@ -354,6 +357,7 @@ impl State {
                     outbox_rows: vec![],
                     outbox_counts: HashMap::new(),
                     conn_ok: HashMap::new(),
+                    pending_empty_trash: false,
                     contacts_full: vec![],
                     pgp_edit: None,
                     signature_edit: None,
