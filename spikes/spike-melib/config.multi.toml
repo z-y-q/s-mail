@@ -1,0 +1,30 @@
+# 本地 dovecot 多账号测试配置（配合 imap-test/up.sh）
+[[accounts]]
+name = "主号"
+
+[accounts.imap]
+host = "127.0.0.1"
+port = 1143
+username = "test"
+password = "testpass"
+starttls = false
+tls = false
+
+[accounts.smtp]
+host = "127.0.0.1"
+port = 11525
+username = "test"
+password = "testpass"
+tls = "none"
+from = "test@local"
+
+[[accounts]]
+name = "二号"
+
+[accounts.imap]
+host = "127.0.0.1"
+port = 1143
+username = "test2"
+password = "testpass"
+starttls = false
+tls = false

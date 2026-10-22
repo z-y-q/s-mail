@@ -1,0 +1,23 @@
+[package]
+name = "smail-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+iced = { workspace = true }
+smail-ai = { path = "../smail-ai" }
+smail-core = { path = "../smail-core" }
+smail-store = { path = "../smail-store" }
+tokio = { workspace = true }
+rfd = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# 托盘仅 macOS（Linux 需 gtk/appindicator 运行时；按平台限定避免 CI Linux 拉依赖）
+tray-icon = "0.24"
+
+[[bin]]
+name = "s-mail"
+path = "src/main.rs"

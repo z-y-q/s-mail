@@ -1,0 +1,23 @@
+# M5-d e2e：PGP 发信侧（密钥由 examples/m10 运行时生成到 /tmp/smail-m10-pgp）
+# 前置：dovecot up.sh + mini_smtp.py 11525
+[[accounts]]
+name = "PgpSend测试"
+
+[accounts.imap]
+host = "127.0.0.1"
+port = 1143
+username = "test"
+password = "testpass"
+tls = false
+
+[accounts.smtp]
+host = "127.0.0.1"
+port = 11525
+username = "test"
+password = "testpass"
+from = "test@local"
+tls = "none"
+
+[accounts.pgp]
+key_path = "/tmp/smail-m10-pgp/secret.asc"
+pubring_path = "/tmp/smail-m10-pgp/pub.asc"

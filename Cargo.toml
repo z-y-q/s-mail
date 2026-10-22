@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/smail-ai",
+    "crates/smail-backend",
+    "crates/smail-core",
+    "crates/smail-store",
+    "crates/smail-ui",
+    "spikes/spike-ime",
+    "spikes/spike-list",
+    "spikes/spike-fts",
+    "spikes/spike-melib",
+]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.87"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# melib 钉子链（round-3 风险表 R8：pre-release 漂移会编译崩，升级 melib 时同步重估）
+# sqlite3：启用 melib IMAP 离线缓存 → fetch 走 CONDSTORE/QRESYNC 增量（对上层仍全量返回）。
+# 代价：melib 白带 rusqlite ^0.37（与我们 0.40 共存，双份 bundled SQLite）
+melib = { version = "0.8", default-features = false, features = ["imap", "sqlite3"] }
+imap-codec = "=2.0.0-alpha.4"
+imap-types = "=2.0.0-alpha.3"
+rusqlite = { version = "0.37", features = ["bundled"] }
+iced = { version = "0.14", features = ["tokio", "markdown", "image"] }
+tokio = { version = "1", features = ["rt", "sync"] }
+futures = "0.3"
+mail-parser = "0.11"
+lettre = "0.11"
+ammonia = "4"
+scraper = "0.23"
+ego-tree = "0.10"
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
+anyhow = "1"
+sha1 = "0.10"
+mime_guess = "2"
+# 纯 Rust 加密后端（避免系统 nettle）；压缩包解压用
+sequoia-openpgp = { version = "2", default-features = false, features = ["crypto-rust", "compression-deflate", "allow-experimental-crypto", "allow-variable-time-crypto"] }
+
+[profile.release]
+# S2 列表滚动等性能验证必须用 release
+debug = 1

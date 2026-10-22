@@ -1,0 +1,163 @@
+# 复制为 config.toml 后填入真实账号（config.toml 已被 .gitignore 忽略，不会入库）
+#
+# provider 注意事项（docs/analysis/round-2 §1.4）：
+#   QQ 邮箱 : imap.qq.com:993，password 填"授权码"（网页版 设置→账户→开启IMAP 后生成），不是QQ密码
+#   163/126 : imap.163.com:993，需网页版先开启 IMAP；若日志出现 "Unsafe Login"，
+#             说明 melib 没发 IMAP ID 命令 —— 记为 S3 失败项（round-3 §2）
+#   Gmail   : imap.gmail.com:993，password 填"应用专用密码"（账号需两步验证）；
+#             应用专用密码被禁用时改用 [oauth]（XOAUTH2 设备流，见文末）
+
+[account]
+host = "imap.qq.com"
+port = 993
+username = "you@example.com"
+password = "your-auth-code"
+starttls = false          # 993 = IMAPS 填 false；143 + STARTTLS 才填 true
+
+[run]
+folder = "INBOX"
+limit = 100               # 列表元数据条数
+idle_seconds = 120        # > 0 时进入 watch/IDLE，观察新信推送；填 0 跳过
+
+[smtp]
+# 发信服务器。tls: "ssl"=465隐式TLS | "starttls"=587 | "none"=仅本地测试
+#   QQ:    smtp.qq.com:465  ssl（密码=授权码，同 IMAP）
+#   163:   smtp.163.com:465  ssl
+#   Gmail: smtp.gmail.com:465 ssl（密码=应用专用密码）
+#   本地测试（mini_smtp.py）: 127.0.0.1:11525 none
+host = "smtp.qq.com"
+port = 465
+username = "you@example.com"
+password = "your-auth-code"
+tls = "ssl"
+# username 不是完整邮箱地址时，用 from 覆盖发件人地址：
+# from = "you@example.com"
+
+
+# ---------------- 多账号格式（[[accounts]]，与上面单账号二选一） ----------------
+# [[accounts]]
+# name = "工作"
+# [accounts.imap]
+# host = "imap.example.com"
+# port = 993
+# username = "you@example.com"
+# password = "your-auth-code"
+# [accounts.smtp]
+# host = "smtp.example.com"
+# port = 465
+# username = "you@example.com"
+# password = "your-auth-code"
+# tls = "ssl"
+# from = "you@example.com"
+#
+# [[accounts]]
+# name = "个人"
+# [accounts.imap]
+# host = "imap.qq.com"
+# ...
+
+# ---------------- XOAUTH2（Gmail/Outlook 现代认证，M4-b） ----------------
+# 账号配了 [accounts.oauth] 后 imap/smtp 不再填 password；
+# 首次使用先在终端跑：s-mail auth <账号name>（设备流：浏览器打开链接 + 输码），
+# token 存 SMAIL_HOME/<slug>/oauth.json（0600），过期自动刷新（需 refresh_token）。
+#
+# Gmail（Google Cloud Console 建 OAuth 客户端"桌面应用"拿 client_id/secret；
+#       测试模式下把账号加进 Test users，否则 device flow 报 access_denied 403:
+#       "Policy check failed"）：
+# [[accounts]]
+# name = "Gmail"
+# [accounts.imap]
+# host = "imap.gmail.com"
+# port = 993
+# username = "you@gmail.com"
+# [accounts.smtp]
+# host = "smtp.gmail.com"
+# port = 465
+# username = "you@gmail.com"
+# from = "you@gmail.com"
+# tls = "ssl"
+# [accounts.oauth]
+# provider = "google"
+# client_id = "xxxx.apps.googleusercontent.com"
+# client_secret = "GOCSPX-xxxx"
+# scopes = ["https://mail.google.com/"]
+#
+# Outlook / Office 365（Entra ID 建"移动和桌面应用"客户端，
+#       tenant: consumers=个人 outlook.com / organizations=工作号 / common=均可）：
+# [[accounts]]
+# name = "Outlook"
+# [accounts.imap]
+# host = "outlook.office365.com"
+# port = 993
+# username = "you@outlook.com"
+# [accounts.smtp]
+# host = "smtp.office365.com"
+# port = 587
+# username = "you@outlook.com"
+# from = "you@outlook.com"
+# tls = "starttls"
+# [accounts.oauth]
+# provider = "microsoft"
+# tenant = "consumers"
+# client_id = "xxxx-xxxx"
+# scopes = [
+#   "https://outlook.office365.com/IMAP.AccessAsUser.All",
+#   "https://outlook.office365.com/SMTP.Send",
+# ]   # offline_access 会自动附带（换 refresh_token 必需）
+#
+# 自定义端点（本地 mock e2e / 自建提供商）：provider = "custom" 时指定
+# device_endpoint / token_endpoint，参考 spikes/spike-melib/config.oauth.toml
+
+# ---------------- 规则过滤（M5-b，[[accounts.rules]]） ----------------
+# 同步时对新见到的邮件应用（已知邮件不重放）；按声明顺序匹配，首条命中即用。
+# 匹配条件 from/subject 均为不区分大小写的子串，同时存在取 AND，至少填一个；
+# 可选 folder = "INBOX" 限定只在该文件夹应用（缺省=任意）。
+# 动作三选多：mark_seen / flag / move_to（服务器端 MOVE，目的地须已存在）。
+#
+# [[accounts]]
+# name = "工作"
+# [accounts.imap]
+# ...
+# [[accounts.rules]]
+# from = "noreply@"
+# subject = "推广"
+# mark_seen = true
+#
+# [[accounts.rules]]
+# subject = "账单"
+# flag = true
+#
+# [[accounts.rules]]
+# from = "jenkins@"
+# folder = "INBOX"
+# move_to = "Builds"
+
+# ---------------- PGP（M5-c，[accounts.pgp]，收信侧） ----------------
+# 打开邮件时自动：解密 PGP/MIME（multipart/encrypted）+ 验签（multipart/signed）。
+# 私钥：gpg --export-secret-keys --armor KEYID > ~/.s-mail/<slug>/pgp/secret.asc
+# 公钥环：把通信方的公钥导出合并（可多个）到 pub.asc，缺省=能解密但不验签。
+# 注意：加密邮件正文不进全文索引（安全默认）；解密失败不阻断（显示密文+状态）。
+#
+# [[accounts]]
+# name = "工作"
+# [accounts.imap]
+# ...
+# [accounts.pgp]
+# key_path = "~/.s-mail/work/pgp/secret.asc"
+# passphrase = "私钥口令（无口令可省）"
+# pubring_path = "~/.s-mail/work/pgp/pub.asc"
+
+# ---------------- PGP 发信（M5-d） ----------------
+# compose 窗口右上 "✍ 签名" / "🔒 加密" 开关（加密自动含签名 + encrypt-to-self，
+# Sent 里的副本自己可解）。收件人公钥需已在 pubring（find_cert_by_email 按 uid 匹配），
+# 缺公钥直接报错不发送（宁可不发不错发）。PGP 发信失败不进自动重试队列。
+
+# ---- AI 助手（独立文件 ai.toml，与账号配置同目录；界面设置屏可视化编辑） ----
+# [ai]
+# enabled = false
+# base_url = "https://api.openai.com/v1"   # DeepSeek: https://api.deepseek.com/v1
+#                                           # GLM: https://open.bigmodel.cn/api/paas/v4
+#                                           # Ollama 本机: http://localhost:11434/v1
+# api_key = "keychain:ai/apikey"            # 或明文；🔑 按钮迁入系统钥匙串
+# model = "gpt-4o-mini"
+# max_mails_per_organize = 50

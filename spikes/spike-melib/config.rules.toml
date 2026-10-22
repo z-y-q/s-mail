@@ -1,0 +1,23 @@
+# M5-b e2e：规则过滤单账号
+[[accounts]]
+name = "Rules测试"
+
+[accounts.imap]
+host = "127.0.0.1"
+port = 1143
+username = "test"
+password = "testpass"
+tls = false
+
+# 规则按声明顺序匹配，首条命中即用；只对新见到的邮件生效
+[[accounts.rules]]
+from = "promo@"
+mark_seen = true
+
+[[accounts.rules]]
+subject = "周报"
+flag = true
+
+[[accounts.rules]]
+from = "moveme@"
+move_to = "Sent"

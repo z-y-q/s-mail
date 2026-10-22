@@ -1,0 +1,16 @@
+[package]
+name = "smail-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+melib = { workspace = true }
+imap-codec = { workspace = true }
+imap-types = { workspace = true }
+futures = { workspace = true }
+lettre = { workspace = true }
+mime_guess = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }

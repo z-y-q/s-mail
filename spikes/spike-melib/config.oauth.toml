@@ -1,0 +1,25 @@
+# M4-b e2e：XOAUTH2 单账号（custom provider 指向本地 mock）
+# 前置：mock_oauth.py(18888) + mock_xoauth2_proxy.py(11143→1143) + dovecot up.sh
+[[accounts]]
+name = "MockOAuth"
+
+[accounts.imap]
+host = "127.0.0.1"
+port = 11143
+username = "test"
+tls = false
+# 无 password → 走 [oauth] XOAUTH2
+
+[accounts.smtp]
+host = "127.0.0.1"
+port = 11525
+username = "test"
+from = "test@local"
+tls = "none"
+
+[accounts.oauth]
+provider = "custom"
+device_endpoint = "http://127.0.0.1:18888/devicecode"
+token_endpoint = "http://127.0.0.1:18888/token"
+client_id = "mock-client"
+scopes = ["mail"]

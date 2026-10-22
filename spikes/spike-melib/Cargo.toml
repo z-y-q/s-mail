@@ -1,0 +1,18 @@
+[package]
+name = "spike-melib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+melib = { version = "0.8", default-features = false, features = ["imap", "maildir", "imap-trace"] }
+# melib 0.8.13 依赖 pre-release 链，必须精确钉两级，否则解析到新 alpha 后编译崩（本次 S3 实证）：
+#   melib(要求 imap-codec "^2.0.0-alpha.4") 解析到 alpha.9 → CommandBody::Store 缺 modifiers 编译失败
+#   钉住 alpha.4 后 imap-codec(要求 imap-types "^2.0.0-alpha.3") 解析到 alpha.7 → 同样问题
+# 正式版代码要把这对钉子带进 smail-backend。
+imap-codec = "=2.0.0-alpha.4"
+imap-types = "=2.0.0-alpha.3"
+futures = "0.3"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

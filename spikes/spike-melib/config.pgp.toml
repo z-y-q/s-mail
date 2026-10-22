@@ -1,0 +1,14 @@
+# M5-c e2e：PGP 收信侧（单账号 + 密钥由 examples/m9 运行时生成到 /tmp/smail-m9-pgp）
+[[accounts]]
+name = "Pgp测试"
+
+[accounts.imap]
+host = "127.0.0.1"
+port = 1143
+username = "test"
+password = "testpass"
+tls = false
+
+[accounts.pgp]
+key_path = "/tmp/smail-m9-pgp/secret.asc"
+pubring_path = "/tmp/smail-m9-pgp/pub.asc"
