@@ -42,6 +42,12 @@ Content-Transfer-Encoding: base64
 --M4BOUND--
 """
 
+import subprocess as _sp
+_check = ["docker", "exec", "smail-imap", "sh", "-c",
+          "ls /var/mail/test/Maildir/new/m4html.local /var/mail/test/Maildir/cur/*m4html* 2>/dev/null"]
+if _sp.run(_check, capture_output=True).returncode == 0:
+    print("m4 HTML 邮件已存在，跳过（幂等）")
+    raise SystemExit(0)
 cmd = [
     "docker", "exec", "smail-imap", "sh", "-c",
     f"printf '{EML}' > /var/mail/test/Maildir/new/m4html.local",

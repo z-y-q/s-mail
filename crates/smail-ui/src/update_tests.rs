@@ -1,0 +1,303 @@
+//! UI 状态机回归测试：历轮人工排查修掉的 bug 类全部固化成用例，
+//! 防止后续重构复发。覆盖：视图切换残留清理、异步迟到守卫、
+//! 死引用清理、翻页触发条件、整理计划白名单校验。
+
+use crate::{ai, update, ListFilter, Message, Reading, RowEntry, Screen, State};
+use smail_core::{Event, FolderInfo, FolderKind};
+use smail_store::MessageRow;
+
+fn row(hash: i64, seen: bool, flagged: bool) -> MessageRow {
+    MessageRow {
+        envelope_hash: hash,
+        folder: "INBOX".into(),
+        message_id: String::new(),
+        subject: format!("s{hash}"),
+        from_addr: "a@b.c".into(),
+        date_unix: hash,
+        seen,
+        flagged,
+        has_body: true,
+        in_reply_to: String::new(),
+    }
+}
+
+fn folder(path: &str, kind: FolderKind) -> FolderInfo {
+    FolderInfo {
+        path: path.into(),
+        kind,
+        unseen: 0,
+        total: 0,
+    }
+}
+
+/// 无会话测试态（send 全部 no-op；update/handle_event 可直接驱动）
+fn ts() -> State {
+    State {
+        ui_theme: iced::Theme::Light,
+        theme_follow: true,
+        lang: crate::lang::Lang::Zh,
+        session: None,
+        oauth_prompt: None,
+        cmd_tx: None,
+        events: None,
+        account_names: vec!["a@x".into(), "b@x".into()],
+        error: None,
+        setup_hint: None,
+        folders: vec![(0, folder("INBOX", FolderKind::Inbox))],
+        cur: Some((0, "INBOX".into())),
+        in_search: false,
+        viewing_unified: false,
+        unified_contrib: Default::default(),
+        search_query: String::new(),
+        search_contrib: Default::default(),
+        rows: vec![],
+        mail_display: vec![],
+        drafts: vec![],
+        selected: None,
+        reading: None,
+        body_req: None,
+        pending_delete: None,
+        threaded: false,
+        expanded: Default::default(),
+        list_offset: 0.0,
+        list_view_h: crate::list::DEFAULT_VIEW_H,
+        screen: Screen::Mail,
+        search_text: String::new(),
+        statuses: Default::default(),
+        selection: Default::default(),
+        batch_move_open: false,
+        pending_batch_delete: false,
+        move_picker: None,
+        new_folder: None,
+        rename_folder: None,
+        pending_folder_delete: None,
+        contacts: vec![],
+        contacts_full: vec![],
+        pgp_edit: None,
+        signature_edit: None,
+        export_target: None,
+        load_more_pending: false,
+        load_more_done: false,
+        list_filter: ListFilter::All,
+        list_asc: false,
+        win_geom: None,
+        win_save_at: None,
+        accounts: vec![],
+        cfg_path: std::path::PathBuf::from("/tmp/smail-test-config.toml"),
+        data_root: std::path::PathBuf::from("/tmp"),
+        ai: ai::AiUiState::new(Default::default(), std::path::Path::new("/tmp")),
+    }
+}
+
+#[test]
+fn search_submit_clears_batch_state() {
+    let mut s = ts();
+    s.selection.insert((0, 1));
+    s.batch_move_open = true;
+    s.pending_batch_delete = true;
+    s.move_picker = Some((0, 1));
+    s.pending_delete = Some((0, 1));
+    s.search_text = "周报".into();
+    let _ = update(&mut s, Message::SearchSubmit);
+    assert!(s.selection.is_empty(), "搜索前批量选择必须清空");
+    assert!(!s.batch_move_open && !s.pending_batch_delete);
+    assert!(s.move_picker.is_none() && s.pending_delete.is_none());
+}
+
+#[test]
+fn folder_selected_clears_transient_refs() {
+    let mut s = ts();
+    s.selection.insert((0, 1));
+    s.pending_delete = Some((0, 1));
+    s.body_req = Some((0, 1));
+    s.selected = Some((0, 1));
+    let _ = update(&mut s, Message::FolderSelected(0, "INBOX".into()));
+    assert!(s.selection.is_empty() && s.pending_delete.is_none() && s.body_req.is_none());
+    assert!(s.selected.is_none());
+}
+
+#[test]
+fn late_body_loaded_dropped_without_body_req() {
+    let mut s = ts();
+    let _ = update(
+        &mut s,
+        Message::Ev(smail_core::TaggedEvent {
+            account: 0,
+            event: Event::BodyLoaded {
+                hash: 9,
+                attachment_images: vec![],
+                subject: "迟到的正文".into(),
+                body: "x".into(),
+                to_addrs: String::new(),
+                cc_addrs: String::new(),
+                unsubscribe: None,
+                inline_images: vec![],
+                remote_images: vec![],
+                is_html: false,
+                attachments: vec![],
+                pgp: None,
+            },
+        }),
+    );
+    assert!(s.reading.is_none(), "无在途请求的迟到正文必须丢弃");
+}
+
+#[test]
+fn folder_loaded_prunes_dead_refs() {
+    let mut s = ts();
+    s.rows = vec![(0, row(1, false, false)), (0, row(2, true, false))];
+    s.selection.insert((0, 1));
+    s.selection.insert((0, 99)); // 对端已删
+    s.pending_delete = Some((0, 99));
+    s.selected = Some((0, 99));
+    let _ = update(
+        &mut s,
+        Message::Ev(smail_core::TaggedEvent {
+            account: 0,
+            event: Event::FolderLoaded {
+                folder: "INBOX".into(),
+                rows: vec![row(1, false, false), row(2, true, false)],
+            },
+        }),
+    );
+    assert!(s.selection.contains(&(0, 1)), "存活邮件保留");
+    assert!(!s.selection.contains(&(0, 99)), "死 hash 清理");
+    assert!(s.pending_delete.is_none(), "确认条随死引用清理");
+    assert!(s.selected.is_none());
+}
+
+#[test]
+fn images_loaded_wrong_account_not_filled() {
+    let mut s = ts();
+    s.reading = Some((
+        1,
+        Reading {
+            hash: 5,
+            attach_images: vec![],
+            subject: "s".into(),
+            body: "b".into(),
+            to_addrs: String::new(),
+            cc_addrs: String::new(),
+            unsubscribe: None,
+            images: vec![],
+            remote_pending: vec!["http://x/y.png".into()],
+            remote_loading: true,
+            md: None,
+            attachments: vec![],
+            pgp: None,
+        },
+    ));
+    let _ = update(
+        &mut s,
+        Message::Ev(smail_core::TaggedEvent {
+            account: 0, // 事件来自账号0，阅读在账号1
+            event: Event::ImagesLoaded {
+                hash: 5,
+                images: vec![("u".into(), vec![0x89, b'P', b'N', b'G'])],
+            },
+        }),
+    );
+    let (_, r) = s.reading.as_ref().unwrap();
+    assert!(r.images.is_empty(), "跨账号 hash 相同也不能回填");
+    assert!(r.remote_loading, "加载态不被无关事件复位");
+}
+
+#[test]
+fn pagination_triggers_on_display_bottom() {
+    let mut s = ts();
+    // 数据层恰为页边界；会话视图关（平铺）→ 显示行数 == rows
+    let n = smail_core::UI_LIST_LIMIT as usize;
+    let rows: Vec<RowEntry> = (0..n as i64).map(|i| (0, row(i, true, false))).collect();
+    s.rows = rows;
+    s.rebuild_display();
+    assert_eq!(s.mail_display.len(), n);
+    let content_h = n as f32 * crate::list::ROW_H;
+    let view_h = s.list_view_h;
+    let _ = update(&mut s, Message::ListScrolled(content_h - view_h, view_h));
+    assert!(s.load_more_pending, "触底且满页边界必须触发翻页");
+}
+
+#[test]
+fn delete_mail_closes_only_that_reading() {
+    let mut s = ts();
+    s.rows = vec![(0, row(1, false, false)), (0, row(2, false, false))];
+    s.rebuild_display();
+    // 正在读 2，删的是 1
+    s.selected = Some((0, 2));
+    s.reading = Some((
+        0,
+        Reading {
+            hash: 2,
+            attach_images: vec![],
+            subject: "s2".into(),
+            body: "b".into(),
+            to_addrs: String::new(),
+            cc_addrs: String::new(),
+            unsubscribe: None,
+            images: vec![],
+            remote_pending: vec![],
+            remote_loading: false,
+            md: None,
+            attachments: vec![],
+            pgp: None,
+        },
+    ));
+    let _ = update(&mut s, Message::DeleteMail(0, 1));
+    assert!(s.reading.is_some(), "删除别的邮件不能关正在读的");
+    assert!(!s.rows.iter().any(|(a, r)| *a == 0 && r.envelope_hash == 1));
+}
+
+#[test]
+fn plan_ready_whitelist_and_membership() {
+    use std::collections::HashMap;
+    let mut s = ts();
+    s.ai.cfg.enabled = true;
+    s.ai.in_flight = 7;
+    s.ai.next_id = 8;
+    s.ai.busy = Some(ai::BusyKind::Organize);
+    s.selection.insert((0, 1));
+    s.selection.insert((0, 2));
+    let mut ctx = HashMap::new();
+    ctx.insert(0usize, (0usize, 1i64));
+    ctx.insert(1usize, (0usize, 2i64));
+    s.ai.plan_ctx = ctx;
+    s.folders = vec![
+        (0, folder("INBOX", FolderKind::Inbox)),
+        (0, folder("归档", FolderKind::Archive)),
+        (0, folder("Junk", FolderKind::Junk)),
+    ];
+    let groups = vec![
+        // 合法移动（归档存在）
+        smail_ai::PlanGroup {
+            title: "归档".into(),
+            op: smail_ai::PlanOp::MoveTo("归档".into()),
+            ids: vec![(0, 1)],
+        },
+        // Junk 目标：不在白名单（调用侧 folders 已剔除），整组该账号丢弃
+        smail_ai::PlanGroup {
+            title: "垃圾".into(),
+            op: smail_ai::PlanOp::MoveTo("Junk".into()),
+            ids: vec![(0, 2)],
+        },
+    ];
+    ai::plan_ready(&mut s, 7, Ok(groups));
+    let plan = s.ai.plan.as_ref().expect("应产出预览");
+    assert_eq!(plan.len(), 1, "Junk 目标组必须被文件夹白名单拦截");
+    assert!(matches!(&plan[0].group.op, smail_ai::PlanOp::MoveTo(f) if f == "归档"));
+}
+
+#[test]
+fn esc_in_search_from_drafts_does_not_crash() {
+    let mut s = ts();
+    s.cur = Some((0, "__drafts__".into()));
+    s.in_search = true;
+    s.search_text = "q".into();
+    let _ = update(
+        &mut s,
+        Message::KeyPressed(iced::keyboard::Key::Named(
+            iced::keyboard::key::Named::Escape,
+        )),
+    );
+    assert!(!s.in_search, "Esc 应退出搜索");
+    assert_eq!(s.cur, Some((0, "__drafts__".into())), "草稿视图保持");
+}

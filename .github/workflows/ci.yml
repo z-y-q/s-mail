@@ -78,3 +78,32 @@ jobs:
           SMAIL_CONFIG: spikes/spike-melib/config.toml
           SMAIL_HOME: /tmp/smail-ci-m16
         run: timeout 120 ./target/debug/examples/m16 60
+      - name: m4 HTML 消毒 e2e
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m4
+        run: |
+          python3 spikes/spike-melib/imap-test/inject_html_mail.py
+          sleep 2
+          timeout 90 ./target/debug/examples/m4 50
+      - name: m7 会话聚合 e2e
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m7
+        run: |
+          python3 spikes/spike-melib/imap-test/seed_thread.py
+          sleep 2
+          timeout 90 ./target/debug/examples/m7 50
+      - name: m8 规则过滤 e2e
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.rules.toml
+          SMAIL_HOME: /tmp/smail-ci-m8
+        run: |
+          python3 spikes/spike-melib/imap-test/seed_rules.py
+          sleep 2
+          timeout 90 ./target/debug/examples/m8 50
+      - name: m13 服务端删除传播 e2e
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m13
+        run: timeout 120 ./target/debug/examples/m13 50

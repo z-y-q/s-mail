@@ -1,0 +1,265 @@
+//! 服务线程事件回流（Event -> State）：同步落地、正文装载、
+//! 标记变更、聚合视图合并等（从 main.rs 拆出）。
+use iced::Task;
+
+use std::sync::Arc;
+
+use crate::{
+    close_reading_if_gone, is_image_bytes, notify_desktop, Message, ParsedMd, Reading, RowEntry,
+    State,
+};
+use smail_core::{Event, SessionCmd, TaggedEvent};
+
+pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> {
+    let acct = ev.account;
+    match ev.event {
+        Event::Status(s) => {
+            // 任何新状态都意味着授权流程推进，清掉设备流横幅；
+            // 新进展同时冲掉旧错误横幅（show-once 语义的另一半）
+            state.oauth_prompt = None;
+            state.error = None;
+            state.statuses.insert(acct, s);
+        }
+        Event::Error(s) => {
+            state.oauth_prompt = None;
+            state.statuses.insert(acct, format!("错误：{s}"));
+        }
+        Event::Folders(infos) => {
+            state.folders.retain(|(a, _)| *a != acct);
+            for info in infos {
+                state.folders.push((acct, info));
+            }
+        }
+        Event::FolderLoaded { folder, rows } => {
+            let viewing = state
+                .cur
+                .as_ref()
+                .map(|(a, c)| *a == acct && c.eq_ignore_ascii_case(&folder))
+                .unwrap_or(false);
+            // 统一收件箱模式：INBOX 同步落地 → 重新拉聚合（LocalList 不发 FolderLoaded，无循环）
+            if state.viewing_unified && folder.eq_ignore_ascii_case("INBOX") {
+                if let Some(tx) = &state.cmd_tx {
+                    let _ = tx.send(SessionCmd::UnifiedInbox);
+                }
+            }
+            if viewing && !state.in_search {
+                // 翻页穷尽判定：LoadMore 回包行数没涨 = 到底了。
+                // 新邮件到达（行数变化）必须重置 done，否则翻页被永久锁死
+                if state.load_more_pending {
+                    state.load_more_pending = false;
+                    if rows.len() == state.rows.len() {
+                        state.load_more_done = true;
+                    }
+                } else if rows.len() != state.rows.len() {
+                    state.load_more_done = false;
+                }
+                state.rows = rows.into_iter().map(move |r| (acct, r)).collect();
+                // 对端删除传播：全量替换后清死引用——批量选择/展开态/确认条/
+                // 移动面板指向已消失的邮件时丢弃（跨账号条目保留）
+                let alive: std::collections::HashSet<i64> = state
+                    .rows
+                    .iter()
+                    .filter(|(a, _)| *a == acct)
+                    .map(|(_, r)| r.envelope_hash)
+                    .collect();
+                state
+                    .selection
+                    .retain(|(a, h)| *a != acct || alive.contains(h));
+                state.expanded.retain(|h, _| alive.contains(h));
+                if let Some((a, h)) = state.pending_delete {
+                    if a == acct && !alive.contains(&h) {
+                        state.pending_delete = None;
+                    }
+                }
+                if let Some((a, h)) = state.move_picker {
+                    if a == acct && !alive.contains(&h) {
+                        state.move_picker = None;
+                    }
+                }
+                // selected 同样随死引用清理（无阅读态时 close_reading_if_gone
+                // 不会碰它；残留会让快捷键作用于不可见邮件——回归测试苔出）
+                if let Some((a, h)) = state.selected {
+                    if a == acct && !alive.contains(&h) {
+                        state.selected = None;
+                    }
+                }
+                close_reading_if_gone(state);
+                state.rebuild_display();
+            }
+        }
+        Event::BodyLoaded {
+            hash,
+            attachment_images,
+            subject,
+            body,
+            to_addrs,
+            cc_addrs,
+            unsubscribe,
+            inline_images,
+            remote_images,
+            is_html,
+            attachments,
+            pgp,
+        } => {
+            // 在途守卫：请求后用户可能已切文件夹/删信/另选——迟到的正文
+            // 不覆写阅读器（否则弹开一封不在当前列表的邮件，快捷键随之误作用）
+            if state.body_req != Some((acct, hash)) {
+                return Task::none();
+            }
+            state.body_req = None;
+            state.selected = Some((acct, hash));
+            // 内嵌图直接转显示句柄；远程图挂起等用户决定（隐私默认禁）。
+            // 按 magic bytes 过滤：inline 附件可能是 pdf 等非图片，
+            // 塞进 image widget 会解码失败 panic
+            let images: Vec<_> = inline_images
+                .into_iter()
+                .filter(|(_cid, bytes)| is_image_bytes(bytes))
+                .map(|(_cid, bytes)| iced::widget::image::Handle::from_bytes(bytes))
+                .collect();
+            // HTML：markdown 后台解析（超大邮件不再卡 UI 线程），完成经
+            // MarkdownParsed 回填；解析期间 reader 先显示源文本自然过渡
+            let md_src = if is_html { Some(body.clone()) } else { None };
+            state.reading = Some((
+                acct,
+                Reading {
+                    hash,
+                    attach_images: attachment_images
+                        .into_iter()
+                        .map(|(n, b)| (n, iced::widget::image::Handle::from_bytes(b)))
+                        .collect(),
+                    subject,
+                    body,
+                    to_addrs,
+                    cc_addrs,
+                    unsubscribe,
+                    images,
+                    remote_pending: remote_images,
+                    remote_loading: false,
+                    md: None,
+                    attachments,
+                    pgp,
+                },
+            ));
+            if let Some(src) = md_src {
+                return Task::perform(
+                    async move {
+                        ParsedMd(Arc::new(std::sync::Mutex::new(Some(
+                            iced::widget::markdown::Content::parse(&src),
+                        ))))
+                    },
+                    move |md| Message::MarkdownParsed { acct, hash, md },
+                );
+            }
+        }
+        Event::OAuthPrompt { url, code } => {
+            state.oauth_prompt = Some((url, code));
+        }
+        Event::MailSent { to, subject } => {
+            state
+                .statuses
+                .insert(acct, format!("已发送 → {to}（{subject}）"));
+        }
+        Event::DraftsListed(list) => {
+            state.drafts.retain(|(a, _)| *a != acct);
+            for d in list {
+                state.drafts.push((acct, d));
+            }
+        }
+        Event::DraftSaved { id } => {
+            state.statuses.insert(acct, format!("草稿已保存（#{id}）"));
+        }
+        Event::DraftDeleted(_) | Event::MessageDeleted(_) => {}
+        Event::FlagsChanged {
+            hash,
+            seen,
+            flagged,
+        } => {
+            if let Some(r) = state
+                .rows
+                .iter_mut()
+                .find(|(a, r)| *a == acct && r.envelope_hash == hash)
+                .map(|(_, r)| r)
+            {
+                if let Some(v) = seen {
+                    r.seen = v;
+                }
+                if let Some(v) = flagged {
+                    r.flagged = v;
+                }
+            }
+            // 未读圆点/加粗字体/会话聚合 unseen 徽标都依赖 flags，重建显示模型
+            state.rebuild_display();
+        }
+        Event::OutboxPending(n) => {
+            state
+                .statuses
+                .insert(acct, format!("发件队列：{n} 封待发…"));
+        }
+        Event::UnifiedRows { rows } => {
+            state.unified_contrib.insert(acct, rows);
+            if state.viewing_unified {
+                // 多账号按日期合并取前 500（与搜索聚合同模式）
+                let mut all: Vec<RowEntry> = state
+                    .unified_contrib
+                    .iter()
+                    .flat_map(|(a, rows)| rows.iter().map(move |r| (*a, r.clone())))
+                    .collect();
+                all.sort_by(|a, b| b.1.date_unix.cmp(&a.1.date_unix));
+                state.rows = all.into_iter().take(500).collect();
+                state.rebuild_display();
+            }
+        }
+        Event::SearchResults { rows, .. } => {
+            state.search_contrib.insert(acct, rows);
+            if state.in_search {
+                state.rows = state.merged_search_rows();
+                state.rebuild_display();
+            }
+        }
+        Event::AttachmentSaved { path } => {
+            state.statuses.insert(acct, format!("附件已保存：{path}"));
+        }
+        // ---- M7 ----
+        Event::NewMail { from, subject } => {
+            notify_desktop("s-mail 新邮件", &format!("{from}\n{subject}"));
+        }
+        Event::ImagesLoaded { hash, images } => {
+            // 仅当前阅读的邮件回填（过期下载丢弃；账号+hash 双比对，
+            // 跨账号 envelope_hash 碰撞不互串）
+            if state
+                .reading
+                .as_ref()
+                .map(|(a, r)| *a == acct && r.hash == hash)
+                .unwrap_or(false)
+            {
+                if let Some((_, r)) = &mut state.reading {
+                    r.remote_loading = false;
+                    // 全部失败时保留按钮可重试；部分成功则清挂起（v1 不细分）
+                    if !images.is_empty() {
+                        for (_url, bytes) in images {
+                            if is_image_bytes(&bytes) {
+                                r.images
+                                    .push(iced::widget::image::Handle::from_bytes(bytes));
+                            }
+                        }
+                        r.remote_pending.clear();
+                    }
+                }
+            }
+        }
+        Event::ContactsFull(rows) => {
+            match state.contacts_full.iter_mut().find(|(a, _)| *a == acct) {
+                Some((_, v)) => *v = rows,
+                None => state.contacts_full.push((acct, rows)),
+            }
+        }
+        Event::ContactsListed(addrs) => {
+            state.contacts = addrs;
+        }
+    }
+    Task::none()
+}
+
+// ---------------------------------------------------------------------------
+// subscription
+// ---------------------------------------------------------------------------

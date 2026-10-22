@@ -31,6 +31,25 @@ MSGS = [
 ]
 
 os.makedirs(MAILDIR_NEW, exist_ok=True)
+
+# 幂等：链已存在（new 或 dovecot 挪进 cur）则跳过——重复种子会复制
+# message_id 打散会话聚合（m7 e2e 踩过）
+import glob as _glob
+_existing = _glob.glob(os.path.join(MAILDIR_NEW, "*")) + _glob.glob(
+    os.path.join(os.path.dirname(MAILDIR_NEW), "cur", "*")
+)
+def _seeded():
+    for f in _existing:
+        try:
+            with open(f, "r", errors="ignore") as fh:
+                if "m7-a@seed" in fh.read():
+                    return True
+        except OSError:
+            continue
+    return False
+if _seeded():
+    print("m7 会话链已存在，跳过（幂等）")
+    raise SystemExit(0)
 now = int(time.time())
 for i, (mid, irt, refs, date, name) in enumerate(MSGS):
     body = f"{SUBJECT} 第{i}封（{name}）\n"

@@ -546,73 +546,74 @@ impl Session {
         let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TaggedEvent>(1000);
         let zh_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // mux 闭包 move 走原件；终报用克隆（通道关闭即丢弃，无泄漏）
-        let final_tx = event_tx.clone();
-        let final_zh = zh_flag.clone();
-        let mux = std::thread::spawn(move || loop {
-            match cmd_rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(SessionCmd::SetLang(zh)) => {
-                    zh_flag.store(zh, std::sync::atomic::Ordering::Relaxed);
-                    for (svc, _) in &services {
-                        let _ = svc.cmd_tx.send(Cmd::SetLang(zh));
+        // 终报必须在 mux 线程内、循环退出后发——此前误放主线程（每次启动
+        // 立即误报“会话已结束”，m5 e2e 苔出）；loop 内用 break 退出。
+        let mux = std::thread::spawn(move || {
+            'mux: loop {
+                match cmd_rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(SessionCmd::SetLang(zh)) => {
+                        zh_flag.store(zh, std::sync::atomic::Ordering::Relaxed);
+                        for (svc, _) in &services {
+                            let _ = svc.cmd_tx.send(Cmd::SetLang(zh));
+                        }
+                    }
+                    Ok(SessionCmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
+                        for (svc, _) in &services {
+                            let _ = svc.cmd_tx.send(Cmd::Shutdown);
+                        }
+                        for (svc, _) in &mut services {
+                            svc.stop(); // join 服务线程：会话 Drop 返回时数据目录独占可保证
+                        }
+                        break 'mux;
+                    }
+                    Ok(SessionCmd::Route { account, cmd }) => {
+                        if let Some((svc, _)) = services.get(account) {
+                            let _ = svc.cmd_tx.send(cmd);
+                        }
+                    }
+                    Ok(SessionCmd::SearchAll(q)) => {
+                        for (svc, _) in &services {
+                            let _ = svc.cmd_tx.send(Cmd::Search(q.clone()));
+                        }
+                    }
+                    Ok(SessionCmd::UnifiedInbox) => {
+                        for (svc, _) in &services {
+                            let _ = svc.cmd_tx.send(Cmd::LocalList("INBOX".into()));
+                        }
+                    }
+                    Ok(SessionCmd::ContactsFull) => {
+                        for (svc, _) in &services {
+                            let _ = svc.cmd_tx.send(Cmd::ListContactsFull);
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                }
+                for (i, (_, rx)) in services.iter_mut().enumerate() {
+                    while let Ok(ev) = rx.try_recv() {
+                        // blocking_send：UI 冻结时 mux 等待（背压），通道关闭则结束
+                        if event_tx
+                            .blocking_send(TaggedEvent {
+                                account: i,
+                                event: ev,
+                            })
+                            .is_err()
+                        {
+                            break 'mux;
+                        }
                     }
                 }
-                Ok(SessionCmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
-                    for (svc, _) in &services {
-                        let _ = svc.cmd_tx.send(Cmd::Shutdown);
-                    }
-                    for (svc, _) in &mut services {
-                        svc.stop(); // join 服务线程：会话 Drop 返回时数据目录独占可保证
-                    }
-                    return;
-                }
-                Ok(SessionCmd::Route { account, cmd }) => {
-                    if let Some((svc, _)) = services.get(account) {
-                        let _ = svc.cmd_tx.send(cmd);
-                    }
-                }
-                Ok(SessionCmd::SearchAll(q)) => {
-                    for (svc, _) in &services {
-                        let _ = svc.cmd_tx.send(Cmd::Search(q.clone()));
-                    }
-                }
-                Ok(SessionCmd::UnifiedInbox) => {
-                    for (svc, _) in &services {
-                        let _ = svc.cmd_tx.send(Cmd::LocalList("INBOX".into()));
-                    }
-                }
-                Ok(SessionCmd::ContactsFull) => {
-                    for (svc, _) in &services {
-                        let _ = svc.cmd_tx.send(Cmd::ListContactsFull);
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => {}
             }
-            for (i, (_, rx)) in services.iter_mut().enumerate() {
-                while let Ok(ev) = rx.try_recv() {
-                    // blocking_send：UI 冻结时 mux 等待（背压），通道关闭则静默结束
-                    if event_tx
-                        .blocking_send(TaggedEvent {
-                            account: i,
-                            event: ev,
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-            }
-        });
-        // mux 退出（Shutdown / 全部服务结束）：给 UI 一个显式终报，
-        // 而不是事件流悄悄断掉（用户表现为“再无任何同步”）
-        let zh = final_zh.load(std::sync::atomic::Ordering::Relaxed);
-        let _ = final_tx.blocking_send(TaggedEvent {
-            account: 0,
-            event: Event::Error(tr_str(
-                zh,
-                "会话已结束（如非主动退出，请重启应用）",
-                "Session ended (if unexpected, please restart the app)",
-            )),
+            // mux 退出（Shutdown / 全部服务结束）：给 UI 一个显式终报，
+            // 而不是事件流悄悄断掉（用户表现为“再无任何同步”）
+            let zh = zh_flag.load(std::sync::atomic::Ordering::Relaxed);
+            let _ = event_tx.blocking_send(TaggedEvent {
+                account: 0,
+                event: Event::Error(tr_str(
+                    zh,
+                    "会话已结束（如非主动退出，请重启应用）",
+                    "Session ended (if unexpected, please restart the app)",
+                )),
+            });
         });
 
         Ok((
