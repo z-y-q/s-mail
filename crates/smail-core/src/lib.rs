@@ -907,12 +907,13 @@ impl ServiceInner {
         let mut current_folder: Option<String> = None;
         let mut conn = self.connect_initial();
 
-        // 初次连接成功：回放离线标记 + 草稿对账 + 同步 INBOX + 广播文件夹
+        // 初次连接成功。顺序影响体感：LIST（最快）先行让侧栏立即可交互，
+        // 再回放离线标记 → 同步 INBOX → 最后草稿对账（可延后不阻塞主流程）
         if let Conn::Up { backend, .. } = &mut conn {
-            self.push_pending_flags(backend.as_mut(), &store);
-            self.sync_drafts(backend.as_mut(), &store);
-            self.sync_folder(backend.as_mut(), &store, "INBOX");
             self.emit_folders(backend.as_mut(), &store);
+            self.push_pending_flags(backend.as_mut(), &store);
+            self.sync_folder(backend.as_mut(), &store, "INBOX");
+            self.sync_drafts(backend.as_mut(), &store);
         }
 
         let mut tick: u32 = 0;
@@ -2588,24 +2589,8 @@ impl ServiceInner {
         };
         match sent_bytes {
             Ok(bytes) => {
-                match backend.append_to_sent(bytes) {
-                    Ok(sent_folder) => {
-                        self.emit(Event::Status(self.trf(
-                            "已发送并归档到 {}",
-                            "Sent and archived to {}",
-                            &[&sent_folder],
-                        )));
-                        let f = sent_folder;
-                        self.sync_folder(backend, store, &f);
-                    }
-                    Err(e) => {
-                        self.emit(Event::Status(self.trf(
-                            "已发出（归档失败：{}）",
-                            "Sent (archive failed: {})",
-                            &[&e],
-                        )));
-                    }
-                }
+                // MailSent 先行：SMTP 已成功，用户立刻看到"已发送"——
+                // Sent 归档（IMAP APPEND + SELECT + FETCH 2-5s）不阻塞反馈
                 store.outbox_mark(outbox_id, "sent", "").ok();
                 self.emit(Event::MailSent {
                     to: to.to_string(),
@@ -2617,6 +2602,27 @@ impl ServiceInner {
                         pending: p,
                         failed: f,
                     });
+                }
+                // Sent 归档 + 同步（尽力而为；失败只记状态不影响"已发送"事实）
+                match backend.append_to_sent(bytes) {
+                    Ok(sent_folder) => {
+                        self.emit(Event::Status(self.trf(
+                            "已归档到 {}",
+                            "Archived to {}",
+                            &[&sent_folder],
+                        )));
+                        let f = sent_folder;
+                        self.sync_folder(backend, store, &f);
+                        // 侧栏 Sent 计数即时刷新（不等 IDLE）
+                        self.emit_folders(backend, store);
+                    }
+                    Err(e) => {
+                        self.emit(Event::Status(self.trf(
+                            "已发出（归档失败：{}）",
+                            "Sent (archive failed: {})",
+                            &[&e],
+                        )));
+                    }
                 }
                 // #9 staging 清理：转发附件的暂存文件发送成功后删掉
                 //（只清「attachments-staging」目录下的，用户自选文件不动）
