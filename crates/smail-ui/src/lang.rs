@@ -5,8 +5,6 @@
 //! - 后端状态文案（Event::Status 等）暂不本地化（服务线程无 UI 态）；
 //! - 偏好存 `$SMAIL_HOME/ui.json`（lang + theme），启动读、切换写。
 
-use iced::Theme;
-
 /// 运行时模板填充：表内文案用位置参数 {}（format! 要求字面量，
 /// 故提供此 helper，依序替换）
 #[allow(clippy::needless_pass_by_value)]
@@ -49,6 +47,8 @@ pub(crate) struct UiPrefs {
     pub(crate) ai_ack: bool,
     /// 窗口几何（w, h, x, y；手动调整后记忆，启动恢复）
     pub(crate) win: Option<[f32; 4]>,
+    /// 上次视图（账号名, 文件夹/伪视图名；启动恢复，离线也能直达缓存邮件）
+    pub(crate) last_view: Option<(String, String)>,
 }
 
 pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
@@ -57,6 +57,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         dark: None,
         ai_ack: false,
         win: None,
+        last_view: None,
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
         return prefs;
@@ -86,18 +87,13 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
     prefs
 }
 
-pub(crate) fn save_prefs(
-    data_root: &std::path::Path,
-    lang: Lang,
-    theme: &Theme,
-    ai_ack: bool,
-    win: Option<[f32; 4]>,
-) {
+pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
     let obj = serde_json::json!({
-        "lang": if matches!(lang, Lang::En) { "en" } else { "zh" },
-        "theme": if matches!(theme, Theme::Dark) { "dark" } else { "light" },
-        "ai_ack": ai_ack,
-        "win": win.map(|w| serde_json::json!(w)),
+        "lang": if matches!(p.lang, Lang::En) { "en" } else { "zh" },
+        "theme": if matches!(p.dark, Some(true)) { "dark" } else { "light" },
+        "ai_ack": p.ai_ack,
+        "win": p.win.map(|w| serde_json::json!(w)),
+        "last_view": p.last_view.as_ref().map(|(a, f)| serde_json::json!([a, f])),
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
 }
@@ -815,7 +811,14 @@ mod tests {
     fn prefs_round_trip() {
         let dir = std::env::temp_dir().join(format!("smail-ui-prefs-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        save_prefs(&dir, Lang::En, &Theme::Dark, false, None);
+        let p = UiPrefs {
+            lang: Lang::En,
+            dark: Some(true),
+            ai_ack: false,
+            win: None,
+            last_view: None,
+        };
+        save_prefs(&dir, &p);
         let p = load_prefs(&dir);
         assert_eq!(p.lang, Lang::En);
         assert_eq!(p.dark, Some(true));

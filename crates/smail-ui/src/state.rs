@@ -170,6 +170,8 @@ pub(crate) struct State {
     /// 窗口几何（w,h,x,y；拖动/缩放时更新，节流落盘 ui.json）
     pub(crate) win_geom: Option<[f32; 4]>,
     pub(crate) win_save_at: Option<std::time::Instant>,
+    /// 上次视图（账号名, 文件夹/伪视图；启动恢复，离线直达缓存）
+    pub(crate) last_view: Option<(String, String)>,
 }
 
 /// 列表快速过滤（会话视图按会话级谓词：任一成员命中则显示整会话）
@@ -192,6 +194,7 @@ impl State {
     pub(crate) fn boot() -> (Self, Task<Message>) {
         let (cfg_path, data_root) = paths();
         let (boot_theme, boot_follow, boot_lang, boot_ai_ack, boot_win) = boot_prefs(&data_root);
+        let boot_last_view = crate::lang::load_prefs(&data_root).last_view;
         match Session::start(&cfg_path, &data_root) {
             Ok((session, rx)) => {
                 let accounts = smail_core::load_accounts(&cfg_path).unwrap_or_default();
@@ -252,6 +255,7 @@ impl State {
                     list_asc: false,
                     win_geom: None,
                     win_save_at: None,
+                    last_view: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
@@ -268,8 +272,23 @@ impl State {
                         crate::lang::Lang::Zh
                     )));
                 }
+                // 恢复上次视图（离线优先：本地文件夹广播先行，启动直达缓存邮件，
+                // 不必等服务器连接成功）
+                let restore = match boot_last_view {
+                    Some((_, f)) if f == "__all_inbox__" && state.account_names.len() > 1 => {
+                        crate::update(&mut state, Message::UnifiedInboxSelected)
+                    }
+                    Some((name, f)) => match state.account_names.iter().position(|n| n == &name) {
+                        Some(i) => crate::update(&mut state, Message::FolderSelected(i, f)),
+                        None => iced::Task::none(),
+                    },
+                    None => iced::Task::none(),
+                };
                 // 启动即对齐系统深浅色
-                (state, iced::system::theme().map(Message::SystemTheme))
+                (
+                    state,
+                    restore.chain(iced::system::theme().map(Message::SystemTheme)),
+                )
             }
             Err(e) => {
                 let mut setup = SetupForm::new();
@@ -333,6 +352,7 @@ impl State {
                     list_asc: false,
                     win_geom: None,
                     win_save_at: None,
+                    last_view: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
@@ -343,6 +363,21 @@ impl State {
                 state.ai.ack = boot_ai_ack;
                 (state, Task::none())
             }
+        }
+    }
+
+    /// 当前 UI 偏好快照（写 ui.json 用——单一来源，字段增加不再散落调用点）
+    pub(crate) fn current_prefs(&self) -> crate::lang::UiPrefs {
+        crate::lang::UiPrefs {
+            lang: self.lang,
+            dark: if self.theme_follow {
+                None
+            } else {
+                Some(matches!(self.ui_theme, iced::Theme::Dark))
+            },
+            ai_ack: self.ai.ack,
+            win: self.win_geom,
+            last_view: self.last_view.clone(),
         }
     }
 

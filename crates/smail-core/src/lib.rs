@@ -878,6 +878,9 @@ impl ServiceInner {
             return;
         }
 
+        // 离线优先：先广播本地文件夹（连接失败/无网时侧栏与缓存邮件照常可用）
+        self.emit_folders_local(&store);
+
         let mut current_folder: Option<String> = None;
         let mut conn = self.connect_initial();
 
@@ -2079,6 +2082,30 @@ impl ServiceInner {
                 &[&seen_n, &flag_n, &moved_n],
             )));
         }
+    }
+
+    /// 离线优先：启动即从本地索引广播文件夹清单——侧栏不等服务器。
+    /// 连接建立后由服务器真值整体替换（UI 侧 retain+push 语义）。
+    /// folders_ready 不置位：它代表"见过服务器真值"。
+    fn emit_folders_local(&self, store: &Store) {
+        let mut stats = store.folder_stats().unwrap_or_default();
+        if stats.is_empty() {
+            return; // 全新账号：没有本地数据，等服务器（与旧行为一致）
+        }
+        stats.sort_by(|a, b| {
+            let key = |f: &str| (f != "INBOX", f.to_lowercase());
+            key(&a.0).cmp(&key(&b.0))
+        });
+        let infos = stats
+            .into_iter()
+            .map(|(path, total, unseen)| FolderInfo {
+                kind: smail_backend::folder_kind(&path),
+                total,
+                unseen,
+                path,
+            })
+            .collect();
+        self.emit(Event::Folders(infos));
     }
 
     fn emit_folders(&self, backend: &mut dyn MailBackend, store: &Store) {

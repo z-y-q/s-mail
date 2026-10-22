@@ -406,6 +406,17 @@ impl Store {
         rows.collect::<Result<_, _>>()
     }
 
+    /// 本地索引里的全部文件夹与计数（离线优先：启动即广播侧栏）
+    pub fn folder_stats(&self) -> rusqlite::Result<Vec<(String, u32, u32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT folder, COUNT(*), COALESCE(SUM(seen = 0), 0)              FROM messages GROUP BY folder",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn count_folder(&self, folder: &str) -> rusqlite::Result<u32> {
         let n: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM messages WHERE folder = ?1",

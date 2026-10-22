@@ -82,6 +82,7 @@ fn ts() -> State {
         list_asc: false,
         win_geom: None,
         win_save_at: None,
+        last_view: None,
         accounts: vec![],
         cfg_path: std::path::PathBuf::from("/tmp/smail-test-config.toml"),
         data_root: std::path::PathBuf::from("/tmp"),
@@ -284,6 +285,22 @@ fn plan_ready_whitelist_and_membership() {
     let plan = s.ai.plan.as_ref().expect("应产出预览");
     assert_eq!(plan.len(), 1, "Junk 目标组必须被文件夹白名单拦截");
     assert!(matches!(&plan[0].group.op, smail_ai::PlanOp::MoveTo(f) if f == "归档"));
+}
+
+#[test]
+fn folder_selected_remembers_last_view() {
+    let mut s = ts();
+    let _ = update(&mut s, Message::FolderSelected(0, "INBOX".into()));
+    assert_eq!(
+        s.last_view,
+        Some(("a@x".into(), "INBOX".into())),
+        "切文件夹要记忆（账号名, 文件夹），供启动恢复"
+    );
+    let _ = update(&mut s, Message::UnifiedInboxSelected);
+    assert_eq!(
+        s.last_view,
+        Some(("__unified__".into(), "__all_inbox__".into()))
+    );
 }
 
 #[test]

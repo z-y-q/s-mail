@@ -107,3 +107,8 @@ jobs:
           SMAIL_CONFIG: spikes/spike-melib/config.toml
           SMAIL_HOME: /tmp/smail-ci-m13
         run: timeout 120 ./target/debug/examples/m13 50
+      - name: m17 离线优先 e2e（停服务器后本地可用）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m17
+        run: timeout 120 ./target/debug/examples/m17 60

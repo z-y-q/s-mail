@@ -394,6 +394,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Ev(ev) => handle_event(state, ev),
         Message::UnifiedInboxSelected => {
+            state.last_view = Some(("__unified__".into(), "__all_inbox__".into()));
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             state.in_search = false;
             state.viewing_unified = true;
             state.search_text.clear();
@@ -457,6 +459,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::FolderSelected(acct, folder) => {
+            // 记忆上次视图（按账号名存，账号增删/改名后索引漂移不影响）
+            if let Some(name) = state.account_names.get(acct).cloned() {
+                state.last_view = Some((name, folder.clone()));
+                crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            }
             state.in_search = false;
             state.viewing_unified = false;
             state.search_text.clear();
@@ -504,24 +511,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 Theme::Dark => Theme::Light,
                 _ => Theme::Dark,
             };
-            crate::lang::save_prefs(
-                &state.data_root,
-                state.lang,
-                &state.ui_theme,
-                state.ai.ack,
-                state.win_geom,
-            );
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             Task::none()
         }
         Message::ToggleLang => {
             state.lang = state.lang.toggle();
-            crate::lang::save_prefs(
-                &state.data_root,
-                state.lang,
-                &state.ui_theme,
-                state.ai.ack,
-                state.win_geom,
-            );
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             // 状态/错误文案跟随：广播到全部服务线程（立即生效，无需重启）
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::SetLang(matches!(
@@ -767,13 +762,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     .unwrap_or(true);
                 if due {
                     state.win_save_at = Some(std::time::Instant::now());
-                    crate::lang::save_prefs(
-                        &state.data_root,
-                        state.lang,
-                        &state.ui_theme,
-                        state.ai.ack,
-                        state.win_geom,
-                    );
+                    crate::lang::save_prefs(&state.data_root, &state.current_prefs());
                 }
             }
             Task::none()
@@ -1551,13 +1540,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::AiPrivacyAck => {
             state.ai.ack = true;
-            crate::lang::save_prefs(
-                &state.data_root,
-                state.lang,
-                &state.ui_theme,
-                state.ai.ack,
-                state.win_geom,
-            );
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             let pending = state.ai.privacy_pending.take();
             match pending {
                 Some(m) => update(state, m),
