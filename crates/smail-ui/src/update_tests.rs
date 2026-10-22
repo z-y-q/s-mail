@@ -49,6 +49,7 @@ fn ts() -> State {
         viewing_unified: false,
         unified_contrib: Default::default(),
         search_query: String::new(),
+        search_snippets: Default::default(),
         search_contrib: Default::default(),
         rows: vec![],
         mail_display: vec![],

@@ -198,6 +198,8 @@ pub enum Event {
     SearchResults {
         query: String,
         rows: Vec<MessageRow>,
+        /// 匹配正文片段（与 rows 同序；空=仅主题命中）
+        snippets: Vec<String>,
     },
     /// 统一收件箱聚合行（LocalList 的回流；带账号标签）
     UnifiedRows {
@@ -1486,8 +1488,14 @@ impl ServiceInner {
                 }
             }
             Cmd::Search(query) => {
-                let rows = store.search(&query, 200).unwrap_or_default();
-                self.emit(Event::SearchResults { query, rows });
+                let results = store.search_with_snippets(&query, 200).unwrap_or_default();
+                let rows = results.iter().map(|(r, _)| r.clone()).collect();
+                let snippets = results.into_iter().map(|(_, s)| s).collect();
+                self.emit(Event::SearchResults {
+                    query,
+                    rows,
+                    snippets,
+                });
             }
             Cmd::SaveAttachment { hash, name } => {
                 self.save_attachment(hash, name);

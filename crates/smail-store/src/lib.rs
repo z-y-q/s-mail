@@ -614,6 +614,32 @@ impl Store {
     }
 
     /// 全文搜索（bigram 切分后的 MATCH，JOIN 取原始行）
+    /// 搜索（带正文片段）：FTS5 snippet() 返回匹配词附近的摘录
+    pub fn search_with_snippets(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> rusqlite::Result<Vec<(MessageRow, String)>> {
+        let tokenized = tokenize(query);
+        if tokenized.trim().is_empty() {
+            return Ok(vec![]);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT m.envelope_hash, m.folder, m.message_id, m.subject, m.from_addr,
+                    m.date_unix, m.seen, m.has_body, m.flagged, m.in_reply_to,
+                    snippet(messages_fts, 1, '「', '」', '…', 30)
+             FROM messages_fts f JOIN messages m ON m.envelope_hash = f.rowid
+             WHERE messages_fts MATCH ?1
+             ORDER BY rank LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![tokenized, limit], |r| {
+            let row = row_from(r)?;
+            let snip: String = r.get(10)?;
+            Ok((row, snip))
+        })?;
+        rows.collect::<Result<_, _>>()
+    }
+
     pub fn search(&self, query: &str, limit: u32) -> rusqlite::Result<Vec<MessageRow>> {
         let tokenized = tokenize(query);
         if tokenized.trim().is_empty() {

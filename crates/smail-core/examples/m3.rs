@@ -125,7 +125,7 @@ fn main() {
                         content.len()
                     );
                 }
-                Event::SearchResults { query, rows } => {
+                Event::SearchResults { query, rows, .. } => {
                     let hit = rows.iter().any(|r| r.subject == subject);
                     if query.contains("附件") && hit {
                         search_subject_ok = true;

@@ -117,3 +117,21 @@ jobs:
           SMAIL_CONFIG: spikes/spike-melib/config.toml
           SMAIL_HOME: /tmp/smail-ci-m18
         run: timeout 120 ./target/debug/examples/m18 90
+      - name: m2 发信+Sent归档+删除 e2e（需 SMTP mock）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m2
+        run: |
+          python3 spikes/spike-melib/imap-test/mini_smtp.py 11525 &
+          sleep 2
+          timeout 90 ./target/debug/examples/m2 60
+      - name: m3 附件+全文搜索 e2e（需 SMTP mock）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m3
+          SMAIL_DOWNLOADS: /tmp/smail-ci-m3-dl
+          SMAIL_NO_REVEAL: "1"
+        run: |
+          python3 spikes/spike-melib/imap-test/mini_smtp.py 11525 &
+          sleep 2
+          timeout 120 ./target/debug/examples/m3 80

@@ -18,6 +18,7 @@ mail-parser = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 # 托盘仅 macOS（Linux 需 gtk/appindicator 运行时；按平台限定避免 CI Linux 拉依赖）
 tray-icon = "0.24"
+mac-notification-sys = "0.6"
 
 [[bin]]
 name = "s-mail"

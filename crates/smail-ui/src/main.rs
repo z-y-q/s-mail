@@ -23,6 +23,7 @@ mod events;
 mod keys;
 mod lang;
 mod list;
+mod notify;
 mod reader;
 mod setup;
 mod state;
@@ -106,6 +107,8 @@ pub(crate) enum Message {
     ComposeBodyEdit(iced::widget::text_editor::Action),
     /// 自动保存节拍（仅写作屏订阅；静默 20s 后落草稿，防崩溃/断电丢信）
     AutosaveTick,
+    /// 通知点击跳转：(账号, 文件夹, hash)
+    NotificationClicked(notify::NotifyClick),
     SendClicked,
     SaveDraftClicked,
     DraftRowClicked(usize, i64),
@@ -443,6 +446,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Tray(action) => match action {
             crate::tray::TrayAction::Open => {
+                // 通知跳转：macOS 通知点击 → 激活 app（走 tray Open 路径）
+                // → 有最近通知的邮件则跳转过去
+                if let Some(click) = crate::notify::take_last() {
+                    return update(state, Message::NotificationClicked(click));
+                }
                 // iced 0.14 无窗口句柄；System Events 按进程名把自己拉到前台
                 #[cfg(target_os = "macos")]
                 let _ = std::process::Command::new("osascript")
@@ -971,6 +979,15 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     c.pgp_sign = true; // 我们的加密必签名（防篡改）
                 }
             }
+            Task::none()
+        }
+        Message::NotificationClicked(click) => {
+            // 跳转：切文件夹（本地先行立刻出列表）→ 打开正文
+            let notify::NotifyClick { acct, folder, hash } = click;
+            let _ = update(state, Message::FolderSelected(acct, folder));
+            state.selected = Some((acct, hash));
+            state.body_req = Some((acct, hash));
+            state.send(acct, Cmd::OpenMessage(hash));
             Task::none()
         }
         Message::AutosaveTick => {
@@ -2204,7 +2221,14 @@ fn subscription(state: &State) -> Subscription<Message> {
             },
         )
     });
-    Subscription::batch([events_sub, keyboard, theme_sub, tray_sub])
+    Subscription::batch([
+        keyboard,
+        theme_sub,
+        window_sub,
+        autosave_sub,
+        tray_sub,
+        events_sub,
+    ])
 }
 
 // ---------------------------------------------------------------------------

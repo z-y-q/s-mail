@@ -959,9 +959,23 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                             .size(11)
                                             .style(theme::secondary_text),
                                     ],
-                                    text(format!("{}{tag}", r.from_addr))
-                                        .size(11)
-                                        .style(theme::secondary_text),
+                                    if state.in_search {
+                                        if let Some(snip) =
+                                            state.search_snippets.get(&r.envelope_hash)
+                                        {
+                                            text(format!("  「{snip}」"))
+                                                .size(11)
+                                                .style(theme::secondary_text)
+                                        } else {
+                                            text(format!("{}{tag}", r.from_addr))
+                                                .size(11)
+                                                .style(theme::secondary_text)
+                                        }
+                                    } else {
+                                        text(format!("{}{tag}", r.from_addr))
+                                            .size(11)
+                                            .style(theme::secondary_text)
+                                    }
                                 ]
                                 .spacing(2),
                             )

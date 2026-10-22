@@ -233,7 +233,13 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                 state.rebuild_display();
             }
         }
-        Event::SearchResults { rows, .. } => {
+        Event::SearchResults { rows, snippets, .. } => {
+            // 片段按 hash 映射（跨账号搜索结果统一渲染）
+            for (r, snip) in rows.iter().zip(snippets.iter()) {
+                if !snip.is_empty() {
+                    state.search_snippets.insert(r.envelope_hash, snip.clone());
+                }
+            }
             state.search_contrib.insert(acct, rows);
             if state.in_search {
                 state.rows = state.merged_search_rows();
@@ -245,7 +251,26 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
         }
         // ---- M7 ----
         Event::NewMail { from, subject } => {
-            notify_desktop("s-mail 新邮件", &format!("{from}\n{subject}"));
+            // 通知点击跳转：记录该邮件位置（acct, folder, hash）
+            // folder 从 rows 里反查（NewMail 到达时邮件已在当前列表）
+            let acct = ev.account;
+            if let Some((_, r)) = state
+                .rows
+                .iter()
+                .find(|(_, r)| r.from_addr == from && r.subject == subject)
+            {
+                crate::notify::notify_mail(
+                    &from,
+                    &subject,
+                    crate::notify::NotifyClick {
+                        acct,
+                        folder: r.folder.clone(),
+                        hash: r.envelope_hash,
+                    },
+                );
+            } else {
+                notify_desktop("s-mail 新邮件", &format!("{from}\n{subject}"));
+            }
         }
         Event::ImagesLoaded { hash, images } => {
             // 仅当前阅读的邮件回填（过期下载丢弃；账号+hash 双比对，

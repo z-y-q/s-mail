@@ -102,6 +102,8 @@ pub(crate) struct State {
     pub(crate) search_query: String,
     /// 搜索结果按账号聚合
     pub(crate) search_contrib: HashMap<usize, Vec<MessageRow>>,
+    /// 搜索正文片段（hash → snippet；渲染搜索结果行时显示）
+    pub(crate) search_snippets: HashMap<i64, String>,
     pub(crate) rows: Vec<RowEntry>,
     /// 列表显示模型（rows/threaded/expanded 变化时轻 rebuild_display 重建；
     /// view 每帧直接读，不再全量克隆 500 行 + 重跑会话聚合）
@@ -231,6 +233,7 @@ impl State {
                     unified_contrib: HashMap::new(),
                     search_query: String::new(),
                     search_contrib: HashMap::new(),
+                    search_snippets: HashMap::new(),
                     rows: vec![],
                     mail_display: vec![],
                     drafts: vec![],
@@ -332,6 +335,7 @@ impl State {
                     unified_contrib: HashMap::new(),
                     search_query: String::new(),
                     search_contrib: HashMap::new(),
+                    search_snippets: HashMap::new(),
                     rows: vec![],
                     mail_display: vec![],
                     drafts: vec![],
@@ -468,6 +472,7 @@ pub(crate) fn persist_and_reload(
     state.viewing_unified = false;
     state.in_search = false;
     state.search_text.clear();
+    state.search_snippets.clear();
     // 空账号集：Session 起不来是预期，落盘后直接进无会话空态（不报错）
     if accounts.is_empty() {
         return match smail_core::save_accounts(&state.cfg_path, &accounts) {
