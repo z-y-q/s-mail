@@ -13,6 +13,7 @@ smail-store = { path = "../smail-store" }
 tokio = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }
+mail-parser = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 托盘仅 macOS（Linux 需 gtk/appindicator 运行时；按平台限定避免 CI Linux 拉依赖）

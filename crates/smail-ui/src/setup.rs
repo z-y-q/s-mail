@@ -410,6 +410,10 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                             theme::ghost_button(t, st)
                         }
                     }),
+                button(text(state.l().signature_btn).size(12))
+                    .on_press(Message::SignatureEditOpen(i))
+                    .padding([2, 8])
+                    .style(theme::ghost_button),
                 button(text(state.l().delete_short).size(12))
                     .on_press(Message::SetupDelete(i))
                     .padding([2, 8])
@@ -421,6 +425,37 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         if let Some((ea, f)) = &state.pgp_edit {
             if *ea == i {
                 list_col = list_col.push(pgp_edit_form(state.l(), f));
+            }
+        }
+        // 签名内联编辑（多行 text_editor；空=移除）
+        if let Some((sa, content)) = &state.signature_edit {
+            if *sa == i {
+                list_col = list_col.push(
+                    container(
+                        column![
+                            text(state.l().signature_label).size(11),
+                            iced::widget::text_editor(content)
+                                .on_action(Message::SignatureEditAction)
+                                .height(80)
+                                .padding(6),
+                            row![
+                                button(text(state.l().save).size(12))
+                                    .on_press(Message::SignatureEditSave)
+                                    .padding([3, 10])
+                                    .style(theme::accent_button),
+                                button(text(state.l().cancel).size(12))
+                                    .on_press(Message::SignatureEditCancel)
+                                    .padding([3, 8])
+                                    .style(theme::ghost_button),
+                            ]
+                            .spacing(8),
+                        ]
+                        .spacing(6),
+                    )
+                    .padding(8)
+                    .width(Length::Fill)
+                    .style(theme::reader_meta),
+                );
             }
         }
     }

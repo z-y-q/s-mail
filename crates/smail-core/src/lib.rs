@@ -131,6 +131,7 @@ pub struct FolderInfo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // BodyLoaded 带图片字节——事件流一次性传递，盒装收益小于可读性代价
 pub enum Event {
     Status(String),
     Error(String),
@@ -141,6 +142,8 @@ pub enum Event {
     },
     BodyLoaded {
         hash: i64,
+        /// 图片附件（name, bytes）：UI 内联预览用；魔数过滤 + 2MB/张上限
+        attachment_images: Vec<(String, Vec<u8>)>,
         subject: String,
         /// 原信收件人（"名字 <a@b>, …" 原样，回复全部用）
         to_addrs: String,
@@ -525,7 +528,7 @@ impl Session {
     pub fn start(
         cfg_path: &Path,
         data_root: &Path,
-    ) -> Result<(Self, tokio::sync::mpsc::UnboundedReceiver<TaggedEvent>), StartError> {
+    ) -> Result<(Self, tokio::sync::mpsc::Receiver<TaggedEvent>), StartError> {
         let accounts = load_accounts(cfg_path)?;
         std::fs::create_dir_all(data_root)
             .map_err(|e| StartError::Backend(format!("建数据目录失败: {e}")))?;
@@ -538,11 +541,18 @@ impl Session {
         }
 
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<SessionCmd>();
-        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<TaggedEvent>();
+        // 有界（UI 卡住时背压到 mux 线程，而不是无界堆内存；此前 unbounded
+        // 在 UI 冻结期间事件无限累积）
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TaggedEvent>(1000);
+        let zh_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
 
+        // mux 闭包 move 走原件；终报用克隆（通道关闭即丢弃，无泄漏）
+        let final_tx = event_tx.clone();
+        let final_zh = zh_flag.clone();
         let mux = std::thread::spawn(move || loop {
             match cmd_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(SessionCmd::SetLang(zh)) => {
+                    zh_flag.store(zh, std::sync::atomic::Ordering::Relaxed);
                     for (svc, _) in &services {
                         let _ = svc.cmd_tx.send(Cmd::SetLang(zh));
                     }
@@ -580,12 +590,29 @@ impl Session {
             }
             for (i, (_, rx)) in services.iter_mut().enumerate() {
                 while let Ok(ev) = rx.try_recv() {
-                    let _ = event_tx.send(TaggedEvent {
-                        account: i,
-                        event: ev,
-                    });
+                    // blocking_send：UI 冻结时 mux 等待（背压），通道关闭则静默结束
+                    if event_tx
+                        .blocking_send(TaggedEvent {
+                            account: i,
+                            event: ev,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
             }
+        });
+        // mux 退出（Shutdown / 全部服务结束）：给 UI 一个显式终报，
+        // 而不是事件流悄悄断掉（用户表现为“再无任何同步”）
+        let zh = final_zh.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = final_tx.blocking_send(TaggedEvent {
+            account: 0,
+            event: Event::Error(tr_str(
+                zh,
+                "会话已结束（如非主动退出，请重启应用）",
+                "Session ended (if unexpected, please restart the app)",
+            )),
         });
 
         Ok((
@@ -819,7 +846,8 @@ impl ServiceInner {
         let Some(cfg) = &self.cfg.pgp else {
             return Ok(None);
         };
-        let mut slot = self.pgp_cache.lock().unwrap();
+        // unwrap_or_else(into_inner)：锁毒化（持锁 panic）后仍能取回缓存继续服务
+        let mut slot = self.pgp_cache.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(rt) = slot.as_ref() {
             return Ok(Some(rt.clone()));
         }
@@ -2133,8 +2161,11 @@ impl ServiceInner {
         } else {
             vec![]
         };
+        // 图片附件预览：魔数过滤防解码 panic，单张 2MB 上限（与远程图同护栏）
+        let attachment_images: Vec<(String, Vec<u8>)> = m_atch_images(&parse_bytes);
         self.emit(Event::BodyLoaded {
             hash,
+            attachment_images,
             subject: row.subject.clone(),
             to_addrs,
             cc_addrs,
@@ -2410,6 +2441,18 @@ impl ServiceInner {
     // ---------------- M3：附件保存 + 后台索引 ----------------
 
     fn save_attachment(&self, hash: i64, name: String) {
+        // 内存护栏：超大邮件/附件不做全量进 RAM 的提取（用户仍可导出 .eml）
+        if let Ok(meta) = std::fs::metadata(self.body_path(hash)) {
+            const MAX_EML: u64 = 512 * 1024 * 1024;
+            if meta.len() > MAX_EML {
+                self.emit(Event::Status(self.trf(
+                    "邮件过大（{} MB）不做附件提取，请用「存为 .eml」",
+                    "Mail too large ({} MB) for attachment extraction; use Save .eml",
+                    &[&(meta.len() / 1024 / 1024)],
+                )));
+                return;
+            }
+        }
         let bytes = match std::fs::read(self.body_path(hash)) {
             Ok(b) => b,
             Err(e) => {
@@ -2730,6 +2773,33 @@ fn extract_inline_images(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
 }
 
 /// 附件清单（名字 + 大小）
+/// 图片附件字节（预览用）：PNG/JPEG/GIF/WebP/BMP 魔数 + 单张 2MB
+fn m_atch_images(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    use mail_parser::{MessageParser, MimeHeaders};
+    const MAX: usize = 2 * 1024 * 1024;
+    let Some(m) = MessageParser::default().parse(bytes) else {
+        return vec![];
+    };
+    m.attachments()
+        .filter_map(|a| {
+            let name = a.attachment_name()?.to_string();
+            let c = a.contents();
+            if c.len() > MAX || !is_image_content(c) {
+                return None;
+            }
+            Some((name, c.to_vec()))
+        })
+        .collect()
+}
+
+pub fn is_image_content(b: &[u8]) -> bool {
+    b.starts_with(b"\x89PNG")
+        || b.starts_with(b"\xff\xd8\xff")
+        || b.starts_with(b"GIF8")
+        || b.starts_with(b"RIFF") && b.len() > 11 && &b[8..12] == b"WEBP"
+        || b.starts_with(b"BM")
+}
+
 fn extract_attachments(bytes: &[u8]) -> Vec<(String, usize)> {
     use mail_parser::{MessageParser, MimeHeaders};
     let Some(m) = MessageParser::default().parse(bytes) else {

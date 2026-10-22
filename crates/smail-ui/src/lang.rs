@@ -47,6 +47,8 @@ pub(crate) struct UiPrefs {
     pub(crate) dark: Option<bool>,
     /// AI 隐私确认（首次使用云 AI 弹一次）
     pub(crate) ai_ack: bool,
+    /// 窗口几何（w, h, x, y；手动调整后记忆，启动恢复）
+    pub(crate) win: Option<[f32; 4]>,
 }
 
 pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
@@ -54,6 +56,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         lang: Lang::Zh,
         dark: None,
         ai_ack: false,
+        win: None,
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
         return prefs;
@@ -70,15 +73,31 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         if v.get("ai_ack").and_then(|x| x.as_bool()) == Some(true) {
             prefs.ai_ack = true;
         }
+        if let Some(a) = v.get("win").and_then(|x| x.as_array()) {
+            let nums: Vec<f32> = a
+                .iter()
+                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                .collect();
+            if nums.len() == 4 {
+                prefs.win = Some([nums[0], nums[1], nums[2], nums[3]]);
+            }
+        }
     }
     prefs
 }
 
-pub(crate) fn save_prefs(data_root: &std::path::Path, lang: Lang, theme: &Theme, ai_ack: bool) {
+pub(crate) fn save_prefs(
+    data_root: &std::path::Path,
+    lang: Lang,
+    theme: &Theme,
+    ai_ack: bool,
+    win: Option<[f32; 4]>,
+) {
     let obj = serde_json::json!({
         "lang": if matches!(lang, Lang::En) { "en" } else { "zh" },
         "theme": if matches!(theme, Theme::Dark) { "dark" } else { "light" },
         "ai_ack": ai_ack,
+        "win": win.map(|w| serde_json::json!(w)),
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
 }
@@ -258,6 +277,8 @@ pub(crate) struct Lex {
 
     // ---- AI 助手 ----
     pub(crate) ai_section: &'static str,
+    pub(crate) signature_btn: &'static str,
+    pub(crate) signature_label: &'static str,
     pub(crate) ai_status_on: &'static str, // {model}
     pub(crate) ai_status_off: &'static str,
     pub(crate) ai_setup: &'static str,
@@ -474,6 +495,8 @@ pub(crate) const ZH: Lex = Lex {
     pick_file: "选择文件…",
 
     ai_section: "AI 助手",
+    signature_btn: "签名",
+    signature_label: "签名（写信时追加到正文末；留空=移除）",
     ai_status_on: "已开启 · {}",
     ai_status_off: "未开启",
     ai_setup: "设置",
@@ -689,6 +712,8 @@ pub(crate) const EN: Lex = Lex {
     pick_file: "Pick file…",
 
     ai_section: "AI Assistant",
+    signature_btn: "Signature",
+    signature_label: "Signature (appended to new messages; empty = remove)",
     ai_status_on: "Enabled · {}",
     ai_status_off: "Disabled",
     ai_setup: "Settings",
@@ -790,7 +815,7 @@ mod tests {
     fn prefs_round_trip() {
         let dir = std::env::temp_dir().join(format!("smail-ui-prefs-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        save_prefs(&dir, Lang::En, &Theme::Dark, false);
+        save_prefs(&dir, Lang::En, &Theme::Dark, false, None);
         let p = load_prefs(&dir);
         assert_eq!(p.lang, Lang::En);
         assert_eq!(p.dark, Some(true));

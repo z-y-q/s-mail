@@ -99,6 +99,17 @@ impl Preset {
 
 /// 读 `ai.toml`（独立于 config.toml——账号保存路径不会覆盖它）
 pub fn load_config(path: &std::path::Path) -> AiConfig {
+    // 读到即收紧（只此一次迁移旧版本写出的 0644）
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            let perm = meta.permissions();
+            if perm.mode() & 0o077 != 0 {
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
     std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| toml::from_str(&raw).ok())
@@ -107,7 +118,15 @@ pub fn load_config(path: &std::path::Path) -> AiConfig {
 
 pub fn save_config(path: &std::path::Path, cfg: &AiConfig) -> Result<(), String> {
     let raw = toml::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    std::fs::write(path, raw).map_err(|e| e.to_string())
+    std::fs::write(path, raw).map_err(|e| e.to_string())?;
+    // 文件可能含明文 API Key：创建即收紧到 0600（同 oauth.json 基线；
+    // 存量 0644 文件顺带迁移收紧）
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ members = [
 default-members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.3"
 edition = "2021"
 rust-version = "1.87"
 license = "GPL-3.0-or-later"
@@ -23,7 +23,7 @@ publish = false
 [workspace.dependencies]
 # melib 钉子链（round-3 风险表 R8：pre-release 漂移会编译崩，升级 melib 时同步重估）
 # sqlite3：启用 melib IMAP 离线缓存 → fetch 走 CONDSTORE/QRESYNC 增量（对上层仍全量返回）。
-# 代价：melib 白带 rusqlite ^0.37（与我们 0.40 共存，双份 bundled SQLite）
+# rusqlite 统一 0.37 与 melib 共用单份 bundled SQLite（lock 中仅一个 libsqlite3-sys）
 melib = { version = "0.8", default-features = false, features = ["imap", "sqlite3"] }
 imap-codec = "=2.0.0-alpha.4"
 imap-types = "=2.0.0-alpha.3"

@@ -50,10 +50,22 @@ fn main() -> iced::Result {
         };
     }
     tray::spawn();
+    // 窗口几何记忆（ui.json；无记录用默认）
+    let (win_size, win_pos) = match crate::lang::load_prefs(&crate::paths().1).win {
+        Some([w, h, x, y]) if w >= 980.0 && h >= 560.0 => (
+            iced::Size::new(w, h),
+            iced::window::Position::Specific(iced::Point::new(x, y)),
+        ),
+        _ => (
+            iced::Size::new(1280.0, 760.0),
+            iced::window::Position::Default,
+        ),
+    };
     iced::application(State::boot, update, view)
         .title("s-mail")
         .window(iced::window::Settings {
-            size: iced::Size::new(1280.0, 760.0),
+            size: win_size,
+            position: win_pos,
             min_size: Some(iced::Size::new(980.0, 560.0)),
             ..Default::default()
         })
@@ -65,6 +77,7 @@ fn main() -> iced::Result {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // 事件/解析结果大负载一次性传递（盒装无收益）
 pub(crate) enum Message {
     Ev(TaggedEvent),
     FolderSelected(usize, String),
@@ -99,12 +112,16 @@ pub(crate) enum Message {
     KeyPressed(iced::keyboard::Key),
     /// 系统深浅色（跟随模式）
     SystemTheme(iced::theme::Mode),
+    /// 窗口几何（记忆尺寸/位置；节流落盘）
+    WindowGeometry(iced::window::Event),
     /// 点会话根行：切换展开 + 打开最新一封（acct, root_hash, latest_hash）
     ThreadRootClicked(usize, i64, i64),
     AskDelete(usize, i64),
     CancelDelete,
     /// 回复（发件人 + 引用正文）
     Reply(usize, i64),
+    /// 转发附件就绪（从 .eml 提取后回填 compose；staging 路径）
+    ForwardAttachmentsReady(Vec<PathBuf>),
     /// 回复全部（发件人 + 所有收件人 + 引用）
     ReplyAll(usize, i64),
     /// 转发（引用正文，收件人留空）
@@ -225,6 +242,11 @@ pub(crate) enum Message {
     PgpEditCancel,
     /// WKD 自动发现开关
     PgpEditWkd(bool),
+    // ---- 签名编辑（设置屏内联；compose 预填用） ----
+    SignatureEditOpen(usize),
+    SignatureEditAction(iced::widget::text_editor::Action),
+    SignatureEditSave,
+    SignatureEditCancel,
     // ---- B6：账号密码入系统钥匙串 ----
     /// 把该账号的明文 IMAP/SMTP 密码迁入钥匙串，config 改存标记
     KeychainMove(usize),
@@ -279,7 +301,7 @@ pub(crate) enum AiField {
 #[derive(Clone)]
 pub(crate) struct EventTap {
     id: u64,
-    rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TaggedEvent>>>,
+    rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<TaggedEvent>>>,
 }
 
 /// 托盘订阅标识（Receiver 无 Hash；用引用地址，静态存活期内稳定）
@@ -299,7 +321,7 @@ impl std::hash::Hash for TrayTap {
 }
 
 impl EventTap {
-    fn new(rx: tokio::sync::mpsc::UnboundedReceiver<TaggedEvent>) -> Self {
+    fn new(rx: tokio::sync::mpsc::Receiver<TaggedEvent>) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Self {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
@@ -346,6 +368,8 @@ pub(crate) struct Reading {
     pub(crate) images: Vec<iced::widget::image::Handle>,
     /// 未加载的远程图片 URL（显示「显示图片」按钮）
     pub(crate) remote_pending: Vec<String>,
+    /// 图片附件（预览）：(文件名, 显示句柄)
+    pub(crate) attach_images: Vec<(String, iced::widget::image::Handle)>,
     /// 远程图下载中（防重复请求；失败后可重试——pending 不在点击时清空）
     pub(crate) remote_loading: bool,
     pub(crate) md: Option<iced::widget::markdown::Content>,
@@ -456,6 +480,8 @@ pub(crate) struct State {
     pub(crate) contacts_full: Vec<(usize, Vec<smail_store::ContactRow>)>,
     /// B4：账号 PGP 内联编辑中：（账号索引, 表单）
     pub(crate) pgp_edit: Option<(usize, setup::PgpForm)>,
+    /// 签名内联编辑中：（账号索引, 编辑器内容）
+    pub(crate) signature_edit: Option<(usize, text_editor::Content)>,
     /// 导出目标：保存对话框期间用户可能切换邮件，回调不能再用 selected
     /// （文件名是请求时的主题，导出内容也必须是请求时的邮件）
     pub(crate) export_target: Option<(usize, i64)>,
@@ -470,6 +496,9 @@ pub(crate) struct State {
     pub(crate) list_filter: ListFilter,
     /// false=新→旧（默认）；true=旧→新
     pub(crate) list_asc: bool,
+    /// 窗口几何（w,h,x,y；拖动/缩放时更新，节流落盘 ui.json）
+    pub(crate) win_geom: Option<[f32; 4]>,
+    pub(crate) win_save_at: Option<std::time::Instant>,
 }
 
 /// 列表快速过滤（会话视图按会话级谓词：任一成员命中则显示整会话）
@@ -491,7 +520,7 @@ impl State {
 
     fn boot() -> (Self, Task<Message>) {
         let (cfg_path, data_root) = paths();
-        let (boot_theme, boot_follow, boot_lang, boot_ai_ack) = boot_prefs(&data_root);
+        let (boot_theme, boot_follow, boot_lang, boot_ai_ack, boot_win) = boot_prefs(&data_root);
         match Session::start(&cfg_path, &data_root) {
             Ok((session, rx)) => {
                 let accounts = smail_core::load_accounts(&cfg_path).unwrap_or_default();
@@ -544,17 +573,21 @@ impl State {
                     contacts: vec![],
                     contacts_full: vec![],
                     pgp_edit: None,
+                    signature_edit: None,
                     export_target: None,
                     load_more_pending: false,
                     load_more_done: false,
                     list_filter: ListFilter::All,
                     list_asc: false,
+                    win_geom: None,
+                    win_save_at: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
                     ),
                 };
                 let mut state = state;
+                state.win_geom = boot_win;
                 state.ai.ack = boot_ai_ack;
                 state.cmd_tx = state.session.as_ref().map(|s| s.cmd_tx.clone());
                 // 初始语言下推（服务线程默认 zh；英文界面重启后保持英文状态文案）
@@ -621,17 +654,21 @@ impl State {
                     contacts: vec![],
                     contacts_full: vec![],
                     pgp_edit: None,
+                    signature_edit: None,
                     export_target: None,
                     load_more_pending: false,
                     load_more_done: false,
                     list_filter: ListFilter::All,
                     list_asc: false,
+                    win_geom: None,
+                    win_save_at: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
                     ),
                 };
                 let mut state = state;
+                state.win_geom = boot_win;
                 state.ai.ack = boot_ai_ack;
                 (state, Task::none())
             }
@@ -803,7 +840,9 @@ fn ui_theme_from_env() -> Theme {
 
 /// 启动主题/语言：环境变量 > ui.json 手动选择 > 跟随系统。
 /// （选过主题后不再跟随系统——手动选择优先，与顶栏切换语义一致）
-fn boot_prefs(data_root: &std::path::Path) -> (Theme, bool, crate::lang::Lang, bool) {
+fn boot_prefs(
+    data_root: &std::path::Path,
+) -> (Theme, bool, crate::lang::Lang, bool, Option<[f32; 4]>) {
     let prefs = crate::lang::load_prefs(data_root);
     let env_set = std::env::var_os("SMAIL_THEME").is_some();
     let theme = if env_set {
@@ -820,6 +859,7 @@ fn boot_prefs(data_root: &std::path::Path) -> (Theme, bool, crate::lang::Lang, b
         !env_set && prefs.dark.is_none(),
         prefs.lang,
         prefs.ai_ack,
+        prefs.win,
     )
 }
 
@@ -973,12 +1013,24 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 Theme::Dark => Theme::Light,
                 _ => Theme::Dark,
             };
-            crate::lang::save_prefs(&state.data_root, state.lang, &state.ui_theme, state.ai.ack);
+            crate::lang::save_prefs(
+                &state.data_root,
+                state.lang,
+                &state.ui_theme,
+                state.ai.ack,
+                state.win_geom,
+            );
             Task::none()
         }
         Message::ToggleLang => {
             state.lang = state.lang.toggle();
-            crate::lang::save_prefs(&state.data_root, state.lang, &state.ui_theme, state.ai.ack);
+            crate::lang::save_prefs(
+                &state.data_root,
+                state.lang,
+                &state.ui_theme,
+                state.ai.ack,
+                state.win_geom,
+            );
             // 状态/错误文案跟随：广播到全部服务线程（立即生效，无需重启）
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::SetLang(matches!(
@@ -1190,6 +1242,48 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::OAuthOpenUrl => {
             if let Some((url, _)) = &state.oauth_prompt {
                 smail_core::oauth::open_url(url);
+            }
+            Task::none()
+        }
+        Message::WindowGeometry(ev) => {
+            // 只关心主窗口尺寸/位置；节流写盘（拖动时事件风暴）
+            let geom = match ev {
+                iced::window::Event::Resized(size) => state.win_geom.map(|g| {
+                    let mut n = g;
+                    n[0] = size.width;
+                    n[1] = size.height;
+                    n
+                }),
+                iced::window::Event::Moved(pos) => state.win_geom.map(|g| {
+                    let mut n = g;
+                    n[2] = pos.x;
+                    n[3] = pos.y;
+                    n
+                }),
+                iced::window::Event::Opened { position, size } => Some([
+                    size.width,
+                    size.height,
+                    position.map(|p| p.x).unwrap_or(100.0),
+                    position.map(|p| p.y).unwrap_or(100.0),
+                ]),
+                _ => None,
+            };
+            if let Some(g) = geom {
+                state.win_geom = Some(g);
+                let due = state
+                    .win_save_at
+                    .map(|t| t.elapsed().as_secs() >= 2)
+                    .unwrap_or(true);
+                if due {
+                    state.win_save_at = Some(std::time::Instant::now());
+                    crate::lang::save_prefs(
+                        &state.data_root,
+                        state.lang,
+                        &state.ui_theme,
+                        state.ai.ack,
+                        state.win_geom,
+                    );
+                }
             }
             Task::none()
         }
@@ -1450,6 +1544,44 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Forward(acct, hash) => {
             open_compose_with(state, acct, hash, ReplyKind::Forward);
+            // 转发带附件：从本地 .eml 提取到 staging 目录后回填（发送时
+            // 服务线程按路径读文件）。.eml 未缓存（没打开过就转发）则没有
+            // 附件，用户可在编辑器里手动添加
+            let slug = state
+                .accounts
+                .get(acct)
+                .map(|a| a.slug.clone())
+                .unwrap_or_default();
+            let eml = state
+                .data_root
+                .join(slug)
+                .join("bodies")
+                .join(format!("{hash}.eml"));
+            let staging = state.data_root.join("attachments-staging");
+            if eml.exists() {
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            extract_forward_attachments(&eml, &staging)
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    Message::ForwardAttachmentsReady,
+                );
+            }
+            Task::none()
+        }
+        Message::ForwardAttachmentsReady(paths) => {
+            if let Screen::Compose(c) = &mut state.screen {
+                for p in paths {
+                    if let Some(ps) = p.to_str() {
+                        if !c.attachments.contains(&ps.to_string()) {
+                            c.attachments.push(ps.to_string());
+                        }
+                    }
+                }
+            }
             Task::none()
         }
         Message::CancelDelete => {
@@ -1557,6 +1689,45 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::LinkClicked(url) => {
             if url.starts_with("http://") || url.starts_with("https://") {
                 open_in_browser(&url);
+            } else if let Some(rest) = url.strip_prefix("mailto:") {
+                // 正文里的 mailto 链接：预填写信（与退订入口同一解析规则）
+                let to = rest.split('?').next().unwrap_or(rest).to_string();
+                if !to.is_empty() && !state.account_names.is_empty() {
+                    let subject = rest
+                        .split("subject=")
+                        .nth(1)
+                        .map(|s| s.split('&').next().unwrap_or(s).to_string())
+                        .unwrap_or_default();
+                    let account = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+                    let mut body = text_editor::Content::new();
+                    if let Some(sig) = state
+                        .accounts
+                        .get(account)
+                        .and_then(|a| a.signature.as_ref())
+                        .filter(|s| !s.trim().is_empty())
+                    {
+                        body.perform(compose::text_editor_edit_paste(&format!("\n\n-- \n{sig}")));
+                    }
+                    state.screen = Screen::Compose(Compose {
+                        ai_instruction: String::new(),
+                        ai_busy: false,
+                        ai_overwrite_ask: false,
+                        ai_pending: None,
+                        ai_rewrite_mode: false,
+                        ai_prev: None,
+                        draft_id: None,
+                        account,
+                        pgp_sign: false,
+                        pgp_encrypt: false,
+                        confirm_discard: false,
+                        to,
+                        cc: String::new(),
+                        bcc: String::new(),
+                        subject,
+                        body,
+                        attachments: vec![],
+                    });
+                }
             }
             Task::none()
         }
@@ -1889,7 +2060,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::AiPrivacyAck => {
             state.ai.ack = true;
-            crate::lang::save_prefs(&state.data_root, state.lang, &state.ui_theme, state.ai.ack);
+            crate::lang::save_prefs(
+                &state.data_root,
+                state.lang,
+                &state.ui_theme,
+                state.ai.ack,
+                state.win_geom,
+            );
             let pending = state.ai.privacy_pending.take();
             match pending {
                 Some(m) => update(state, m),
@@ -2237,6 +2414,48 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.pgp_edit = None;
             Task::none()
         }
+        Message::SignatureEditOpen(i) => {
+            let sig = state
+                .accounts
+                .get(i)
+                .and_then(|a| a.signature.clone())
+                .unwrap_or_default();
+            let mut content = text_editor::Content::new();
+            if !sig.is_empty() {
+                content.perform(compose::text_editor_edit_paste(&sig));
+            }
+            state.signature_edit = Some((i, content));
+            Task::none()
+        }
+        Message::SignatureEditAction(action) => {
+            if let Some((_, content)) = &mut state.signature_edit {
+                content.perform(action);
+            }
+            Task::none()
+        }
+        Message::SignatureEditSave => {
+            let Some((i, content)) = state.signature_edit.take() else {
+                return Task::none();
+            };
+            let text = content.text().to_string();
+            if let Some(a) = state.accounts.get_mut(i) {
+                a.signature = if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(text)
+                };
+            }
+            // 签名是纯客户端字段（compose 预填）：写盘即生效，无需重启会话
+            let accounts = state.accounts.clone();
+            if let Err(e) = smail_core::save_accounts(&state.cfg_path, &accounts) {
+                state.error = Some(crate::lang::f(state.l().err_save_cfg, &[&e]));
+            }
+            Task::none()
+        }
+        Message::SignatureEditCancel => {
+            state.signature_edit = None;
+            Task::none()
+        }
         Message::KeychainMove(i) => {
             let Some(a) = state.accounts.get(i) else {
                 return Task::none();
@@ -2420,6 +2639,7 @@ fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> {
         }
         Event::BodyLoaded {
             hash,
+            attachment_images,
             subject,
             body,
             to_addrs,
@@ -2453,6 +2673,10 @@ fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> {
                 acct,
                 Reading {
                     hash,
+                    attach_images: attachment_images
+                        .into_iter()
+                        .map(|(n, b)| (n, iced::widget::image::Handle::from_bytes(b)))
+                        .collect(),
                     subject,
                     body,
                     to_addrs,
@@ -2599,6 +2823,8 @@ fn subscription(state: &State) -> Subscription<Message> {
         _ => None,
     });
     let theme_sub = iced::system::theme_changes().map(Message::SystemTheme);
+    // 窗口几何记忆：Resized/Moved 更新内存，节流写盘
+    let window_sub = iced::window::events().map(|(_id, ev)| Message::WindowGeometry(ev));
     // 托盘事件（std mpsc → 轮询转 Message；100ms 足够托盘交互）
     let tray_sub = match crate::tray::take_receiver() {
         Some(rx) => {
@@ -2632,7 +2858,7 @@ fn subscription(state: &State) -> Subscription<Message> {
         None => Subscription::none(),
     };
     let Some(events) = state.events.clone() else {
-        return Subscription::batch([keyboard, theme_sub, tray_sub]);
+        return Subscription::batch([keyboard, theme_sub, window_sub, tray_sub]);
     };
     let events_sub = Subscription::run_with(events, |events: &EventTap| {
         let events = events.rx.clone();
@@ -2926,6 +3152,47 @@ fn scroll_list_to_top() -> Task<Message> {
 }
 
 /// 系统默认浏览器打开 URL（macOS open / Linux xdg-open）
+/// 从 .eml 提取全部附件到 staging（转发用）；失败/无附件返回空
+fn extract_forward_attachments(eml: &PathBuf, staging: &PathBuf) -> Vec<PathBuf> {
+    use mail_parser::{MessageParser, MimeHeaders};
+    let Ok(bytes) = std::fs::read(eml) else {
+        return vec![];
+    };
+    // 护栏：超大邮件不做内存提取
+    if bytes.len() > 512 * 1024 * 1024 {
+        return vec![];
+    }
+    let Some(m) = MessageParser::default().parse(&bytes) else {
+        return vec![];
+    };
+    let _ = std::fs::create_dir_all(staging);
+    let stem = eml.file_stem().and_then(|s| s.to_str()).unwrap_or("fwd");
+    let mut out = Vec::new();
+    for (i, a) in m.attachments().enumerate() {
+        let Some(name) = a.attachment_name() else {
+            continue;
+        };
+        let safe: String = name
+            .chars()
+            .map(|c| {
+                if c == '/' || c == '\\' || c == '\0' {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        if safe.is_empty() || safe == "." || safe == ".." {
+            continue;
+        }
+        let path = staging.join(format!("{stem}-{i}-{safe}"));
+        if std::fs::write(&path, a.contents()).is_ok() {
+            out.push(path);
+        }
+    }
+    out
+}
+
 fn open_in_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let program = "open";
