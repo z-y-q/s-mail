@@ -905,6 +905,9 @@ impl ServiceInner {
         }
 
         let mut current_folder: Option<String> = None;
+        // 延迟同步目标（SelectFolder 标记；主循环 drain 完命令后执行，
+        // 避免每个文件夹切换的 SELECT+FETCH 阻塞后续命令处理）
+        let mut pending_sync: Option<String> = None;
         let mut conn = self.connect_initial();
 
         // 初次连接成功。顺序影响体感：LIST（最快）先行让侧栏立即可交互，
@@ -932,7 +935,13 @@ impl ServiceInner {
             match cmd_rx.recv_timeout(timeout) {
                 Ok(Cmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
                 Ok(cmd) => {
-                    if self.handle_cmd(cmd, &mut conn, &store, &mut current_folder) {
+                    if self.handle_cmd(
+                        cmd,
+                        &mut conn,
+                        &store,
+                        &mut current_folder,
+                        &mut pending_sync,
+                    ) {
                         return;
                     }
                 }
@@ -969,17 +978,20 @@ impl ServiceInner {
                         };
                         continue;
                     }
-                    for folder in &changed {
-                        self.sync_folder(backend.as_mut(), &store, folder);
-                    }
-                    // Drafts 文件夹变更 → 草稿对账（其他设备的编辑/删除回拉）
-                    if let Some(df) = backend.drafts_folder_name() {
-                        if changed.contains(&df) {
-                            self.sync_drafts(backend.as_mut(), &store);
+                    // IDLE 多文件夹变更：一次同步一个（旧版串行同步全部，
+                    // 3 个文件夹变更 = 3×SELECT+FETCH 全程阻塞命令循环）
+                    if let Some(folder) = changed.iter().next() {
+                        let f = folder.clone();
+                        changed.remove(&f);
+                        self.sync_folder(backend.as_mut(), &store, &f);
+                        // Drafts 变更 → 草稿对账
+                        if let Some(df) = backend.drafts_folder_name() {
+                            if f == df {
+                                self.sync_drafts(backend.as_mut(), &store);
+                            }
                         }
-                    }
-                    if !changed.is_empty() {
-                        self.emit_folders(backend.as_mut(), &store);
+                        // 本地计数刷新（无 LIST 往返；LIST 只留结构性变化）
+                        self.emit_folder_counts(&store);
                     }
                     tick = tick.wrapping_add(1);
                     // oauth：token 临期前主动走重连路径刷新（tick 200ms → 约每 60s 查一次）
@@ -1053,8 +1065,22 @@ impl ServiceInner {
                 }
             }
             if let Some(cmd) = deferred {
-                if self.handle_cmd(cmd, &mut conn, &store, &mut current_folder) {
+                if self.handle_cmd(
+                    cmd,
+                    &mut conn,
+                    &store,
+                    &mut current_folder,
+                    &mut pending_sync,
+                ) {
                     return;
+                }
+            }
+            // 延迟同步：命令队列已 drain，现在执行最后一次请求的文件夹同步
+            //（用户快速切 A→B→C 时只同步 C，不排队 A/B 的 SELECT+FETCH）
+            if let Some(folder) = pending_sync.take() {
+                if let Conn::Up { backend, .. } = &mut conn {
+                    self.sync_folder(backend.as_mut(), &store, &folder);
+                    self.emit_folder_counts(&store);
                 }
             }
         }
@@ -1147,6 +1173,7 @@ impl ServiceInner {
         conn: &mut Conn,
         store: &Store,
         current_folder: &mut Option<String>,
+        pending_sync: &mut Option<String>,
     ) -> bool {
         match cmd {
             Cmd::Shutdown => return true,
@@ -1170,10 +1197,9 @@ impl ServiceInner {
                     None => true,
                 };
                 if fresh {
-                    if let Conn::Up { backend, .. } = &mut *conn {
-                        self.sync_folder(backend.as_mut(), store, &folder);
-                        self.emit_folders(backend.as_mut(), store);
-                    }
+                    // 延迟同步：不阻塞命令循环（用户快速切文件夹时每个
+                    // SELECT+FETCH 2-5s 串行排队 → 主循环 drain 完后只同步最终选中的）
+                    *pending_sync = Some(folder);
                 }
             }
             Cmd::ForceRefresh(folder) => {
@@ -1184,10 +1210,7 @@ impl ServiceInner {
                 )));
                 // 清 TTL 再走常规同步（sync_folder 会在成功后重新计时）
                 self.last_sync.borrow_mut().remove(&folder);
-                if let Conn::Up { backend, .. } = &mut *conn {
-                    self.sync_folder(backend.as_mut(), store, &folder);
-                    self.emit_folders(backend.as_mut(), store);
-                }
+                *pending_sync = Some(folder);
             }
             Cmd::LoadMore(folder) => {
                 // 触底翻页：上限 +500 后本地索引整体重发（FolderLoaded 全量替换语义）。
@@ -1433,6 +1456,11 @@ impl ServiceInner {
                                 &[],
                             )));
                             self.move_messages_cmd(conn, store, &[hash], &dest);
+                            // Trash 可能刚被 ensure_trash_folder 创建——本地无数据，
+                            // emit_folder_counts 看不见它；必须 LIST 让侧栏知道新文件夹
+                            if let Conn::Up { backend, .. } = &mut *conn {
+                                self.emit_folders(backend.as_mut(), store);
+                            }
                             // 移动成功=源视图本地行已清（消费方按“已删”语义处理，如 m2 e2e）
                             if store.get(hash).ok().flatten().is_none() {
                                 self.emit(Event::MessageDeleted(hash));
@@ -2001,8 +2029,9 @@ impl ServiceInner {
                 "Moved {} message(s) to {}",
                 &[&moved, &dest],
             )));
-            // 侧栏计数即时刷新（不等 IDLE：源/目标文件夹计数与未读数都变了）
-            self.emit_folders(backend, store);
+            // 侧栏计数即时刷新（不等 IDLE；本地计数零网络往返——
+            // LIST 只留给结构性变化：建/删/改名文件夹）
+            self.emit_folder_counts(store);
         } else if !hashes.is_empty() {
             self.emit(Event::Status(self.tr(
                 "没有可移动的邮件（可能已在目标文件夹或本地已删除）",
@@ -2100,6 +2129,10 @@ impl ServiceInner {
                 Some(dest) => {
                     let d = dest.clone();
                     self.move_messages_cmd(conn, store, &to_trash, &d);
+                    // Trash 可能新建（同上）：LIST 确保侧栏可见
+                    if let Conn::Up { backend, .. } = &mut *conn {
+                        self.emit_folders(backend.as_mut(), store);
+                    }
                     for h in &to_trash {
                         if store.get(*h).ok().flatten().is_none() {
                             self.emit(Event::MessageDeleted(*h));
@@ -2139,7 +2172,7 @@ impl ServiceInner {
                 "Deleted {} message(s)",
                 &[&deleted],
             )));
-            self.emit_folders(backend, store);
+            self.emit_folder_counts(store);
         }
     }
 
@@ -2251,6 +2284,28 @@ impl ServiceInner {
             let key = |f: &str| (f != "INBOX", f.to_lowercase());
             key(&a.0).cmp(&key(&b.0))
         });
+        let infos = stats
+            .into_iter()
+            .map(|(path, total, unseen)| FolderInfo {
+                kind: smail_backend::folder_kind(&path),
+                total,
+                unseen,
+                path,
+            })
+            .collect();
+        self.emit(Event::Folders(infos));
+    }
+
+    /// 本地计数刷新（无网络往返）：sync 后侧栏数字即时更新。
+    /// LIST（emit_folders）只留给结构性变化（建/删/改名文件夹、首连、重连）
+    fn emit_folder_counts(&self, store: &Store) {
+        if !self.folders_ready.get() {
+            return;
+        }
+        let stats = store.folder_stats().unwrap_or_default();
+        if stats.is_empty() {
+            return;
+        }
         let infos = stats
             .into_iter()
             .map(|(path, total, unseen)| FolderInfo {
@@ -2613,8 +2668,8 @@ impl ServiceInner {
                         )));
                         let f = sent_folder;
                         self.sync_folder(backend, store, &f);
-                        // 侧栏 Sent 计数即时刷新（不等 IDLE）
-                        self.emit_folders(backend, store);
+                        // 侧栏 Sent 计数即时刷新（本地计数零往返）
+                        self.emit_folder_counts(store);
                     }
                     Err(e) => {
                         self.emit(Event::Status(self.trf(
