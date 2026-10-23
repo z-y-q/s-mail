@@ -809,7 +809,7 @@ impl AccountService {
 /// 列表单次返回上限（无分页；UI 在满额时提示）
 pub const UI_LIST_LIMIT: u32 = 500;
 /// 后台索引器每批条数（约 3 秒一批）
-const INDEX_BATCH: u32 = 10;
+const INDEX_BATCH: u32 = 5;
 /// 切换文件夹时的重同步阈值：TTL 内信任本地索引，不再全量拉取
 ///（变更由 IDLE 推送补齐；避免来回切换反复 FETCH 整个文件夹）
 const FOLDER_RESYNC_TTL: Duration = Duration::from_secs(60);
@@ -2808,6 +2808,11 @@ impl ServiceInner {
         store: &Store,
         cmd_rx: &Receiver<Cmd>,
     ) -> Option<Cmd> {
+        // 有排队命令时不启动索引（旧版总是先 fetch 一封再 yield——
+        // 命令高峰期每次 tick 都白等 1-2s 网络）
+        if let Ok(cmd) = cmd_rx.try_recv() {
+            return Some(cmd);
+        }
         let todo = store.unindexed(INDEX_BATCH).unwrap_or_default();
         for hash in todo {
             if let Ok(cmd) = cmd_rx.try_recv() {
