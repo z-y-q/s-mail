@@ -78,13 +78,22 @@ pub(crate) enum DispKind {
     ThreadChild,
 }
 
-pub(crate) struct State {
-    /// UI 主题（顶栏 🌙/☀️ 切换；深色下全套样式自适应）
+/// UI 偏好（主题/语言/窗口/上次视图）——State 拆分第一组
+pub(crate) struct Prefs {
     pub(crate) ui_theme: Theme,
     /// 未手动切换时跟随系统深浅色
     pub(crate) theme_follow: bool,
     /// UI 语言（中文默认；顶栏可切英文，存 ui.json）
     pub(crate) lang: crate::lang::Lang,
+    /// 窗口几何（w,h,x,y；拖动/缩放时更新，节流落盘 ui.json）
+    pub(crate) win_geom: Option<[f32; 4]>,
+    pub(crate) win_save_at: Option<std::time::Instant>,
+    /// 上次视图（账号名, 文件夹/伪视图；启动恢复，离线直达缓存）
+    pub(crate) last_view: Option<(String, String)>,
+}
+
+pub(crate) struct State {
+    pub(crate) prefs: Prefs,
     #[allow(dead_code)]
     pub(crate) session: Option<Session>,
     pub(crate) cmd_tx: Option<Sender<SessionCmd>>,
@@ -179,11 +188,6 @@ pub(crate) struct State {
     pub(crate) list_filter: ListFilter,
     /// false=新→旧（默认）；true=旧→新
     pub(crate) list_asc: bool,
-    /// 窗口几何（w,h,x,y；拖动/缩放时更新，节流落盘 ui.json）
-    pub(crate) win_geom: Option<[f32; 4]>,
-    pub(crate) win_save_at: Option<std::time::Instant>,
-    /// 上次视图（账号名, 文件夹/伪视图；启动恢复，离线直达缓存）
-    pub(crate) last_view: Option<(String, String)>,
 }
 
 /// 列表快速过滤（会话视图按会话级谓词：任一成员命中则显示整会话）
@@ -197,7 +201,7 @@ pub(crate) enum ListFilter {
 impl State {
     /// 当前语言字符串表
     pub(crate) fn l(&self) -> &'static crate::lang::Lex {
-        match self.lang {
+        match self.prefs.lang {
             crate::lang::Lang::Zh => &crate::lang::ZH,
             crate::lang::Lang::En => &crate::lang::EN,
         }
@@ -215,9 +219,14 @@ impl State {
                 let data_root2 = data_root.clone();
                 let accounts2 = accounts.clone();
                 let state = State {
-                    ui_theme: boot_theme,
-                    theme_follow: boot_follow,
-                    lang: boot_lang,
+                    prefs: Prefs {
+                        ui_theme: boot_theme,
+                        theme_follow: boot_follow,
+                        lang: boot_lang,
+                        win_geom: None,
+                        win_save_at: None,
+                        last_view: None,
+                    },
                     accounts: accounts2,
                     cfg_path: cfg_path2,
                     data_root: data_root2,
@@ -270,27 +279,25 @@ impl State {
                     load_more_done: false,
                     list_filter: ListFilter::All,
                     list_asc: false,
-                    win_geom: None,
-                    win_save_at: None,
-                    last_view: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
                     ),
                 };
                 let mut state = state;
-                state.win_geom = boot_win;
+                state.prefs.win_geom = boot_win;
                 state.ai.ack = boot_ai_ack;
                 state.cmd_tx = state.session.as_ref().map(|s| s.cmd_tx.clone());
                 // 初始语言下推（服务线程默认 zh；英文界面重启后保持英文状态文案）
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(SessionCmd::SetLang(matches!(
-                        state.lang,
+                        state.prefs.lang,
                         crate::lang::Lang::Zh
                     )));
                 }
                 // 恢复上次视图（离线优先：本地文件夹广播先行，启动直达缓存邮件，
                 // 不必等服务器连接成功）
+                state.prefs.last_view = boot_last_view.clone();
                 let restore = match boot_last_view {
                     Some((_, f)) if f == "__all_inbox__" && state.account_names.len() > 1 => {
                         crate::update(&mut state, Message::UnifiedInboxSelected)
@@ -317,9 +324,14 @@ impl State {
                     ));
                 }
                 let state = State {
-                    ui_theme: boot_theme,
-                    theme_follow: boot_follow,
-                    lang: boot_lang,
+                    prefs: Prefs {
+                        ui_theme: boot_theme,
+                        theme_follow: boot_follow,
+                        lang: boot_lang,
+                        win_geom: None,
+                        win_save_at: None,
+                        last_view: None,
+                    },
                     accounts: vec![],
                     cfg_path: cfg_path.clone(),
                     data_root: data_root.clone(),
@@ -372,16 +384,13 @@ impl State {
                     load_more_done: false,
                     list_filter: ListFilter::All,
                     list_asc: false,
-                    win_geom: None,
-                    win_save_at: None,
-                    last_view: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
                     ),
                 };
                 let mut state = state;
-                state.win_geom = boot_win;
+                state.prefs.win_geom = boot_win;
                 state.ai.ack = boot_ai_ack;
                 (state, Task::none())
             }
@@ -391,15 +400,15 @@ impl State {
     /// 当前 UI 偏好快照（写 ui.json 用——单一来源，字段增加不再散落调用点）
     pub(crate) fn current_prefs(&self) -> crate::lang::UiPrefs {
         crate::lang::UiPrefs {
-            lang: self.lang,
-            dark: if self.theme_follow {
+            lang: self.prefs.lang,
+            dark: if self.prefs.theme_follow {
                 None
             } else {
-                Some(matches!(self.ui_theme, iced::Theme::Dark))
+                Some(matches!(self.prefs.ui_theme, iced::Theme::Dark))
             },
             ai_ack: self.ai.ack,
-            win: self.win_geom,
-            last_view: self.last_view.clone(),
+            win: self.prefs.win_geom,
+            last_view: self.prefs.last_view.clone(),
         }
     }
 
@@ -518,7 +527,7 @@ pub(crate) fn persist_and_reload(
             state.cmd_tx = state.session.as_ref().map(|s| s.cmd_tx.clone());
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::SetLang(matches!(
-                    state.lang,
+                    state.prefs.lang,
                     crate::lang::Lang::Zh
                 )));
             }

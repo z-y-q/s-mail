@@ -33,9 +33,14 @@ fn folder(path: &str, kind: FolderKind) -> FolderInfo {
 /// 无会话测试态（send 全部 no-op；update/handle_event 可直接驱动）
 fn ts() -> State {
     State {
-        ui_theme: iced::Theme::Light,
-        theme_follow: true,
-        lang: crate::lang::Lang::Zh,
+        prefs: crate::Prefs {
+            ui_theme: iced::Theme::Light,
+            theme_follow: true,
+            lang: crate::lang::Lang::Zh,
+            win_geom: None,
+            win_save_at: None,
+            last_view: None,
+        },
         session: None,
         oauth_prompt: None,
         cmd_tx: None,
@@ -85,9 +90,6 @@ fn ts() -> State {
         load_more_done: false,
         list_filter: ListFilter::All,
         list_asc: false,
-        win_geom: None,
-        win_save_at: None,
-        last_view: None,
         accounts: vec![],
         cfg_path: std::path::PathBuf::from("/tmp/smail-test-config.toml"),
         data_root: std::path::PathBuf::from("/tmp"),
@@ -300,13 +302,13 @@ fn folder_selected_remembers_last_view() {
     let mut s = ts();
     let _ = update(&mut s, Message::FolderSelected(0, "INBOX".into()));
     assert_eq!(
-        s.last_view,
+        s.prefs.last_view,
         Some(("a@x".into(), "INBOX".into())),
         "切文件夹要记忆（账号名, 文件夹），供启动恢复"
     );
     let _ = update(&mut s, Message::UnifiedInboxSelected);
     assert_eq!(
-        s.last_view,
+        s.prefs.last_view,
         Some(("__unified__".into(), "__all_inbox__".into()))
     );
 }

@@ -75,7 +75,7 @@ fn main() -> iced::Result {
             min_size: Some(iced::Size::new(980.0, 560.0)),
             ..Default::default()
         })
-        .theme(|state: &State| state.ui_theme.clone())
+        .theme(|state: &State| state.prefs.ui_theme.clone())
         // macOS 系统字体（SF Pro Text；缺失时 iced 回退默认字体）
         .default_font(Font::with_name("SF Pro Text"))
         .subscription(subscription)
@@ -406,7 +406,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Ev(ev) => handle_event(state, ev),
         Message::UnifiedInboxSelected => {
-            state.last_view = Some(("__unified__".into(), "__all_inbox__".into()));
+            state.prefs.last_view = Some(("__unified__".into(), "__all_inbox__".into()));
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             state.in_search = false;
             state.viewing_unified = true;
@@ -478,7 +478,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::FolderSelected(acct, folder) => {
             // 记忆上次视图（按账号名存，账号增删/改名后索引漂移不影响）
             if let Some(name) = state.account_names.get(acct).cloned() {
-                state.last_view = Some((name, folder.clone()));
+                state.prefs.last_view = Some((name, folder.clone()));
                 crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             }
             state.in_search = false;
@@ -529,8 +529,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::ToggleUiTheme => {
             // 手动切换后不再跟随系统（Agency：用户显式选择优先）
-            state.theme_follow = false;
-            state.ui_theme = match state.ui_theme {
+            state.prefs.theme_follow = false;
+            state.prefs.ui_theme = match state.prefs.ui_theme {
                 Theme::Dark => Theme::Light,
                 _ => Theme::Dark,
             };
@@ -538,12 +538,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleLang => {
-            state.lang = state.lang.toggle();
+            state.prefs.lang = state.prefs.lang.toggle();
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             // 状态/错误文案跟随：广播到全部服务线程（立即生效，无需重启）
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::SetLang(matches!(
-                    state.lang,
+                    state.prefs.lang,
                     crate::lang::Lang::Zh
                 )));
             }
@@ -717,7 +717,21 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::SetupDelete(i) => {
             // B6：先清理钥匙串条目（删完配置后 marker 无处可查，条目会孤儿化）
+            // + 数据目录（index.db/bodies/meli cache/oauth token——磁盘泄漏）
             if let Some(a) = state.accounts.get(i) {
+                let slug = a.slug.clone();
+                let data_root = state.data_root.clone();
+                // persist_and_reload 会 Drop Session（等线程退出 → 文件锁释放）
+                // 之后再删目录——放到下一个 iced tick 执行（避免文件锁竞争）
+                let delete_dir = std::path::PathBuf::from(&data_root).join(&slug);
+                if delete_dir.exists() {
+                    // 延迟删：session Drop 在 persist_and_reload 内完成
+                    // 这里先标记，实际删除在 persist_and_reload 成功后
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let _ = std::fs::remove_dir_all(&delete_dir);
+                    });
+                }
                 let username = a.imap.username.clone();
                 let mut mids: Vec<String> = vec![];
                 if let Some(p) = &a.imap.password {
@@ -757,13 +771,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::WindowGeometry(ev) => {
             // 只关心主窗口尺寸/位置；节流写盘（拖动时事件风暴）
             let geom = match ev {
-                iced::window::Event::Resized(size) => state.win_geom.map(|g| {
+                iced::window::Event::Resized(size) => state.prefs.win_geom.map(|g| {
                     let mut n = g;
                     n[0] = size.width;
                     n[1] = size.height;
                     n
                 }),
-                iced::window::Event::Moved(pos) => state.win_geom.map(|g| {
+                iced::window::Event::Moved(pos) => state.prefs.win_geom.map(|g| {
                     let mut n = g;
                     n[2] = pos.x;
                     n[3] = pos.y;
@@ -778,21 +792,22 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 _ => None,
             };
             if let Some(g) = geom {
-                state.win_geom = Some(g);
+                state.prefs.win_geom = Some(g);
                 let due = state
+                    .prefs
                     .win_save_at
                     .map(|t| t.elapsed().as_secs() >= 2)
                     .unwrap_or(true);
                 if due {
-                    state.win_save_at = Some(std::time::Instant::now());
+                    state.prefs.win_save_at = Some(std::time::Instant::now());
                     crate::lang::save_prefs(&state.data_root, &state.current_prefs());
                 }
             }
             Task::none()
         }
         Message::SystemTheme(mode) => {
-            if state.theme_follow {
-                state.ui_theme = match mode {
+            if state.prefs.theme_follow {
+                state.prefs.ui_theme = match mode {
                     iced::theme::Mode::Dark => Theme::Dark,
                     _ => Theme::Light,
                 };

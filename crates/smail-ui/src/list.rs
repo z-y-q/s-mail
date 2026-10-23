@@ -169,7 +169,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 .style(theme::secondary_text),
             Space::new().width(Length::Fill),
             button(
-                text(if matches!(state.ui_theme, iced::Theme::Dark) {
+                text(if matches!(state.prefs.ui_theme, iced::Theme::Dark) {
                     "☀️"
                 } else {
                     "🌙"
@@ -179,7 +179,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .on_press(Message::ToggleUiTheme)
             .padding([4, 8])
             .style(theme::ghost_button),
-            button(text(state.lang.toggle_label()).size(12))
+            button(text(state.prefs.lang.toggle_label()).size(12))
                 .on_press(Message::ToggleLang)
                 .padding([4, 8])
                 .style(theme::ghost_button),

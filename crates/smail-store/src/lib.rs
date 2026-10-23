@@ -816,6 +816,16 @@ impl Store {
         Ok(())
     }
 
+    /// 清理 sent 状态的旧 outbox 行（保留最近 100 条；防磁盘慢泄漏）
+    pub fn outbox_clean_sent(&self) {
+        let _ = self.conn.execute(
+            "DELETE FROM outbox WHERE status = 'sent' AND id NOT IN (
+             SELECT id FROM outbox WHERE status = 'sent' ORDER BY id DESC LIMIT 100
+             )",
+            [],
+        );
+    }
+
     pub fn outbox_remove(&self, id: i64) -> rusqlite::Result<()> {
         self.conn
             .execute("DELETE FROM outbox WHERE id = ?1", [id])?;

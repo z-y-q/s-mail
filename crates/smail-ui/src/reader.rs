@@ -260,7 +260,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     // HTML 邮件卡片：随主题适配（深色用深底 + Dark 主题渲染 markdown；
     // 早期固定浅色是因为内容按 Light 解析会黑底黑字——根因是渲染主题写死，
     // 卡片底色与 markdown 主题一起切换后两态都自洽）
-    let dark = matches!(state.ui_theme, iced::Theme::Dark);
+    let dark = matches!(state.prefs.ui_theme, iced::Theme::Dark);
     let (card_bg, card_fg, md_theme) = if dark {
         (
             iced::Color::from_rgb(0.13, 0.13, 0.15),

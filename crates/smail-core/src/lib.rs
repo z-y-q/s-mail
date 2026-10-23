@@ -2507,6 +2507,8 @@ impl ServiceInner {
                 self.emit(Event::Status(self.trf("{} 封发件重试穷尽，已标 failed（请检查收件人/附件后重发）", "{} outgoing message(s) exhausted retries, marked failed (check recipients/attachments and resend)", &[&n])));
             }
         }
+        // sent 行清理（保留最近 100 条；防磁盘慢泄漏）
+        store.outbox_clean_sent();
         // counts 先于 early-return：最后一封发走（队列清空）时也要广播 (0,0)，
         // 否则侧栏徽标永远残留（旧版空队列提前 return，从不归零）
         let (p, f) = store.outbox_counts().unwrap_or((0, 0));

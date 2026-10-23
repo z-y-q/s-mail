@@ -181,7 +181,7 @@ fn clip_str(s: &str, limit: usize) -> String {
 }
 
 fn zh(state: &State) -> bool {
-    matches!(state.lang, crate::lang::Lang::Zh)
+    matches!(state.prefs.lang, crate::lang::Lang::Zh)
 }
 
 fn new_req(state: &mut State, kind: BusyKind) -> u64 {
