@@ -92,8 +92,35 @@ pub(crate) struct Prefs {
     pub(crate) last_view: Option<(String, String)>,
 }
 
+/// 导航与视图状态（文件夹/搜索/列表显示/分页）——State 拆分第二组
+pub(crate) struct Nav {
+    pub(crate) folders: Vec<(usize, FolderInfo)>,
+    /// 当前视图：(账号, 文件夹 | "__drafts__" | "__outbox__" | "__all_inbox__")
+    pub(crate) cur: Option<(usize, String)>,
+    pub(crate) in_search: bool,
+    /// 统一收件箱视图（多账号 INBOX 聚合；cur 存 "__all_inbox__" 占位）
+    pub(crate) viewing_unified: bool,
+    pub(crate) search_query: String,
+    /// 搜索框文字（回车提交才触发搜索）
+    pub(crate) search_text: String,
+    /// M5 会话视图开关（文件夹视图生效；搜索结果恒平铺）
+    pub(crate) threaded: bool,
+    /// 触底加载：已请求下一页（防重复触发）
+    pub(crate) load_more_pending: bool,
+    /// 触底加载：已到最后一页（不再触发）
+    pub(crate) load_more_done: bool,
+    /// 列表快速过滤（文件夹视图；作用于显示模型）
+    pub(crate) list_filter: ListFilter,
+    /// 列表排序方向（true = 升序；文件夹视图）
+    pub(crate) list_asc: bool,
+    pub(crate) list_offset: f32,
+    /// 列表可视高度（初始估计；首个滚动事件后用 viewport 实测校正）
+    pub(crate) list_view_h: f32,
+}
+
 pub(crate) struct State {
     pub(crate) prefs: Prefs,
+    pub(crate) nav: Nav,
     #[allow(dead_code)]
     pub(crate) session: Option<Session>,
     pub(crate) cmd_tx: Option<Sender<SessionCmd>>,
@@ -101,16 +128,8 @@ pub(crate) struct State {
     pub(crate) account_names: Vec<String>,
     pub(crate) error: Option<String>,
     pub(crate) setup_hint: Option<String>,
-    /// (账号, 文件夹信息)
-    pub(crate) folders: Vec<(usize, FolderInfo)>,
-    /// 当前视图：(账号, 文件夹 | "__drafts__")
-    pub(crate) cur: Option<(usize, String)>,
-    pub(crate) in_search: bool,
-    /// 统一收件箱视图（多账号 INBOX 聚合；cur 存 "__all_inbox__" 占位）
-    pub(crate) viewing_unified: bool,
     /// 统一收件箱按账号聚合
     pub(crate) unified_contrib: HashMap<usize, Vec<MessageRow>>,
-    pub(crate) search_query: String,
     /// 搜索结果按账号聚合
     pub(crate) search_contrib: HashMap<usize, Vec<MessageRow>>,
     /// 搜索正文片段（hash → snippet；渲染搜索结果行时显示）
@@ -127,16 +146,9 @@ pub(crate) struct State {
     pub(crate) body_req: Option<(usize, i64)>,
     /// 删除确认中：(账号, hash)
     pub(crate) pending_delete: Option<(usize, i64)>,
-    /// M5 会话视图开关（文件夹视图生效；搜索结果恒平铺）
-    pub(crate) threaded: bool,
     /// 展开的会话（key = 根邮件 hash）
     pub(crate) expanded: HashMap<i64, bool>,
-    pub(crate) list_offset: f32,
-    /// 列表可视高度（初始取估计值，首个滚动事件后用 viewport 实测校正；
-    /// 虚拟化窗口按它计算，旧版写死 590 导致矮窗口截底/高窗口浪费）
-    pub(crate) list_view_h: f32,
     pub(crate) screen: Screen,
-    pub(crate) search_text: String,
     /// 每账号最近状态（顶栏展示）
     pub(crate) statuses: HashMap<usize, String>,
     /// M6：完整账号配置（添加/删除后写回并热重载会话）
@@ -177,17 +189,8 @@ pub(crate) struct State {
     /// 导出目标：保存对话框期间用户可能切换邮件，回调不能再用 selected
     /// （文件名是请求时的主题，导出内容也必须是请求时的邮件）
     pub(crate) export_target: Option<(usize, i64)>,
-    // ---- 分页：触底加载 ----
-    /// 已发 LoadMore 等待 FolderLoaded（防重复请求）
-    pub(crate) load_more_pending: bool,
-    /// 本文件夹已到底（LoadMore 后行数不再增长；切文件夹重置）
-    pub(crate) load_more_done: bool,
     /// AI 助手状态（配置/在途/摘要缓存/整理预览）
     pub(crate) ai: crate::ai::AiUiState,
-    // ---- 过滤/排序（文件夹视图；作用于显示模型，不影响底层数据） ----
-    pub(crate) list_filter: ListFilter,
-    /// false=新→旧（默认）；true=旧→新
-    pub(crate) list_asc: bool,
 }
 
 /// 列表快速过滤（会话视图按会话级谓词：任一成员命中则显示整会话）
@@ -237,12 +240,22 @@ impl State {
                     account_names: names,
                     error: None,
                     setup_hint: None,
-                    folders: vec![],
-                    cur: None,
-                    in_search: false,
-                    viewing_unified: false,
+                    nav: Nav {
+                        folders: vec![],
+                        cur: None,
+                        in_search: false,
+                        viewing_unified: false,
+                        search_query: String::new(),
+                        search_text: String::new(),
+                        threaded: true,
+                        load_more_pending: false,
+                        load_more_done: false,
+                        list_filter: ListFilter::All,
+                        list_asc: false,
+                        list_offset: 0.0,
+                        list_view_h: list::DEFAULT_VIEW_H,
+                    },
                     unified_contrib: HashMap::new(),
-                    search_query: String::new(),
                     search_contrib: HashMap::new(),
                     search_snippets: HashMap::new(),
                     rows: vec![],
@@ -252,12 +265,8 @@ impl State {
                     reading: None,
                     body_req: None,
                     pending_delete: None,
-                    threaded: true,
                     expanded: HashMap::new(),
-                    list_offset: 0.0,
-                    list_view_h: list::DEFAULT_VIEW_H,
                     screen: Screen::Mail,
-                    search_text: String::new(),
                     statuses: HashMap::new(),
                     selection: Default::default(),
                     batch_move_open: false,
@@ -275,10 +284,6 @@ impl State {
                     pgp_edit: None,
                     signature_edit: None,
                     export_target: None,
-                    load_more_pending: false,
-                    load_more_done: false,
-                    list_filter: ListFilter::All,
-                    list_asc: false,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
@@ -342,12 +347,22 @@ impl State {
                     account_names: vec![],
                     error: None,
                     setup_hint: None,
-                    folders: vec![],
-                    cur: None,
-                    in_search: false,
-                    viewing_unified: false,
+                    nav: Nav {
+                        folders: vec![],
+                        cur: None,
+                        in_search: false,
+                        viewing_unified: false,
+                        search_query: String::new(),
+                        search_text: String::new(),
+                        threaded: true,
+                        load_more_pending: false,
+                        load_more_done: false,
+                        list_filter: ListFilter::All,
+                        list_asc: false,
+                        list_offset: 0.0,
+                        list_view_h: list::DEFAULT_VIEW_H,
+                    },
                     unified_contrib: HashMap::new(),
-                    search_query: String::new(),
                     search_contrib: HashMap::new(),
                     search_snippets: HashMap::new(),
                     rows: vec![],
@@ -357,12 +372,8 @@ impl State {
                     reading: None,
                     body_req: None,
                     pending_delete: None,
-                    threaded: true,
                     expanded: HashMap::new(),
-                    list_offset: 0.0,
-                    list_view_h: list::DEFAULT_VIEW_H,
                     screen: Screen::Setup(setup),
-                    search_text: String::new(),
                     statuses: HashMap::new(),
                     selection: Default::default(),
                     batch_move_open: false,
@@ -380,10 +391,6 @@ impl State {
                     pgp_edit: None,
                     signature_edit: None,
                     export_target: None,
-                    load_more_pending: false,
-                    load_more_done: false,
-                    list_filter: ListFilter::All,
-                    list_asc: false,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
@@ -414,10 +421,12 @@ impl State {
 
     /// 当前文件夹是否废纸篓（删除确认文案/语义提示用）
     pub(crate) fn cur_is_trash_folder(&self) -> bool {
-        self.cur
+        self.nav
+            .cur
             .as_ref()
             .and_then(|(a, f)| {
-                self.folders
+                self.nav
+                    .folders
                     .iter()
                     .find(|(fa, fi)| fa == a && &fi.path == f)
             })
@@ -452,9 +461,9 @@ pub(crate) fn persist_and_reload(
     accounts: Vec<smail_core::AccountConfig>,
 ) -> bool {
     // 账号删到 1 个后统一收件箱入口消失——强制退出该视图防困死
-    if accounts.len() < 2 && state.viewing_unified {
-        state.viewing_unified = false;
-        state.cur = None;
+    if accounts.len() < 2 && state.nav.viewing_unified {
+        state.nav.viewing_unified = false;
+        state.nav.cur = None;
     }
     // 账号增删后索引位移：所有按账号索引 key 的缓存与指向旧账号位的
     // 瞬态全部作发（含空账号集分支——它提前 return，不能只放在后面）
@@ -474,15 +483,15 @@ pub(crate) fn persist_and_reload(
     state.outbox_rows.clear();
     state.outbox_counts.clear();
     state.conn_ok.clear();
-    state.list_offset = 0.0;
-    state.load_more_pending = false;
-    state.load_more_done = false;
+    state.nav.list_offset = 0.0;
+    state.nav.load_more_pending = false;
+    state.nav.load_more_done = false;
     // 当前视图指向的账号索引已位移（删账号后指向别人）：作废，
     // 用户重新选文件夹（否则列表头显示 "? / INBOX"、行指向错误账号）
-    state.cur = None;
-    state.viewing_unified = false;
-    state.in_search = false;
-    state.search_text.clear();
+    state.nav.cur = None;
+    state.nav.viewing_unified = false;
+    state.nav.in_search = false;
+    state.nav.search_text.clear();
     state.search_snippets.clear();
     // 空账号集：Session 起不来是预期，落盘后直接进无会话空态（不报错）
     if accounts.is_empty() {
@@ -493,12 +502,12 @@ pub(crate) fn persist_and_reload(
                 state.events = None;
                 state.accounts = vec![];
                 state.account_names = vec![];
-                state.folders.clear();
+                state.nav.folders.clear();
                 state.rows.clear();
                 state.rebuild_display();
                 state.reading = None;
                 state.selected = None;
-                state.in_search = false;
+                state.nav.in_search = false;
                 state.statuses.clear();
                 state.oauth_prompt = None;
                 true
@@ -534,7 +543,7 @@ pub(crate) fn persist_and_reload(
             state.events = Some(EventTap::new(rx));
             state.accounts = accounts;
             state.account_names = state.accounts.iter().map(|a| a.name.clone()).collect();
-            state.folders.clear();
+            state.nav.folders.clear();
             state.rows.clear();
             state.rebuild_display();
             state.drafts.clear();
@@ -542,8 +551,8 @@ pub(crate) fn persist_and_reload(
             state.outbox_counts.clear();
             state.reading = None;
             state.selected = None;
-            state.in_search = false;
-            state.search_text.clear();
+            state.nav.in_search = false;
+            state.nav.search_text.clear();
             state.statuses.clear();
             state.oauth_prompt = None;
             state.error = None;

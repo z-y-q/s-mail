@@ -22,12 +22,13 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             state.statuses.insert(acct, format!("错误：{s}"));
         }
         Event::Folders(infos) => {
-            state.folders.retain(|(a, _)| *a != acct);
+            state.nav.folders.retain(|(a, _)| *a != acct);
             for info in infos {
-                state.folders.push((acct, info));
+                state.nav.folders.push((acct, info));
             }
             // 托盘未读数（各账号 INBOX 未读之和）
             let total: u32 = state
+                .nav
                 .folders
                 .iter()
                 .filter(|(_, f)| f.path.eq_ignore_ascii_case("INBOX"))
@@ -37,26 +38,27 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
         }
         Event::FolderLoaded { folder, rows } => {
             let viewing = state
+                .nav
                 .cur
                 .as_ref()
                 .map(|(a, c)| *a == acct && c.eq_ignore_ascii_case(&folder))
                 .unwrap_or(false);
             // 统一收件箱模式：INBOX 同步落地 → 重新拉聚合（LocalList 不发 FolderLoaded，无循环）
-            if state.viewing_unified && folder.eq_ignore_ascii_case("INBOX") {
+            if state.nav.viewing_unified && folder.eq_ignore_ascii_case("INBOX") {
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(SessionCmd::UnifiedInbox);
                 }
             }
-            if viewing && !state.in_search {
+            if viewing && !state.nav.in_search {
                 // 翻页穷尽判定：LoadMore 回包行数没涨 = 到底了。
                 // 新邮件到达（行数变化）必须重置 done，否则翻页被永久锁死
-                if state.load_more_pending {
-                    state.load_more_pending = false;
+                if state.nav.load_more_pending {
+                    state.nav.load_more_pending = false;
                     if rows.len() == state.rows.len() {
-                        state.load_more_done = true;
+                        state.nav.load_more_done = true;
                     }
                 } else if rows.len() != state.rows.len() {
-                    state.load_more_done = false;
+                    state.nav.load_more_done = false;
                 }
                 state.rows = rows.into_iter().map(move |r| (acct, r)).collect();
                 // 对端删除传播：全量替换后清死引用——批量选择/展开态/确认条/
@@ -223,15 +225,15 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
         Event::OutboxPending { pending, failed } => {
             state.outbox_counts.insert(acct, (pending, failed));
             // 发件箱视图打开时刷新列表（计数变化=状态流转）
-            if state.cur.as_ref().map(|(_, f)| f) == Some(&"__outbox__".to_string())
-                && state.cur.as_ref().map(|(a, _)| *a) == Some(acct)
+            if state.nav.cur.as_ref().map(|(_, f)| f) == Some(&"__outbox__".to_string())
+                && state.nav.cur.as_ref().map(|(a, _)| *a) == Some(acct)
             {
                 state.send(acct, smail_core::Cmd::ListOutbox);
             }
         }
         Event::UnifiedRows { rows } => {
             state.unified_contrib.insert(acct, rows);
-            if state.viewing_unified {
+            if state.nav.viewing_unified {
                 // 多账号按日期合并取前 500（与搜索聚合同模式）
                 let mut all: Vec<RowEntry> = state
                     .unified_contrib
@@ -251,7 +253,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                 }
             }
             state.search_contrib.insert(acct, rows);
-            if state.in_search {
+            if state.nav.in_search {
                 state.rows = state.merged_search_rows();
                 state.rebuild_display();
             }

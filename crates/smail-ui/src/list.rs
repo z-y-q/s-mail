@@ -26,12 +26,12 @@ fn row_matches(f: ListFilter, seen: bool, flagged: bool) -> bool {
 /// 过滤/排序在此应用（数据层不动）：会话级谓词=任一成员命中显示整会话；
 /// 排序仅改变会话间/行间顺序（会话内保持时间升序）
 pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
-    let cur_acct = state.cur.as_ref().map(|(a, _)| *a);
-    let is_drafts =
-        !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true);
+    let cur_acct = state.nav.cur.as_ref().map(|(a, _)| *a);
+    let is_drafts = !state.nav.in_search
+        && state.nav.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true);
     if is_drafts {
         vec![]
-    } else if state.threaded && !state.in_search && !state.viewing_unified {
+    } else if state.nav.threaded && !state.nav.in_search && !state.nav.viewing_unified {
         let acct = cur_acct.unwrap_or(0);
         let flat: Vec<smail_store::MessageRow> =
             state.rows.iter().map(|(_, r)| r.clone()).collect();
@@ -41,7 +41,7 @@ pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
         let mut groups: Vec<Vec<MailDisp>> = Vec::new();
         for t in smail_core::threads::group_threads(&flat) {
             // 会话级过滤谓词：任一成员命中即显示整个会话
-            let thread_hit = match state.list_filter {
+            let thread_hit = match state.nav.list_filter {
                 ListFilter::All => true,
                 ListFilter::Unread => t.has_unseen(),
                 ListFilter::Flagged => t.members.iter().any(|m| m.flagged),
@@ -72,7 +72,7 @@ pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
             }
             groups.push(group);
         }
-        if state.list_asc {
+        if state.nav.list_asc {
             groups.reverse();
         }
         v.extend(groups.into_iter().flatten());
@@ -80,18 +80,18 @@ pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
     } else {
         // 搜索是独立视图（无过滤/排序控件）——不继承文件夹视图的过滤与排序，
         // 否则隐形状态泄漏：搜到的结果被无声删减/重排
-        let apply_filter = !state.in_search;
+        let apply_filter = !state.nav.in_search;
         let mut v: Vec<MailDisp> = state
             .rows
             .iter()
-            .filter(|(_, r)| !apply_filter || row_matches(state.list_filter, r.seen, r.flagged))
+            .filter(|(_, r)| !apply_filter || row_matches(state.nav.list_filter, r.seen, r.flagged))
             .map(|(a, r)| MailDisp {
                 acct: *a,
                 row: r.clone(),
                 kind: DispKind::Flat,
             })
             .collect();
-        if apply_filter && state.list_asc {
+        if apply_filter && state.nav.list_asc {
             v.sort_by(|a, b| a.row.date_unix.cmp(&b.row.date_unix));
         }
         v
@@ -149,7 +149,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 .style(theme::accent_button),
             text("s-mail").size(16),
             button(
-                text(if state.threaded {
+                text(if state.nav.threaded {
                     state.l().view_flat
                 } else {
                     state.l().view_threads
@@ -197,8 +197,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     let mut sidebar = column![].spacing(1).padding(10);
     // 统一收件箱入口（多账号才有意义）
     if state.account_names.len() > 1 {
-        let unified_cur = state.viewing_unified;
+        let unified_cur = state.nav.viewing_unified;
         let total_unread: u32 = state
+            .nav
             .folders
             .iter()
             .filter(|(_, f)| f.path.eq_ignore_ascii_case("INBOX"))
@@ -240,6 +241,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         sidebar = sidebar.push(text(name.clone()).size(11).style(theme::secondary_text));
         sidebar = sidebar.push(Space::new().height(2));
         let drafts_cur = state
+            .nav
             .cur
             .as_ref()
             .map(|(a, c)| *a == i && c == "__drafts__")
@@ -265,6 +267,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         let (ob_p, ob_f) = state.outbox_counts.get(&i).copied().unwrap_or((0, 0));
         if ob_p + ob_f > 0 {
             let ob_cur = state
+                .nav
                 .cur
                 .as_ref()
                 .map(|(a, c)| *a == i && c == "__outbox__")
@@ -286,7 +289,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .style(move |t, st| theme::sidebar_item(t, st, ob_cur)),
             );
         }
-        for (_a, f) in state.folders.iter().filter(|(a, _)| *a == i) {
+        for (_a, f) in state.nav.folders.iter().filter(|(a, _)| *a == i) {
             // 服务器 Drafts 由本地草稿行代表（避免双入口双数据源）
             if f.kind == smail_core::FolderKind::Drafts {
                 continue;
@@ -317,7 +320,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     continue;
                 }
             }
-            let is_cur = state.cur.as_ref().map(|(ca, c)| *ca == i && c == &f.path) == Some(true);
+            let is_cur = state
+                .nav
+                .cur
+                .as_ref()
+                .map(|(ca, c)| *ca == i && c == &f.path)
+                == Some(true);
             let unread_n = f.unseen;
             let unread_pill: Option<Element<Message>> = if unread_n > 0 {
                 Some(
@@ -421,15 +429,15 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         .style(theme::sidebar_bg);
 
     // 列表
-    let cur_name = if state.viewing_unified {
+    let cur_name = if state.nav.viewing_unified {
         crate::lang::f(state.l().unified_hdr, &[&state.rows.len()])
-    } else if state.in_search {
+    } else if state.nav.in_search {
         crate::lang::f(
             state.l().search_hdr,
-            &[&state.search_query, &state.rows.len()],
+            &[&state.nav.search_query, &state.rows.len()],
         )
     } else {
-        match &state.cur {
+        match &state.nav.cur {
             Some((a, f)) if f == "__drafts__" => crate::lang::f(
                 state.l().drafts_hdr,
                 &[
@@ -444,6 +452,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             Some((a, f)) => {
                 // 列表头也显示本地化文件夹名（与侧栏一致）
                 let fname = state
+                    .nav
                     .folders
                     .iter()
                     .find(|(fa, fi)| *fa == *a && &fi.path == f)
@@ -462,17 +471,17 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         }
     };
 
-    let is_drafts =
-        !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true);
-    let is_outbox =
-        !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__outbox__") == Some(true);
-    let cur_acct = state.cur.as_ref().map(|(a, _)| *a);
+    let is_drafts = !state.nav.in_search
+        && state.nav.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true);
+    let is_outbox = !state.nav.in_search
+        && state.nav.cur.as_ref().map(|(_, c)| c == "__outbox__") == Some(true);
+    let cur_acct = state.nav.cur.as_ref().map(|(a, _)| *a);
 
     // 过滤/排序条（文件夹与统一收件箱视图；草稿/搜索不加）。
     // 判据用底层数据 rows 而非显示结果——过滤后空结果时控件必须仍在，
     // 否则用户被困在空过滤里（曾发生：过滤★无结果→条消失→无法切回全部）
     let filter_bar: Option<Element<Message>> =
-        if !is_drafts && !state.in_search && !state.rows.is_empty() {
+        if !is_drafts && !state.nav.in_search && !state.rows.is_empty() {
             let mk = |label: String, f: ListFilter, active: bool| {
                 button(text(label).size(11))
                     .on_press(Message::SetListFilter(f))
@@ -485,7 +494,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         }
                     })
             };
-            let sort_label = if state.list_asc {
+            let sort_label = if state.nav.list_asc {
                 state.l().sort_asc
             } else {
                 state.l().sort_desc
@@ -495,17 +504,17 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     mk(
                         state.l().filter_all.to_string(),
                         ListFilter::All,
-                        state.list_filter == ListFilter::All
+                        state.nav.list_filter == ListFilter::All
                     ),
                     mk(
                         state.l().filter_unread.to_string(),
                         ListFilter::Unread,
-                        state.list_filter == ListFilter::Unread
+                        state.nav.list_filter == ListFilter::Unread
                     ),
                     mk(
                         state.l().filter_starred.to_string(),
                         ListFilter::Flagged,
-                        state.list_filter == ListFilter::Flagged
+                        state.nav.list_filter == ListFilter::Flagged
                     ),
                     Space::new().width(Length::Fill),
                     button(text(sort_label).size(11))
@@ -539,8 +548,8 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     // 虚拟化窗口钳制：过滤/同步删行/删草稿后 list_offset 可能超出新列表
     // （空白屏；drafts 分支 first>last 还会 usize 下溢 panic）
     let max_off = (n_entries.saturating_sub(1) as f32 * ROW_H).max(0.0);
-    let first = (((state.list_offset.min(max_off)) / ROW_H) as usize).saturating_sub(BUFFER);
-    let visible = (state.list_view_h / ROW_H).ceil() as usize + BUFFER * 2;
+    let first = (((state.nav.list_offset.min(max_off)) / ROW_H) as usize).saturating_sub(BUFFER);
+    let visible = (state.nav.list_view_h / ROW_H).ceil() as usize + BUFFER * 2;
     let last = (first + visible).min(n_entries);
     let top_pad = first as f32 * ROW_H;
     let bottom_pad = (n_entries - last) as f32 * ROW_H;
@@ -794,14 +803,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         for d in &mail_display[first.min(mail_display.len())..last.min(mail_display.len())] {
             let (acct, r) = (d.acct, &d.row);
             let is_sel = state.selected == Some((acct, r.envelope_hash));
-            let tag = if state.viewing_unified {
+            let tag = if state.nav.viewing_unified {
                 let acct_name = state
                     .account_names
                     .get(acct)
                     .map(|s| s.as_str())
                     .unwrap_or("?");
                 format!("  [{}]", acct_name)
-            } else if state.in_search {
+            } else if state.nav.in_search {
                 let acct_name = state
                     .account_names
                     .get(acct)
@@ -809,6 +818,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .unwrap_or("?");
                 // 文件夹名本地化（与侧栏一致，不再显示 INBOX 等服务器原名）
                 let fname = state
+                    .nav
                     .folders
                     .iter()
                     .find(|(fa, fi)| *fa == acct && fi.path.eq_ignore_ascii_case(&r.folder))
@@ -959,7 +969,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                             .size(11)
                                             .style(theme::secondary_text),
                                     ],
-                                    if state.in_search {
+                                    if state.nav.in_search {
                                         if let Some(snip) =
                                             state.search_snippets.get(&r.envelope_hash)
                                         {
@@ -990,12 +1000,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             }
         }
     }
-    if !is_drafts && mail_display.is_empty() && !state.in_search {
+    if !is_drafts && mail_display.is_empty() && !state.nav.in_search {
         let (icon, msg): (&str, String) = if state.account_names.is_empty() {
             ("📬", state.l().empty_add_account.into())
         } else if !state.rows.is_empty() {
             // 底层有数据但显示为空 = 被过滤掉了，提示切回而非误导“没有邮件”
-            let f = match state.list_filter {
+            let f = match state.nav.list_filter {
                 ListFilter::All => "",
                 ListFilter::Unread => state.l().filter_unread,
                 ListFilter::Flagged => state.l().filter_starred,
@@ -1020,9 +1030,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     }
     // 满页提示：未到底提示可继续滚动加载；到底后给出总数确认
     if !is_drafts && state.rows.len() >= smail_core::UI_LIST_LIMIT as usize {
-        let msg = if state.viewing_unified {
+        let msg = if state.nav.viewing_unified {
             crate::lang::f(state.l().unified_cap, &[&state.rows.len()])
-        } else if state.load_more_done {
+        } else if state.nav.load_more_done {
             crate::lang::f(state.l().at_bottom, &[&state.rows.len()])
         } else {
             crate::lang::f(state.l().loaded_pages, &[&state.rows.len()])
@@ -1226,11 +1236,12 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
         let mut n = 0usize;
         for acct in accts {
             let cur = state
+                .nav
                 .cur
                 .as_ref()
                 .filter(|(a, _)| *a == acct)
                 .map(|(_, c)| c.clone());
-            for (_fa, f) in state.folders.iter().filter(|(a, _)| *a == acct) {
+            for (_fa, f) in state.nav.folders.iter().filter(|(a, _)| *a == acct) {
                 if cur.as_deref() == Some(f.path.as_str()) {
                     continue;
                 }
@@ -1309,7 +1320,7 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
 // -- 侧栏小组件（从 main_view 抽出，只在此处用） --
 
 fn text_input_search(state: &State) -> Element<'_, Message> {
-    iced::widget::text_input(state.l().search_ph, &state.search_text)
+    iced::widget::text_input(state.l().search_ph, &state.nav.search_text)
         .on_input(Message::SearchInput)
         .on_submit(Message::SearchSubmit)
         .size(13)

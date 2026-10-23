@@ -408,14 +408,14 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::UnifiedInboxSelected => {
             state.prefs.last_view = Some(("__unified__".into(), "__all_inbox__".into()));
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
-            state.in_search = false;
-            state.viewing_unified = true;
-            state.search_text.clear();
-            state.cur = Some((0, "__all_inbox__".into()));
+            state.nav.in_search = false;
+            state.nav.viewing_unified = true;
+            state.nav.search_text.clear();
+            state.nav.cur = Some((0, "__all_inbox__".into()));
             state.rows.clear();
             state.unified_contrib.clear();
             state.selection.clear();
-            state.list_offset = 0.0;
+            state.nav.list_offset = 0.0;
             state.reading = None;
             state.selected = None; // 残留 selected 会让快捷键作用于不可见邮件
             state.body_req = None;
@@ -424,8 +424,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.batch_move_open = false;
             state.pending_batch_delete = false;
             state.rebuild_display();
-            state.load_more_pending = false;
-            state.load_more_done = false;
+            state.nav.load_more_pending = false;
+            state.nav.load_more_done = false;
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::UnifiedInbox);
             }
@@ -466,12 +466,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             crate::tray::TrayAction::Quit => iced::exit(),
         },
         Message::SetListFilter(f) => {
-            state.list_filter = f;
+            state.nav.list_filter = f;
             state.rebuild_display();
             Task::none()
         }
         Message::ToggleListSort => {
-            state.list_asc = !state.list_asc;
+            state.nav.list_asc = !state.nav.list_asc;
             state.rebuild_display();
             Task::none()
         }
@@ -481,10 +481,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.prefs.last_view = Some((name, folder.clone()));
                 crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             }
-            state.in_search = false;
-            state.viewing_unified = false;
-            state.search_text.clear();
-            state.list_offset = 0.0; // 虚拟化窗口回顶；部件本身靠 scroll_to（见下）
+            state.nav.in_search = false;
+            state.nav.viewing_unified = false;
+            state.nav.search_text.clear();
+            state.nav.list_offset = 0.0; // 虚拟化窗口回顶；部件本身靠 scroll_to（见下）
             state.selection.clear(); // 选择不跨文件夹（批量操作按当前列表语义）
             state.batch_move_open = false;
             state.pending_batch_delete = false;
@@ -492,29 +492,29 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.pending_delete = None; // 确认条不跨文件夹（确认会删不可见邮件）
             state.body_req = None; // 在途正文不再属于新列表
             if folder == "__drafts__" {
-                state.cur = Some((acct, folder));
+                state.nav.cur = Some((acct, folder));
                 state.rows.clear();
                 state.selected = None;
                 state.reading = None;
                 state.send(acct, Cmd::ListDrafts);
             } else if folder == "__outbox__" {
-                state.cur = Some((acct, folder));
+                state.nav.cur = Some((acct, folder));
                 state.rows.clear();
                 state.selected = None;
                 state.reading = None;
                 state.send(acct, Cmd::ListOutbox);
             } else {
-                state.cur = Some((acct, folder.clone()));
+                state.nav.cur = Some((acct, folder.clone()));
                 state.rows.clear();
-                state.list_offset = 0.0;
+                state.nav.list_offset = 0.0;
                 state.reading = None;
                 state.selected = None; // 快捷键/阅读器不再指向旧文件夹邮件
                 state.expanded.clear(); // 展开状态不跨文件夹（hash 可能同名冲突）
                 state.send(acct, Cmd::SelectFolder(folder));
             }
             state.rebuild_display();
-            state.load_more_pending = false;
-            state.load_more_done = false;
+            state.nav.load_more_pending = false;
+            state.nav.load_more_done = false;
             scroll_list_to_top()
         }
         Message::RowSelected(acct, hash) => {
@@ -523,7 +523,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleThreading => {
-            state.threaded = !state.threaded;
+            state.nav.threaded = !state.nav.threaded;
             state.rebuild_display();
             Task::none()
         }
@@ -826,10 +826,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ListScrolled(y, view_h) => {
-            state.list_offset = y;
+            state.nav.list_offset = y;
             // 实测校正（初始估计值只在首个滚动事件前生效）
-            if (view_h - state.list_view_h).abs() > 1.0 {
-                state.list_view_h = view_h;
+            if (view_h - state.nav.list_view_h).abs() > 1.0 {
+                state.nav.list_view_h = view_h;
             }
             // 触底翻页：行数恰为页边界（500 倍数）才可能是被截断的满页；
             // 穷尽判定靠 FolderLoaded 后行数不再增长。
@@ -837,12 +837,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             // 否则触底条件永远达不到——会话视图翻页从不触发。
             // 过滤态不开自动翻页：显示行数≪数据行数，任何滚动都会立刻触底，
             // 连环 LoadMore 把整个文件夹抱下来（深度筛选用搜索，它是服务端执行）
-            if !state.in_search
-                && state.list_filter == ListFilter::All
-                && !state.load_more_pending
-                && !state.load_more_done
+            if !state.nav.in_search
+                && state.nav.list_filter == ListFilter::All
+                && !state.nav.load_more_pending
+                && !state.nav.load_more_done
             {
-                if let Some((a, f)) = state.cur.clone() {
+                if let Some((a, f)) = state.nav.cur.clone() {
                     if f != "__drafts__" && f != "__outbox__" && f != "__all_inbox__" {
                         let n = state.rows.len();
                         let content_h = state.mail_display.len() as f32 * ROW_H;
@@ -851,7 +851,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                             && !state.mail_display.is_empty()
                             && y + view_h >= content_h - 2.0 * ROW_H
                         {
-                            state.load_more_pending = true;
+                            state.nav.load_more_pending = true;
                             state.send(a, Cmd::LoadMore(f));
                         }
                     }
@@ -864,7 +864,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.error = Some(state.l().err_need_account.into());
                 return Task::none();
             }
-            let account = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+            let account = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
             state.send(account, Cmd::ListContacts); // M7：补全数据
                                                     // 签名预填（账号配置 signature；分隔符用邮件惯用的 "-- "）
             let mut body = text_editor::Content::new();
@@ -1096,7 +1096,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::EmptyTrashConfirm => {
             state.pending_empty_trash = false;
-            if let Some((a, f)) = state.cur.clone() {
+            if let Some((a, f)) = state.nav.cur.clone() {
                 if state.cur_is_trash_folder() {
                     state.send(a, Cmd::EmptyTrash(f));
                 }
@@ -1108,12 +1108,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::OutboxRetry(id) => {
-            let acct = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+            let acct = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
             state.send(acct, Cmd::OutboxRetry(id));
             Task::none()
         }
         Message::OutboxRemove(id) => {
-            let acct = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+            let acct = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
             state.send(acct, Cmd::OutboxRemove(id));
             Task::none()
         }
@@ -1198,7 +1198,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SearchInput(s) => {
-            state.search_text = s;
+            state.nav.search_text = s;
             Task::none()
         }
         Message::SearchSubmit if state.account_names.is_empty() => {
@@ -1206,13 +1206,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SearchSubmit => {
-            let q = state.search_text.trim().to_string();
+            let q = state.nav.search_text.trim().to_string();
             if q.is_empty() {
                 return Task::none();
             }
-            state.in_search = true;
-            state.viewing_unified = false;
-            state.search_query = q.clone();
+            state.nav.in_search = true;
+            state.nav.viewing_unified = false;
+            state.nav.search_query = q.clone();
             state.search_contrib.clear();
             state.search_snippets.clear(); // 换词清旧片段
             state.rows.clear();
@@ -1227,7 +1227,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.pending_batch_delete = false;
             state.move_picker = None;
             state.pending_delete = None;
-            state.list_offset = 0.0;
+            state.nav.list_offset = 0.0;
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::SearchAll(q));
             }
@@ -1236,14 +1236,14 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ManualRefresh => {
             // 只对“当前账号+当前文件夹”有意义；草稿/搜索态忽略；
             // 统一收件箱是伪文件夹——刷新动作改为重拉聚合，否则向服务线程发伪名报错
-            if state.viewing_unified {
+            if state.nav.viewing_unified {
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(SessionCmd::UnifiedInbox);
                 }
                 return Task::none();
             }
-            if let Some((a, f)) = state.cur.clone() {
-                if !state.in_search && f != "__drafts__" {
+            if let Some((a, f)) = state.nav.cur.clone() {
+                if !state.nav.in_search && f != "__drafts__" {
                     state.send(a, Cmd::ForceRefresh(f));
                 }
             }
@@ -1296,7 +1296,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                         .nth(1)
                         .map(|s| s.split('&').next().unwrap_or(s).to_string())
                         .unwrap_or_default();
-                    let account = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+                    let account = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
                     let mut body = text_editor::Content::new();
                     if let Some(sig) = state
                         .accounts
@@ -1510,6 +1510,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             }
             // 乐观更新：侧栏与当前视图立即换名（服务器结果仅状态提示，失败下次同步回真）
             for (_, f) in state
+                .nav
                 .folders
                 .iter_mut()
                 .filter(|(a, f)| *a == acct && f.path == old)
@@ -1517,7 +1518,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 f.path = new.clone();
             }
             let mut viewing_renamed = false;
-            if let Some((a, c)) = &mut state.cur {
+            if let Some((a, c)) = &mut state.nav.cur {
                 if *a == acct && *c == old {
                     *c = new.clone();
                     viewing_renamed = true;
@@ -1544,14 +1545,21 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
             // 正在浏览该文件夹：清视图（本地记录由服务线程清理）
-            if state.cur.as_ref().map(|(a, c)| *a == acct && c == &path) == Some(true) {
-                state.cur = None;
+            if state
+                .nav
+                .cur
+                .as_ref()
+                .map(|(a, c)| *a == acct && c == &path)
+                == Some(true)
+            {
+                state.nav.cur = None;
                 state.rows.clear();
                 state.rebuild_display();
                 state.reading = None;
                 state.selected = None;
             }
             state
+                .nav
                 .folders
                 .retain(|(a, f)| !(*a == acct && f.path == path));
             state.send(acct, Cmd::DeleteFolder(path));
@@ -1804,7 +1812,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 if state.account_names.is_empty() {
                     return Task::none();
                 }
-                let account = state.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+                let account = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
                 state.screen = Screen::Compose(Compose {
                     ai_instruction: String::new(),
                     ai_busy: false,

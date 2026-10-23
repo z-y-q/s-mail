@@ -237,7 +237,7 @@ pub(crate) fn start_summarize(state: &mut State, acct: usize, hash: i64) -> iced
     // （当前邮件正文在内存；其余成员读 .eml 本地缓存）
     let mut members: Vec<(i64, String, String)> = Vec::new(); // (hash, from, snippet?)
     let mut thread_subject = subject_now.clone();
-    let in_folder_thread = state.threaded && !state.in_search && !state.viewing_unified;
+    let in_folder_thread = state.nav.threaded && !state.nav.in_search && !state.nav.viewing_unified;
     if in_folder_thread {
         let flat: Vec<smail_store::MessageRow> = state
             .rows
@@ -623,11 +623,13 @@ pub(crate) fn organize_go(state: &mut State) -> iced::Task<Message> {
         .collect::<std::collections::BTreeSet<_>>()
     {
         let cur = state
+            .nav
             .cur
             .as_ref()
             .filter(|(ca, _)| *ca == a)
             .map(|(_, c)| c.clone());
         let list = state
+            .nav
             .folders
             .iter()
             .filter(|(fa, _)| *fa == a)
@@ -719,6 +721,7 @@ pub(crate) fn plan_ready(
                 .collect::<std::collections::BTreeSet<_>>()
             {
                 let list = state
+                    .nav
                     .folders
                     .iter()
                     .filter(|(fa, _)| *fa == a)

@@ -2,7 +2,7 @@
 //! 防止后续重构复发。覆盖：视图切换残留清理、异步迟到守卫、
 //! 死引用清理、翻页触发条件、整理计划白名单校验。
 
-use crate::{ai, update, ListFilter, Message, Reading, RowEntry, Screen, State};
+use crate::{ai, update, ListFilter, Message, Nav, Reading, RowEntry, Screen, State};
 use smail_core::{Event, FolderInfo, FolderKind};
 use smail_store::MessageRow;
 
@@ -48,12 +48,22 @@ fn ts() -> State {
         account_names: vec!["a@x".into(), "b@x".into()],
         error: None,
         setup_hint: None,
-        folders: vec![(0, folder("INBOX", FolderKind::Inbox))],
-        cur: Some((0, "INBOX".into())),
-        in_search: false,
-        viewing_unified: false,
+        nav: Nav {
+            folders: vec![(0, folder("INBOX", FolderKind::Inbox))],
+            cur: Some((0, "INBOX".into())),
+            in_search: false,
+            viewing_unified: false,
+            search_query: String::new(),
+            search_text: String::new(),
+            threaded: false,
+            load_more_pending: false,
+            load_more_done: false,
+            list_filter: ListFilter::All,
+            list_asc: false,
+            list_offset: 0.0,
+            list_view_h: crate::list::DEFAULT_VIEW_H,
+        },
         unified_contrib: Default::default(),
-        search_query: String::new(),
         search_snippets: Default::default(),
         search_contrib: Default::default(),
         rows: vec![],
@@ -63,12 +73,8 @@ fn ts() -> State {
         reading: None,
         body_req: None,
         pending_delete: None,
-        threaded: false,
         expanded: Default::default(),
-        list_offset: 0.0,
-        list_view_h: crate::list::DEFAULT_VIEW_H,
         screen: Screen::Mail,
-        search_text: String::new(),
         statuses: Default::default(),
         selection: Default::default(),
         batch_move_open: false,
@@ -86,10 +92,6 @@ fn ts() -> State {
         pgp_edit: None,
         signature_edit: None,
         export_target: None,
-        load_more_pending: false,
-        load_more_done: false,
-        list_filter: ListFilter::All,
-        list_asc: false,
         accounts: vec![],
         cfg_path: std::path::PathBuf::from("/tmp/smail-test-config.toml"),
         data_root: std::path::PathBuf::from("/tmp"),
@@ -105,7 +107,7 @@ fn search_submit_clears_batch_state() {
     s.pending_batch_delete = true;
     s.move_picker = Some((0, 1));
     s.pending_delete = Some((0, 1));
-    s.search_text = "周报".into();
+    s.nav.search_text = "周报".into();
     let _ = update(&mut s, Message::SearchSubmit);
     assert!(s.selection.is_empty(), "搜索前批量选择必须清空");
     assert!(!s.batch_move_open && !s.pending_batch_delete);
@@ -222,9 +224,9 @@ fn pagination_triggers_on_display_bottom() {
     s.rebuild_display();
     assert_eq!(s.mail_display.len(), n);
     let content_h = n as f32 * crate::list::ROW_H;
-    let view_h = s.list_view_h;
+    let view_h = s.nav.list_view_h;
     let _ = update(&mut s, Message::ListScrolled(content_h - view_h, view_h));
-    assert!(s.load_more_pending, "触底且满页边界必须触发翻页");
+    assert!(s.nav.load_more_pending, "触底且满页边界必须触发翻页");
 }
 
 #[test]
@@ -272,7 +274,7 @@ fn plan_ready_whitelist_and_membership() {
     ctx.insert(0usize, (0usize, 1i64));
     ctx.insert(1usize, (0usize, 2i64));
     s.ai.plan_ctx = ctx;
-    s.folders = vec![
+    s.nav.folders = vec![
         (0, folder("INBOX", FolderKind::Inbox)),
         (0, folder("归档", FolderKind::Archive)),
         (0, folder("Junk", FolderKind::Junk)),
@@ -316,15 +318,15 @@ fn folder_selected_remembers_last_view() {
 #[test]
 fn cur_is_trash_folder_detection() {
     let mut s = ts();
-    s.folders = vec![
+    s.nav.folders = vec![
         (0, folder("INBOX", FolderKind::Inbox)),
         (0, folder("Trash", FolderKind::Trash)),
     ];
-    s.cur = Some((0, "Trash".into()));
+    s.nav.cur = Some((0, "Trash".into()));
     assert!(s.cur_is_trash_folder(), "Trash 视图应判定为废纸篓");
-    s.cur = Some((0, "INBOX".into()));
+    s.nav.cur = Some((0, "INBOX".into()));
     assert!(!s.cur_is_trash_folder());
-    s.cur = None;
+    s.nav.cur = None;
     assert!(!s.cur_is_trash_folder(), "无当前视图不误判");
 }
 
@@ -344,31 +346,31 @@ fn esc_clears_empty_trash_confirm() {
 #[test]
 fn esc_in_search_from_outbox_keeps_view() {
     let mut s = ts();
-    s.cur = Some((0, "__outbox__".into()));
-    s.in_search = true;
-    s.search_text = "q".into();
+    s.nav.cur = Some((0, "__outbox__".into()));
+    s.nav.in_search = true;
+    s.nav.search_text = "q".into();
     let _ = update(
         &mut s,
         Message::KeyPressed(iced::keyboard::Key::Named(
             iced::keyboard::key::Named::Escape,
         )),
     );
-    assert!(!s.in_search);
-    assert_eq!(s.cur, Some((0, "__outbox__".into())), "发件箱视图保持");
+    assert!(!s.nav.in_search);
+    assert_eq!(s.nav.cur, Some((0, "__outbox__".into())), "发件箱视图保持");
 }
 
 #[test]
 fn esc_in_search_from_drafts_does_not_crash() {
     let mut s = ts();
-    s.cur = Some((0, "__drafts__".into()));
-    s.in_search = true;
-    s.search_text = "q".into();
+    s.nav.cur = Some((0, "__drafts__".into()));
+    s.nav.in_search = true;
+    s.nav.search_text = "q".into();
     let _ = update(
         &mut s,
         Message::KeyPressed(iced::keyboard::Key::Named(
             iced::keyboard::key::Named::Escape,
         )),
     );
-    assert!(!s.in_search, "Esc 应退出搜索");
-    assert_eq!(s.cur, Some((0, "__drafts__".into())), "草稿视图保持");
+    assert!(!s.nav.in_search, "Esc 应退出搜索");
+    assert_eq!(s.nav.cur, Some((0, "__drafts__".into())), "草稿视图保持");
 }

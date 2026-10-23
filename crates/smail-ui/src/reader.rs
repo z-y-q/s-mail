@@ -6,7 +6,8 @@ use iced::{Element, Length};
 use crate::{theme, unix_to_local, Message, State};
 
 pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
-    if !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__outbox__") == Some(true) {
+    if !state.nav.in_search && state.nav.cur.as_ref().map(|(_, c)| c == "__outbox__") == Some(true)
+    {
         return container(
             text(state.l().outbox_hint)
                 .size(13)
@@ -17,7 +18,8 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         .height(Length::Fill)
         .into();
     }
-    if !state.in_search && state.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true) {
+    if !state.nav.in_search && state.nav.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true)
+    {
         return container(text(state.l().draft_hint).size(14))
             .center(Length::Fill)
             .width(Length::Fill)
@@ -51,7 +53,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
 
     let move_open = state.move_picker == Some((*acct, hash));
     // 摘要标签：忙 / 会话聚合 / 已缓存 / 常态（一眼看得出会得到什么）
-    let in_thread = state.threaded && !state.in_search && !state.viewing_unified;
+    let in_thread = state.nav.threaded && !state.nav.in_search && !state.nav.viewing_unified;
     let thread_root_here = in_thread
         && state.mail_display.iter().any(|d| {
             d.acct == *acct
@@ -376,7 +378,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             .map(|(_, r)| r.folder.clone());
         let mut picks = column![].spacing(2);
         let mut n = 0;
-        for (_fa, f) in state.folders.iter().filter(|(a, _)| a == acct) {
+        for (_fa, f) in state.nav.folders.iter().filter(|(a, _)| a == acct) {
             if Some(&f.path) == cur_folder.as_ref() {
                 continue;
             }
