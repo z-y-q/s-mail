@@ -1199,6 +1199,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.viewing_unified = false;
             state.search_query = q.clone();
             state.search_contrib.clear();
+            state.search_snippets.clear(); // 换词清旧片段
             state.rows.clear();
             state.rebuild_display();
             state.reading = None;
@@ -2367,38 +2368,6 @@ fn is_image_bytes(b: &[u8]) -> bool {
             && b[2] == b'F'
             && b[3] == b'F'
             && b[8..12] == *b"WEBP")
-}
-
-/// 系统通知（macOS: osascript；Linux: notify-send）。
-/// 参数化调用不经 shell，正文仅做 AppleScript 字符串转义，无注入面。
-fn notify_desktop(title: &str, body: &str) {
-    if std::env::var_os("SMAIL_NO_NOTIFY").is_some() {
-        return; // 测试/CI 环境静默
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(
-            "display notification \"{}\" with title \"{}\"",
-            esc(body),
-            esc(title)
-        );
-        let _ = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = std::process::Command::new("notify-send")
-            .arg(title)
-            .arg(body)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-    }
 }
 
 /// unix 秒 → 本地时间字符串（无时区库依赖的手写民用历；

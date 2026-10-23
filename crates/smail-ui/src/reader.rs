@@ -214,6 +214,18 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             .padding([3, 8])
             .style(theme::ghost_button),
     );
+    // PDF 附件 QuickLook 缩略图（限高 200；保存走下方附件列表按钮）
+    for (pname, h) in &reading.attach_previews {
+        attachments_col = attachments_col.push(
+            column![
+                iced::widget::image(h.clone()).height(200),
+                text(format!("📄 {pname}"))
+                    .size(10)
+                    .style(theme::secondary_text),
+            ]
+            .spacing(2),
+        );
+    }
     // 图片附件内联预览（限高 120；保存走下方附件列表按钮）
     for (iname, h) in &reading.attach_images {
         attachments_col = attachments_col.push(

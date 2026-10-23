@@ -507,6 +507,9 @@ fn fill_draft(state: &mut State, d: smail_ai::DraftContent) {
         c.ai_overwrite_ask = false;
         c.ai_pending = None;
         c.ai_rewrite_mode = false;
+        // AI 生成的内容也需要自动保存保护（旧版漏标——用户 AI 写完直接关
+        // 会走 discard confirm 而非已保存）
+        c.autosave_at = Some(std::time::Instant::now());
     }
 }
 

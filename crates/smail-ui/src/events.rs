@@ -4,10 +4,7 @@ use iced::Task;
 
 use std::sync::Arc;
 
-use crate::{
-    close_reading_if_gone, is_image_bytes, notify_desktop, Message, ParsedMd, Reading, RowEntry,
-    State,
-};
+use crate::{close_reading_if_gone, is_image_bytes, Message, ParsedMd, Reading, RowEntry, State};
 use smail_core::{Event, SessionCmd, TaggedEvent};
 
 pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> {
@@ -90,6 +87,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
         Event::BodyLoaded {
             hash,
             attachment_images,
+            attachment_previews,
             subject,
             body,
             to_addrs,
@@ -124,6 +122,10 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                 Reading {
                     hash,
                     attach_images: attachment_images
+                        .into_iter()
+                        .map(|(n, b)| (n, iced::widget::image::Handle::from_bytes(b)))
+                        .collect(),
+                    attach_previews: attachment_previews
                         .into_iter()
                         .map(|(n, b)| (n, iced::widget::image::Handle::from_bytes(b)))
                         .collect(),
@@ -250,27 +252,23 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             state.statuses.insert(acct, format!("附件已保存：{path}"));
         }
         // ---- M7 ----
-        Event::NewMail { from, subject } => {
-            // 通知点击跳转：记录该邮件位置（acct, folder, hash）
-            // folder 从 rows 里反查（NewMail 到达时邮件已在当前列表）
-            let acct = ev.account;
-            if let Some((_, r)) = state
-                .rows
-                .iter()
-                .find(|(_, r)| r.from_addr == from && r.subject == subject)
-            {
-                crate::notify::notify_mail(
-                    &from,
-                    &subject,
-                    crate::notify::NotifyClick {
-                        acct,
-                        folder: r.folder.clone(),
-                        hash: r.envelope_hash,
-                    },
-                );
-            } else {
-                notify_desktop("s-mail 新邮件", &format!("{from}\n{subject}"));
-            }
+        Event::NewMail {
+            from,
+            subject,
+            folder,
+            hash,
+        } => {
+            // 通知跳转：事件自带 folder/hash（旧版靠 rows 反查——非当前
+            // 文件夹的新邮件不在 rows 里会降级为无跳转通知）
+            crate::notify::notify_mail(
+                &from,
+                &subject,
+                crate::notify::NotifyClick {
+                    acct: ev.account,
+                    folder,
+                    hash,
+                },
+            );
         }
         Event::ImagesLoaded { hash, images } => {
             // 仅当前阅读的邮件回填（过期下载丢弃；账号+hash 双比对，

@@ -39,6 +39,8 @@ pub(crate) struct Reading {
     pub(crate) remote_pending: Vec<String>,
     /// 图片附件（预览）：(文件名, 显示句柄)
     pub(crate) attach_images: Vec<(String, iced::widget::image::Handle)>,
+    /// PDF 附件缩略图（QuickLook PNG 预览）
+    pub(crate) attach_previews: Vec<(String, iced::widget::image::Handle)>,
     /// 远程图下载中（防重复请求；失败后可重试——pending 不在点击时清空）
     pub(crate) remote_loading: bool,
     pub(crate) md: Option<iced::widget::markdown::Content>,

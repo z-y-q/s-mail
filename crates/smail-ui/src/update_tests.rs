@@ -132,6 +132,7 @@ fn late_body_loaded_dropped_without_body_req() {
             event: Event::BodyLoaded {
                 hash: 9,
                 attachment_images: vec![],
+                attachment_previews: vec![],
                 subject: "迟到的正文".into(),
                 body: "x".into(),
                 to_addrs: String::new(),
@@ -180,6 +181,7 @@ fn images_loaded_wrong_account_not_filled() {
         Reading {
             hash: 5,
             attach_images: vec![],
+            attach_previews: vec![],
             subject: "s".into(),
             body: "b".into(),
             to_addrs: String::new(),
@@ -235,6 +237,7 @@ fn delete_mail_closes_only_that_reading() {
         Reading {
             hash: 2,
             attach_images: vec![],
+            attach_previews: vec![],
             subject: "s2".into(),
             body: "b".into(),
             to_addrs: String::new(),

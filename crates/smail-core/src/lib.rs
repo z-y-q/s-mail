@@ -152,6 +152,8 @@ pub enum Event {
         hash: i64,
         /// 图片附件（name, bytes）：UI 内联预览用；魔数过滤 + 2MB/张上限
         attachment_images: Vec<(String, Vec<u8>)>,
+        /// PDF 附件缩略图（name, png_bytes）：QuickLook 生成，UI 预览用
+        attachment_previews: Vec<(String, Vec<u8>)>,
         subject: String,
         /// 原信收件人（"名字 <a@b>, …" 原样，回复全部用）
         to_addrs: String,
@@ -223,6 +225,10 @@ pub enum Event {
     NewMail {
         from: String,
         subject: String,
+        /// 新邮件所在文件夹（通知跳转直达；空=未知）
+        folder: String,
+        /// 新邮件 hash（通知跳转直达）
+        hash: i64,
     },
     /// 最近联系人（Cmd::ListContacts 的响应）
     /// 通讯录补全数据（compose 用，display 格式 "名字 <a@b>"）
@@ -1079,8 +1085,11 @@ impl ServiceInner {
             }
             // 延迟同步：命令队列已 drain，现在执行最后一次请求的文件夹同步
             //（用户快速切 A→B→C 时只同步 C，不排队 A/B 的 SELECT+FETCH）
-            if let Some(folder) = pending_sync.take() {
+            // 断连时保留 pending_sync（重连后同步当前文件夹路径会覆盖；
+            // 旧版 take() 消费后 Conn::Down 跳过 = 标记静默丢失）
+            if pending_sync.is_some() {
                 if let Conn::Up { backend, .. } = &mut conn {
+                    let folder = pending_sync.take().unwrap();
                     self.sync_folder(backend.as_mut(), &store, &folder);
                     self.emit_folder_counts(&store);
                 }
@@ -1952,6 +1961,8 @@ impl ServiceInner {
                 self.emit(Event::NewMail {
                     from: row.from_addr.clone(),
                     subject: row.subject.clone(),
+                    folder: row.folder.clone(),
+                    hash: row.envelope_hash,
                 });
             }
         }
@@ -2409,9 +2420,12 @@ impl ServiceInner {
         };
         // 图片附件预览：魔数过滤防解码 panic，单张 2MB 上限（与远程图同护栏）
         let attachment_images: Vec<(String, Vec<u8>)> = m_atch_images(&parse_bytes);
+        // PDF 附件缩略图：QuickLook（macOS 原生 qlmanage；其他平台空）
+        let attachment_previews = pdf_thumbnails(&parse_bytes, &self.data_dir);
         self.emit(Event::BodyLoaded {
             hash,
             attachment_images,
+            attachment_previews,
             subject: row.subject.clone(),
             to_addrs,
             cc_addrs,
@@ -3072,6 +3086,66 @@ pub fn is_image_content(b: &[u8]) -> bool {
         || b.starts_with(b"GIF8")
         || b.starts_with(b"RIFF") && b.len() > 11 && &b[8..12] == b"WEBP"
         || b.starts_with(b"BM")
+}
+
+/// PDF 附件 → QuickLook 缩略图 PNG（macOS qlmanage；非 macOS / 失败返回空）
+fn pdf_thumbnails(bytes: &[u8], data_dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (bytes, data_dir);
+        return vec![];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use mail_parser::{MessageParser, MimeHeaders};
+        let Some(m) = MessageParser::default().parse(bytes) else {
+            return vec![];
+        };
+        let tmp_dir = data_dir.join("ql-tmp");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let mut out = Vec::new();
+        for (i, a) in m.attachments().enumerate() {
+            let Some(name) = a.attachment_name() else {
+                continue;
+            };
+            if !name.to_lowercase().ends_with(".pdf") {
+                continue;
+            }
+            let contents = a.contents();
+            if contents.len() > 20 * 1024 * 1024 {
+                continue;
+            } // 20MB 上限
+            let pdf_path = tmp_dir.join(format!("preview-{i}.pdf"));
+            if std::fs::write(&pdf_path, contents).is_err() {
+                continue;
+            }
+            // qlmanage -t -s 480：480px 宽 PNG 缩略图
+            let png_path = tmp_dir.join(format!("preview-{i}.pdf.png"));
+            let ok = std::process::Command::new("qlmanage")
+                .args([
+                    "-t",
+                    "-s",
+                    "480",
+                    "-o",
+                    tmp_dir.to_str().unwrap_or("/tmp"),
+                    pdf_path.to_str().unwrap_or(""),
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if ok {
+                if let Ok(png) = std::fs::read(&png_path) {
+                    out.push((name.to_string(), png));
+                }
+                let _ = std::fs::remove_file(&png_path);
+            }
+            let _ = std::fs::remove_file(&pdf_path);
+        }
+        let _ = std::fs::remove_dir(&tmp_dir);
+        out
+    }
 }
 
 fn extract_attachments(bytes: &[u8]) -> Vec<(String, usize)> {

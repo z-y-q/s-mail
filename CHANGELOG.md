@@ -18,6 +18,23 @@
   持续黄条"⟳ 未连接：账号（自动重试中）"，重连成功自动消除
 - **同步进度**：每次同步前报"正在同步 INBOX…"（大邮箱不再像卡死）
 
+### 修复（复查第 N+2 轮：4 个实锤 bug）
+
+- **通知跳转只对当前文件夹有效**：NewMail 事件补带 folder/hash（旧版靠
+  rows 反查——非当前文件夹的新邮件不在 rows 里 → 降级为无跳转通知）
+- **AI 生成内容不触发自动保存**：fill_draft 补标 autosave_at（旧版 AI
+  写完直接关走 discard confirm 而非已保存）
+- **pending_sync 断连静默丢失**：take() 与 Conn::Down 检查不在同一原子
+  操作——标记被消费但同步被跳过；改为断连时保留
+- **搜索换词旧片段残留**：SearchSubmit 补 search_snippets.clear()
+
+### 新增（复查第 N+2 轮）
+
+- **通知跳转 v2**：单条 LAST_MAIL 改为 FIFO 队列（上限 10）——多封新邮件
+  同时到，逐次激活逐封跳转
+- **PDF 附件预览**：QuickLook（macOS qlmanage 原生）生成 480px PNG
+  缩略图，内联在读信区（限高 200；非 macOS 平台自动跳过）
+
 ### 新增（优化轮：通知跳转 + e2e 扩容 + 搜索片段）
 
 - **通知点击跳转 v1**：mac-notification-sys（原生 UNUserNotificationCenter）
