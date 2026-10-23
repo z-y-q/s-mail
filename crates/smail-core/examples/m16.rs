@@ -27,7 +27,7 @@ fn imap_cfg() -> ImapConfig {
 
 /// 清场：删服务器 Drafts 里历史遗留的 s-mail/m16 草稿
 fn cleanup_server_drafts() {
-    let (mut b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
+    let (b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
     let envs = b.fetch_envelopes("Drafts").expect("fetch Drafts");
     let mine: Vec<u64> = envs
         .iter()
@@ -42,7 +42,7 @@ fn cleanup_server_drafts() {
 
 /// 模拟其他设备：注入一封外来草稿（非 s-mail 前缀的 Message-ID）
 fn inject_foreign_draft(subject: &str) {
-    let (mut b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
+    let (b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
     let mail = OutgoingMail {
         from: "test@local".into(),
         to: vec!["peer@local".into()],
@@ -108,7 +108,7 @@ fn main() {
                 println!("[check  ] 外来草稿已导入（to={}）✅", d.to_addr);
                 step = 2;
                 println!("[m16] 服务器侧删除外来草稿（模拟对方设备撤回）");
-                let (mut b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
+                let (b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
                 let gone = b
                     .delete_draft_by_mid("<m16-foreign-1@other-device>")
                     .expect("删服务器草稿");

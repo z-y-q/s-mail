@@ -167,35 +167,39 @@ pub type Result<T> = std::result::Result<T, BackendError>;
 // trait
 // ---------------------------------------------------------------------------
 
-pub trait MailBackend: Send {
-    fn is_online(&mut self) -> Result<()>;
-    fn list_folders(&mut self) -> Result<Vec<String>>;
-    fn fetch_envelopes(&mut self, folder: &str) -> Result<Vec<EnvelopeSummary>>;
-    fn fetch_body(&mut self, hash: u64) -> Result<Vec<u8>>;
-    fn watch(&mut self) -> Result<std::sync::mpsc::Receiver<ServerEvent>>;
+/// 所有方法 `&self`：实现方用内部锁保证并发安全（melib 层自带连接池），
+/// 使正文取拉可在 Reader 线程与服务主循环的同步/写操作真正并行
+pub trait MailBackend: Send + Sync {
+    fn is_online(&self) -> Result<()>;
+    fn list_folders(&self) -> Result<Vec<String>>;
+    fn fetch_envelopes(&self, folder: &str) -> Result<Vec<EnvelopeSummary>>;
+    /// 并发安全取正文：Reader 线程与服务主循环可同时调用
+    /// （melib envelope_bytes_by_hash 内部 Arc 连接池，天然并行）
+    fn fetch_body(&self, hash: u64) -> Result<Vec<u8>>;
+    fn watch(&self) -> Result<std::sync::mpsc::Receiver<ServerEvent>>;
 
     // --- M2 ---
-    fn set_flags(&mut self, folder: &str, hashes: &[u64], change: FlagChange) -> Result<()>;
-    fn delete_messages(&mut self, folder: &str, hashes: &[u64]) -> Result<()>;
+    fn set_flags(&self, folder: &str, hashes: &[u64], change: FlagChange) -> Result<()>;
+    fn delete_messages(&self, folder: &str, hashes: &[u64]) -> Result<()>;
     /// APPEND 到服务器 Sent 文件夹（找不到类 Sent 文件夹时报错，由上层降级）
-    fn append_to_sent(&mut self, bytes: Vec<u8>) -> Result<String>;
+    fn append_to_sent(&self, bytes: Vec<u8>) -> Result<String>;
 
     // --- M5-b ---
     /// 服务器端移动（IMAP MOVE 或 COPY + 删除标记 + EXPUNGE）。成功后由上层删本地行。
-    fn move_messages(&mut self, folder: &str, hashes: &[u64], dest: &str) -> Result<()>;
+    fn move_messages(&self, folder: &str, hashes: &[u64], dest: &str) -> Result<()>;
     // --- M7：文件夹管理（IMAP CREATE/DELETE/RENAME） ---
-    fn create_folder(&mut self, path: &str) -> Result<()>;
-    fn delete_folder(&mut self, path: &str) -> Result<()>;
-    fn rename_folder(&mut self, path: &str, new_path: &str) -> Result<()>;
+    fn create_folder(&self, path: &str) -> Result<()>;
+    fn delete_folder(&self, path: &str) -> Result<()>;
+    fn rename_folder(&self, path: &str, new_path: &str) -> Result<()>;
 
     // --- B2：草稿云同步（v1 单向：本地保存→上传，本地删除→服务器清理） ---
     /// APPEND 草稿到服务器 Drafts 类文件夹，返回文件夹名。默认不支持
-    fn append_draft(&mut self, _bytes: Vec<u8>) -> Result<String> {
+    fn append_draft(&self, _bytes: Vec<u8>) -> Result<String> {
         Err(BackendError("该后端不支持草稿上传".into()))
     }
     /// 在 Drafts 类文件夹按 Message-ID 找到并删除服务器草稿。
     /// 返回是否找到并删（找不到不算错——对方设备可能已处理）
-    fn delete_draft_by_mid(&mut self, _message_id: &str) -> Result<bool> {
+    fn delete_draft_by_mid(&self, _message_id: &str) -> Result<bool> {
         Ok(false)
     }
     /// Drafts 类文件夹名（草稿双向同步对账用）；无则 None。默认 None
@@ -204,17 +208,17 @@ pub trait MailBackend: Send {
     }
     /// 归档目标文件夹：找到既有（archive/归档/All Mail），没有则新建 Archive。
     /// 一键归档动作用。默认不支持
-    fn ensure_archive_folder(&mut self) -> Result<String> {
+    fn ensure_archive_folder(&self) -> Result<String> {
         Err(BackendError("该后端不支持归档".into()))
     }
     /// 垃圾目标文件夹：找到既有（junk/spam/垃圾），没有则新建 Junk。
     /// 「标为垃圾」动作用。默认不支持
-    fn ensure_junk_folder(&mut self) -> Result<String> {
+    fn ensure_junk_folder(&self) -> Result<String> {
         Err(BackendError("该后端不支持垃圾标记".into()))
     }
     /// 废纸篓：找到既有（trash/deleted/已删除/废纸篓），没有则新建 Trash。
     /// 「删除=进废纸篓可恢复」语义用（Foxmail/Outlook 惯例）。默认不支持
-    fn ensure_trash_folder(&mut self) -> Result<String> {
+    fn ensure_trash_folder(&self) -> Result<String> {
         Err(BackendError("该后端不支持废纸篓".into()))
     }
 }
@@ -224,12 +228,25 @@ pub trait MailBackend: Send {
 // ---------------------------------------------------------------------------
 
 pub struct MelibBackend {
-    backend: Box<dyn MelibMailBackend>,
-    folders: HashMap<String, MailboxHash>,
+    /// melib 后端。Mutex 保护 + 全部 `&self` 方法：锁只在构造 melib future 时
+    /// 短暂持有（内部仅 Arc clone，微秒级），网络 await 在锁外走 melib 连接池——
+    /// 服务主循环与 Reader 线程（正文取拉）可真正并发，互不阻塞命令循环
+    backend: Arc<Mutex<Box<dyn MelibMailBackend>>>,
+    folders: Mutex<HashMap<String, MailboxHash>>,
     folder_index: Arc<Mutex<HashMap<MailboxHash, String>>>,
 }
 
 impl MelibBackend {
+    /// 短暂持锁执行构造闭包。绝不能在持锁期间 await（网络秒级会饿死另一条线程）
+    fn folders_lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, MailboxHash>> {
+        self.folders.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn with_backend<R>(&self, f: impl FnOnce(&mut Box<dyn MelibMailBackend>) -> R) -> R {
+        let mut g = self.backend.lock().unwrap_or_else(|p| p.into_inner());
+        f(&mut g)
+    }
+
     pub fn new(cfg: &ImapConfig) -> Result<Self> {
         ensure_xdg_data_home();
         if cfg.use_oauth2 {
@@ -288,14 +305,16 @@ impl MelibBackend {
         let backend: Box<dyn MelibMailBackend> =
             ImapType::new(&settings, IsSubscribedFn::default(), event_consumer)?;
         Ok(Self {
-            backend,
-            folders: HashMap::new(),
+            backend: Arc::new(Mutex::new(backend)),
+            folders: Mutex::new(HashMap::new()),
             folder_index: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
     fn mailbox_of(&self, folder: &str) -> Result<MailboxHash> {
         self.folders
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
             .iter()
             .find(|(p, _)| p.eq_ignore_ascii_case(folder))
             .map(|(_, h)| *h)
@@ -314,6 +333,8 @@ impl MelibBackend {
     /// Drafts 类文件夹（draft / 草稿；大小写不敏感）
     fn find_drafts_folder(&self) -> Result<String> {
         self.folders
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
             .keys()
             .find(|p| {
                 let l = p.to_lowercase();
@@ -360,9 +381,9 @@ impl MailBackend for MelibBackend {
         self.find_drafts_folder().ok()
     }
 
-    fn ensure_archive_folder(&mut self) -> Result<String> {
+    fn ensure_archive_folder(&self) -> Result<String> {
         // archive/归档/All Mail（Gmail 的 All Mail 即归档语义）
-        if let Some(existing) = self.folders.keys().find(|p| {
+        if let Some(existing) = self.folders_lock().keys().find(|p| {
             p.to_lowercase().contains("archive")
                 || p.contains("归档")
                 || p.to_lowercase().contains("all mail")
@@ -374,8 +395,8 @@ impl MailBackend for MelibBackend {
         Ok(name)
     }
 
-    fn ensure_junk_folder(&mut self) -> Result<String> {
-        if let Some(existing) = self.folders.keys().find(|p| {
+    fn ensure_junk_folder(&self) -> Result<String> {
+        if let Some(existing) = self.folders_lock().keys().find(|p| {
             let l = p.to_lowercase();
             l.contains("junk") || l.contains("spam") || p.contains("垃圾")
         }) {
@@ -386,9 +407,9 @@ impl MailBackend for MelibBackend {
         Ok(name)
     }
 
-    fn ensure_trash_folder(&mut self) -> Result<String> {
+    fn ensure_trash_folder(&self) -> Result<String> {
         if let Some(existing) = self
-            .folders
+            .folders_lock()
             .keys()
             .find(|p| folder_kind(p) == FolderKind::Trash)
         {
@@ -399,31 +420,33 @@ impl MailBackend for MelibBackend {
         Ok(name)
     }
 
-    fn is_online(&mut self) -> Result<()> {
-        futures::executor::block_on(self.backend.is_online()?)?;
+    fn is_online(&self) -> Result<()> {
+        let fut = self.with_backend(|b| b.is_online());
+        futures::executor::block_on(fut?)?;
         Ok(())
     }
 
-    fn list_folders(&mut self) -> Result<Vec<String>> {
-        let mailboxes = futures::executor::block_on(self.backend.mailboxes()?)?;
+    fn list_folders(&self) -> Result<Vec<String>> {
+        let fut = self.with_backend(|b| b.mailboxes());
+        let mailboxes = futures::executor::block_on(fut?)?;
         let mut names = Vec::with_capacity(mailboxes.len());
-        self.folders.clear();
+        self.folders_lock().clear();
         self.folder_index.lock().unwrap().clear();
         for (hash, mb) in &mailboxes {
             // 解码后的名字作为对外唯一形态；对服务器的所有操作都走 MailboxHash，
             // 不受编码影响（create/rename 是例外：发往服务器的名字要重编码）
             let path = folder_name_decode(mb.path());
             names.push(path.clone());
-            self.folders.insert(path.clone(), *hash);
+            self.folders_lock().insert(path.clone(), *hash);
             self.folder_index.lock().unwrap().insert(*hash, path);
         }
         names.sort();
         Ok(names)
     }
 
-    fn fetch_envelopes(&mut self, folder: &str) -> Result<Vec<EnvelopeSummary>> {
+    fn fetch_envelopes(&self, folder: &str) -> Result<Vec<EnvelopeSummary>> {
         let hash = self.mailbox_of(folder)?;
-        let mut stream = self.backend.fetch(hash)?;
+        let mut stream = self.with_backend(|b| b.fetch(hash))?;
         let mut out = Vec::new();
         while let Some(batch) = futures::executor::block_on(stream.next()) {
             for env in batch? {
@@ -450,16 +473,15 @@ impl MailBackend for MelibBackend {
         Ok(out)
     }
 
-    fn fetch_body(&mut self, hash: u64) -> Result<Vec<u8>> {
-        Ok(futures::executor::block_on(
-            self.backend.envelope_bytes_by_hash(EnvelopeHash(hash))?,
-        )?)
+    fn fetch_body(&self, hash: u64) -> Result<Vec<u8>> {
+        let fut = self.with_backend(|b| b.envelope_bytes_by_hash(EnvelopeHash(hash)));
+        Ok(futures::executor::block_on(fut?)?)
     }
 
-    fn watch(&mut self) -> Result<std::sync::mpsc::Receiver<ServerEvent>> {
+    fn watch(&self) -> Result<std::sync::mpsc::Receiver<ServerEvent>> {
         let index = self.folder_index.clone();
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut stream = self.backend.watch()?;
+        let mut stream = self.with_backend(|b| b.watch())?;
         std::thread::spawn(move || {
             while let Some(ev) = futures::executor::block_on(stream.next()) {
                 let ev = match ev {
@@ -489,7 +511,7 @@ impl MailBackend for MelibBackend {
 
     // --- M2 ---
 
-    fn set_flags(&mut self, folder: &str, hashes: &[u64], change: FlagChange) -> Result<()> {
+    fn set_flags(&self, folder: &str, hashes: &[u64], change: FlagChange) -> Result<()> {
         let mb = self.mailbox_of(folder)?;
         let batch = self.batch_of(hashes)?;
         let op = match change {
@@ -498,56 +520,63 @@ impl MailBackend for MelibBackend {
             FlagChange::Flagged(true) => FlagOp::Set(Flag::FLAGGED),
             FlagChange::Flagged(false) => FlagOp::UnSet(Flag::FLAGGED),
         };
-        futures::executor::block_on(self.backend.set_flags(batch, mb, vec![op])?)?;
+        let fut = self.with_backend(|b| b.set_flags(batch, mb, vec![op]));
+        futures::executor::block_on(fut?)?;
         Ok(())
     }
 
-    fn delete_messages(&mut self, folder: &str, hashes: &[u64]) -> Result<()> {
+    fn delete_messages(&self, folder: &str, hashes: &[u64]) -> Result<()> {
         let mb = self.mailbox_of(folder)?;
         let batch = self.batch_of(hashes)?;
-        futures::executor::block_on(self.backend.delete_messages(batch, mb)?)?;
+        let fut = self.with_backend(|b| b.delete_messages(batch, mb));
+        futures::executor::block_on(fut?)?;
         Ok(())
     }
 
-    fn move_messages(&mut self, folder: &str, hashes: &[u64], dest: &str) -> Result<()> {
+    fn move_messages(&self, folder: &str, hashes: &[u64], dest: &str) -> Result<()> {
         let src = self.mailbox_of(folder)?;
         let dst = self.mailbox_of(dest)?;
         let batch = self.batch_of(hashes)?;
-        futures::executor::block_on(self.backend.copy_messages(batch, src, dst, true)?)?;
+        let fut = self.with_backend(|b| b.copy_messages(batch, src, dst, true));
+        futures::executor::block_on(fut?)?;
         Ok(())
     }
 
-    fn create_folder(&mut self, path: &str) -> Result<()> {
+    fn create_folder(&self, path: &str) -> Result<()> {
         // 服务器只认 mUTF-7：中文文件夹名编码后发（ASCII 原样透传）
         let encoded = encode_utf7_imap(path);
-        futures::executor::block_on(self.backend.create_mailbox(encoded)?)?;
+        let fut = self.with_backend(|b| b.create_mailbox(encoded));
+        futures::executor::block_on(fut?)?;
         self.list_folders()?; // 刷新映射：新邮箱立即可选为目标
         Ok(())
     }
 
-    fn delete_folder(&mut self, path: &str) -> Result<()> {
+    fn delete_folder(&self, path: &str) -> Result<()> {
         let mb = self.mailbox_of(path)?;
-        futures::executor::block_on(self.backend.delete_mailbox(mb)?)?;
-        self.folders.remove(path);
+        let fut = self.with_backend(|b| b.delete_mailbox(mb));
+        futures::executor::block_on(fut?)?;
+        self.folders_lock().remove(path);
         Ok(())
     }
 
-    fn rename_folder(&mut self, path: &str, new_path: &str) -> Result<()> {
+    fn rename_folder(&self, path: &str, new_path: &str) -> Result<()> {
         let mb = self.mailbox_of(path)?;
         let encoded = encode_utf7_imap(new_path);
-        futures::executor::block_on(self.backend.rename_mailbox(mb, encoded)?)?;
+        let fut = self.with_backend(|b| b.rename_mailbox(mb, encoded));
+        futures::executor::block_on(fut?)?;
         self.list_folders()?;
         Ok(())
     }
 
-    fn append_draft(&mut self, bytes: Vec<u8>) -> Result<String> {
+    fn append_draft(&self, bytes: Vec<u8>) -> Result<String> {
         let drafts = self.find_drafts_folder()?;
         let mb = self.mailbox_of(&drafts)?;
-        futures::executor::block_on(self.backend.save(bytes, mb, None)?)?;
+        let fut = self.with_backend(|b| b.save(bytes, mb, None));
+        futures::executor::block_on(fut?)?;
         Ok(drafts)
     }
 
-    fn delete_draft_by_mid(&mut self, message_id: &str) -> Result<bool> {
+    fn delete_draft_by_mid(&self, message_id: &str) -> Result<bool> {
         let drafts = self.find_drafts_folder()?;
         // 拉一遍 Drafts 信封：刷新 melib 的 hash→UID 缓存，删除才能命中
         let envs = self.fetch_envelopes(&drafts)?;
@@ -564,9 +593,9 @@ impl MailBackend for MelibBackend {
         Ok(true)
     }
 
-    fn append_to_sent(&mut self, bytes: Vec<u8>) -> Result<String> {
+    fn append_to_sent(&self, bytes: Vec<u8>) -> Result<String> {
         let sent = self
-            .folders
+            .folders_lock()
             .keys()
             .find(|p| {
                 let l = p.to_lowercase();
@@ -575,14 +604,15 @@ impl MailBackend for MelibBackend {
             .cloned()
             .ok_or_else(|| BackendError("服务器上没有类 Sent 文件夹".into()))?;
         let mb = self.mailbox_of(&sent)?;
-        futures::executor::block_on(self.backend.save(bytes, mb, Some(Flag::SEEN))?)?;
+        let fut = self.with_backend(|b| b.save(bytes, mb, Some(Flag::SEEN)));
+        futures::executor::block_on(fut?)?;
         Ok(sent)
     }
 }
 
 /// 便捷：连接 + 列文件夹
 pub fn connect(cfg: &ImapConfig) -> Result<(MelibBackend, Vec<String>)> {
-    let mut b = MelibBackend::new(cfg)?;
+    let b = MelibBackend::new(cfg)?;
     b.is_online()?;
     let folders = b.list_folders()?;
     Ok((b, folders))
@@ -592,7 +622,7 @@ pub fn connect(cfg: &ImapConfig) -> Result<(MelibBackend, Vec<String>)> {
 /// 错误翻译成人话（用户没有日志可看，这句话就是全部诊断信息）。
 pub fn test_connection(cfg: &ImapConfig) -> std::result::Result<usize, String> {
     (|| -> std::result::Result<usize, String> {
-        let mut b = MelibBackend::new(cfg).map_err(|e| e.to_string())?;
+        let b = MelibBackend::new(cfg).map_err(|e| e.to_string())?;
         b.is_online().map_err(|e| e.to_string())?;
         Ok(b.list_folders().map_err(|e| e.to_string())?.len())
     })()

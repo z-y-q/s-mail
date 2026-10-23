@@ -27,7 +27,7 @@ fn imap_cfg() -> ImapConfig {
 
 /// 清场：删掉服务器 Drafts 里历史遗留的 s-mail 草稿（断言要求精确计数）
 fn cleanup_server_drafts() {
-    let (mut b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
+    let (b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
     let envs = b.fetch_envelopes("Drafts").expect("fetch Drafts");
     let mine: Vec<u64> = envs
         .iter()
@@ -42,7 +42,7 @@ fn cleanup_server_drafts() {
 
 /// 独立连接数服务器 Drafts 里 s-mail 草稿的封数
 fn server_draft_count() -> usize {
-    let (mut b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
+    let (b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
     b.fetch_envelopes("Drafts")
         .expect("fetch Drafts")
         .iter()

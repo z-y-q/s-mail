@@ -19,6 +19,7 @@ use oauth::OAuthCfg;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use smail_backend::{
@@ -772,11 +773,31 @@ impl AccountService {
 
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop_flag = stop.clone();
+        // Reader 线程（正文取拉）：承接 OpenMessage 完整管线，大附件 FETCH 不阻塞命令循环
+        let (read_tx, read_rx) = std::sync::mpsc::channel::<i64>();
+        let backend_slot = Arc::new(std::sync::RwLock::new(None::<Arc<dyn MailBackend>>));
+        let zh_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let reader_pgp = match &cfg.pgp {
+            Some(p) => pgp::PgpRuntime::load(p).ok().map(std::sync::Arc::new),
+            None => None,
+        };
+        {
+            let reader = ReaderCtx {
+                backend_slot: backend_slot.clone(),
+                events: event_tx.clone(),
+                data_dir: data_dir.clone(),
+                pgp: reader_pgp,
+                zh: zh_flag.clone(),
+            };
+            std::thread::spawn(move || reader.run(read_rx));
+        }
         let handle = std::thread::spawn(move || {
             ServiceInner {
                 cfg,
                 data_dir,
-                zh: std::cell::Cell::new(true),
+                zh: zh_flag,
+                backend_slot,
+                read_tx,
                 events: event_tx,
                 stop: stop_flag,
                 folders_ready: std::cell::Cell::new(false),
@@ -817,8 +838,14 @@ const FOLDER_RESYNC_TTL: Duration = Duration::from_secs(60);
 struct ServiceInner {
     cfg: AppConfig,
     data_dir: PathBuf,
-    /// UI 语言（zh=true；状态/错误文案跟随，SetLang 运行时切换）
-    zh: std::cell::Cell<bool>,
+    /// UI 语言（zh=true；状态/错误文案跟随，SetLang 运行时切换）。
+    /// Arc<AtomicBool>：Reader 线程（正文管线）与主循环共享同一份
+    zh: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// 当前在线 backend 的共享槽：Reader 每次请求时 clone 一份。
+    /// 断线清 None（旧 backend 的连接已死，取拉直接报错而不是悬挂）
+    backend_slot: Arc<std::sync::RwLock<Option<Arc<dyn MailBackend>>>>,
+    /// Reader 线程请求端：OpenMessage 分流（hash）
+    read_tx: Sender<i64>,
     events: tokio::sync::mpsc::UnboundedSender<Event>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// 文件夹映射已就绪（apply_rules 首次需要；之后避免冗余 LIST 往返）。
@@ -834,7 +861,7 @@ struct ServiceInner {
 
 enum Conn {
     Up {
-        backend: Box<dyn MailBackend>,
+        backend: Arc<dyn MailBackend>,
         watch_rx: std::sync::mpsc::Receiver<ServerEvent>,
     },
     Down {
@@ -859,10 +886,15 @@ impl ServiceInner {
 
     /// 状态文案双语：tr 常量串 / trf 位置参数（{} 依序填充）
     fn tr(&self, zh: &'static str, en: &'static str) -> String {
-        tr_str(self.zh.get(), zh, en)
+        tr_str(self.zh.load(std::sync::atomic::Ordering::Relaxed), zh, en)
     }
     fn trf(&self, zh: &'static str, en: &'static str, args: &[&dyn std::fmt::Display]) -> String {
-        trf_str(self.zh.get(), zh, en, args)
+        trf_str(
+            self.zh.load(std::sync::atomic::Ordering::Relaxed),
+            zh,
+            en,
+            args,
+        )
     }
 
     /// PGP 运行时（带缓存）：密钥环盘读+证书解析贵，每封重载浪费；
@@ -917,14 +949,19 @@ impl ServiceInner {
         // 避免每个文件夹切换的 SELECT+FETCH 阻塞后续命令处理）
         let mut pending_sync: Option<String> = None;
         let mut conn = self.connect_initial();
+        // slot 与 conn 状态同步（Reader 取拉用）：Up 时暴露 backend，Down 时清空
+        match &conn {
+            Conn::Up { backend, .. } => *self.backend_slot.write().unwrap() = Some(backend.clone()),
+            Conn::Down { .. } => *self.backend_slot.write().unwrap() = None,
+        }
 
         // 初次连接成功。顺序影响体感：LIST（最快）先行让侧栏立即可交互，
         // 再回放离线标记 → 同步 INBOX → 最后草稿对账（可延后不阻塞主流程）
         if let Conn::Up { backend, .. } = &mut conn {
-            self.emit_folders(backend.as_mut(), &store);
-            self.push_pending_flags(backend.as_mut(), &store);
-            self.sync_folder(backend.as_mut(), &store, "INBOX");
-            self.sync_drafts(backend.as_mut(), &store);
+            self.emit_folders(&**backend, &store);
+            self.push_pending_flags(&**backend, &store);
+            self.sync_folder(&**backend, &store, "INBOX");
+            self.sync_drafts(&**backend, &store);
         }
 
         let mut tick: u32 = 0;
@@ -980,6 +1017,7 @@ impl ServiceInner {
                             &[&reason],
                         )));
                         self.emit(Event::ConnState(false));
+                        *self.backend_slot.write().unwrap() = None;
                         conn = Conn::Down {
                             attempts: 0,
                             retry_at: Instant::now(),
@@ -991,11 +1029,11 @@ impl ServiceInner {
                     if let Some(folder) = changed.iter().next() {
                         let f = folder.clone();
                         changed.remove(&f);
-                        self.sync_folder(backend.as_mut(), &store, &f);
+                        self.sync_folder(&**backend, &store, &f);
                         // Drafts 变更 → 草稿对账
                         if let Some(df) = backend.drafts_folder_name() {
                             if f == df {
-                                self.sync_drafts(backend.as_mut(), &store);
+                                self.sync_drafts(&**backend, &store);
                             }
                         }
                         // 本地计数刷新（无 LIST 往返；LIST 只留结构性变化）
@@ -1014,6 +1052,7 @@ impl ServiceInner {
                             "token near expiry, rebuilding connection…",
                         )));
                         self.emit(Event::ConnState(false));
+                        *self.backend_slot.write().unwrap() = None;
                         conn = Conn::Down {
                             attempts: 0,
                             retry_at: Instant::now(),
@@ -1021,10 +1060,10 @@ impl ServiceInner {
                         continue;
                     }
                     if tick.is_multiple_of(30) {
-                        self.flush_outbox(backend.as_mut(), &store);
+                        self.flush_outbox(&**backend, &store);
                     }
                     if tick.is_multiple_of(15) {
-                        deferred = self.index_pass(backend.as_mut(), &store, &cmd_rx);
+                        deferred = self.index_pass(&**backend, &store, &cmd_rx);
                     }
                 }
                 Conn::Down { attempts, retry_at } => {
@@ -1037,7 +1076,7 @@ impl ServiceInner {
                         &[&(*attempts + 1)],
                     )));
                     match self.connect_backend() {
-                        Ok(mut backend) => {
+                        Ok(backend) => {
                             let watch_rx = match backend.watch() {
                                 Ok(rx) => rx,
                                 Err(e) => {
@@ -1054,18 +1093,26 @@ impl ServiceInner {
                             self.emit(Event::Status(self.tr("已重连", "Reconnected")));
                             // 先回放离线标记再同步：本地意图先落地，同步 diff 才不会反向覆盖
                             self.emit(Event::ConnState(true));
-                            self.push_pending_flags(backend.as_mut(), &store);
+                            self.push_pending_flags(&*backend, &store);
                             // 断网期间其他设备可能改过草稿：重连即对账
-                            self.sync_drafts(backend.as_mut(), &store);
+                            self.sync_drafts(&*backend, &store);
                             if let Some(folder) = &current_folder {
                                 let f = folder.clone();
-                                self.sync_folder(backend.as_mut(), &store, &f);
+                                self.sync_folder(&*backend, &store, &f);
                             }
-                            self.emit_folders(backend.as_mut(), &store);
-                            self.flush_outbox(backend.as_mut(), &store);
+                            self.emit_folders(&*backend, &store);
+                            self.flush_outbox(&*backend, &store);
+                            *self.backend_slot.write().unwrap() = Some(backend.clone());
                             conn = Conn::Up { backend, watch_rx };
                         }
-                        Err(_) => {
+                        Err(e) => {
+                            // 重连失败可见：不打印的话 macOS 下 melib Happy-Eyeballs 竞态
+                            //（OS error 56 EISCONN）只能看到无限重连，无从诊断
+                            self.emit(Event::Status(self.trf(
+                                "重连失败：{}",
+                                "Reconnect failed: {}",
+                                &[&e],
+                            )));
                             *attempts += 1;
                             *retry_at = Instant::now() + backoff(*attempts);
                         }
@@ -1090,7 +1137,7 @@ impl ServiceInner {
             if pending_sync.is_some() {
                 if let Conn::Up { backend, .. } = &mut conn {
                     let folder = pending_sync.take().unwrap();
-                    self.sync_folder(backend.as_mut(), &store, &folder);
+                    self.sync_folder(&**backend, &store, &folder);
                     self.emit_folder_counts(&store);
                 }
             }
@@ -1098,7 +1145,7 @@ impl ServiceInner {
     }
 
     /// oauth 账号：解析/刷新 token 后建后端（重连与初连共用，token 每次重建都最新）
-    fn connect_backend(&self) -> Result<Box<dyn MailBackend>, String> {
+    fn connect_backend(&self) -> Result<Arc<dyn MailBackend>, String> {
         let mut imap = self.cfg.imap.clone();
         if let Some(o) = &self.cfg.oauth {
             if let Err(e) = oauth::ensure_token(o, &self.data_dir) {
@@ -1133,7 +1180,7 @@ impl ServiceInner {
             imap.use_oauth2 = true;
         }
         connect(&imap)
-            .map(|(b, _)| Box::new(b) as Box<dyn MailBackend>)
+            .map(|(b, _)| Arc::new(b) as Arc<dyn MailBackend>)
             .map_err(|e| e.to_string())
     }
 
@@ -1142,7 +1189,7 @@ impl ServiceInner {
             self.tr("连接服务器…", "Connecting to server…"),
         ));
         match self.connect_backend() {
-            Ok(mut backend) => {
+            Ok(backend) => {
                 let watch_rx = backend.watch().ok();
                 match watch_rx {
                     Some(rx) => {
@@ -1188,7 +1235,7 @@ impl ServiceInner {
     ) -> bool {
         match cmd {
             Cmd::Shutdown => return true,
-            Cmd::SetLang(zh) => self.zh.set(zh),
+            Cmd::SetLang(zh) => self.zh.store(zh, std::sync::atomic::Ordering::Relaxed),
             Cmd::SelectFolder(folder) => {
                 *current_folder = Some(folder.clone());
                 // 本地先行（离线优先）：索引即出列表，服务端真相随后经 FolderLoaded 修正。
@@ -1236,9 +1283,33 @@ impl ServiceInner {
                 self.emit(Event::FolderLoaded { folder, rows });
             }
             Cmd::OpenMessage(hash) => {
-                if let Conn::Up { backend, .. } = &mut *conn {
-                    self.open_message(hash, backend.as_mut(), store);
+                // seen 上推当场做（快命令，不涉大传输）：本地置灰立即，服务器 STORE 失败入回放
+                if let Some(row) = store.get(hash).ok().flatten() {
+                    if !row.seen {
+                        store.set_seen(hash, true).ok();
+                        self.emit(Event::FlagsChanged {
+                            hash,
+                            seen: Some(true),
+                            flagged: None,
+                        });
+                        match &mut *conn {
+                            Conn::Up { backend, .. } => {
+                                if (**backend)
+                                    .set_flags(&row.folder, &[hash as u64], FlagChange::Seen(true))
+                                    .is_err()
+                                {
+                                    store.queue_flag(hash, Some(true), None).ok();
+                                }
+                            }
+                            Conn::Down { .. } => {
+                                store.queue_flag(hash, Some(true), None).ok();
+                            }
+                        }
+                    }
                 }
+                // 正文管线（网络 FETCH + PGP + 解析 + PDF 缩略图）分流到 Reader 线程：
+                // 大附件取拉期间命令循环照常处理同步/写命令，不再整循环停摆
+                let _ = self.read_tx.send(hash);
             }
             Cmd::SendMail {
                 to,
@@ -1266,7 +1337,7 @@ impl ServiceInner {
                     Ok(sender) => {
                         if let Conn::Up { backend, .. } = &mut *conn {
                             self.try_send(
-                                backend.as_mut(),
+                                &**backend,
                                 store,
                                 id,
                                 &to,
@@ -1331,7 +1402,7 @@ impl ServiceInner {
                     self.tr("已重新排队发送…", "Requeued for sending…"),
                 ));
                 if let Conn::Up { backend, .. } = &mut *conn {
-                    self.flush_outbox(backend.as_mut(), store);
+                    self.flush_outbox(&**backend, store);
                 }
             }
             Cmd::EmptyTrash(folder) => {
@@ -1361,7 +1432,7 @@ impl ServiceInner {
             Cmd::ListDrafts => {
                 // 双向同步先对账再列（打开草稿箱即拉最新；失败不阻塞本地列表）
                 if let Conn::Up { backend, .. } = &mut *conn {
-                    self.sync_drafts(backend.as_mut(), store);
+                    self.sync_drafts(&**backend, store);
                 }
                 let drafts = store.list_drafts().unwrap_or_default();
                 self.emit(Event::DraftsListed(drafts));
@@ -1377,7 +1448,7 @@ impl ServiceInner {
                     if let Conn::Up { backend, .. } = &mut *conn {
                         // best-effort：删不掉（离线/找不到）不阻本地删除，残留的服务器
                         // 副本下次保存同名草稿时不会误删（Message-ID 每次新生成）
-                        match backend.as_mut().delete_draft_by_mid(&mid) {
+                        match (**backend).delete_draft_by_mid(&mid) {
                             Ok(true) => {}
                             Ok(false) => {}
                             Err(e) => self.emit(Event::Status(self.trf(
@@ -1399,8 +1470,7 @@ impl ServiceInner {
                 match (&mut *conn, store.get(hash).ok().flatten()) {
                     (Conn::Up { backend, .. }, Some(row)) => {
                         // 服务器失败/未连接 → 入回放队列（重连后推回，不再静默丢）
-                        if backend
-                            .as_mut()
+                        if (**backend)
                             .set_flags(&row.folder, &[hash as u64], FlagChange::Seen(seen))
                             .is_err()
                         {
@@ -1421,8 +1491,7 @@ impl ServiceInner {
                 });
                 match (&mut *conn, store.get(hash).ok().flatten()) {
                     (Conn::Up { backend, .. }, Some(row)) => {
-                        if backend
-                            .as_mut()
+                        if (**backend)
                             .set_flags(&row.folder, &[hash as u64], FlagChange::Flagged(on))
                             .is_err()
                         {
@@ -1442,16 +1511,14 @@ impl ServiceInner {
                 };
                 if smail_backend::folder_kind(&row.folder) == smail_backend::FolderKind::Trash {
                     if let Conn::Up { backend, .. } = &mut *conn {
-                        let _ = backend
-                            .as_mut()
-                            .delete_messages(&row.folder, &[hash as u64]);
+                        let _ = (**backend).delete_messages(&row.folder, &[hash as u64]);
                     }
                     store.delete_message(hash).ok();
                     let _ = std::fs::remove_file(self.body_path(hash));
                     self.emit(Event::MessageDeleted(hash));
                 } else {
                     let trash = match &mut *conn {
-                        Conn::Up { backend, .. } => backend.as_mut().ensure_trash_folder(),
+                        Conn::Up { backend, .. } => (**backend).ensure_trash_folder(),
                         Conn::Down { .. } => {
                             self.emit(Event::Status(
                                 self.tr("未连接，稍后重试", "Not connected, will retry later"),
@@ -1470,7 +1537,7 @@ impl ServiceInner {
                             // Trash 可能刚被 ensure_trash_folder 创建——本地无数据，
                             // emit_folder_counts 看不见它；必须 LIST 让侧栏知道新文件夹
                             if let Conn::Up { backend, .. } = &mut *conn {
-                                self.emit_folders(backend.as_mut(), store);
+                                self.emit_folders(&**backend, store);
                             }
                             // 移动成功=源视图本地行已清（消费方按“已删”语义处理，如 m2 e2e）
                             if store.get(hash).ok().flatten().is_none() {
@@ -1485,9 +1552,7 @@ impl ServiceInner {
                                 &[&e],
                             )));
                             if let Conn::Up { backend, .. } = &mut *conn {
-                                let _ = backend
-                                    .as_mut()
-                                    .delete_messages(&row.folder, &[hash as u64]);
+                                let _ = (**backend).delete_messages(&row.folder, &[hash as u64]);
                             }
                             store.delete_message(hash).ok();
                             let _ = std::fs::remove_file(self.body_path(hash));
@@ -1531,7 +1596,7 @@ impl ServiceInner {
                                 "Created folder {}",
                                 &[&path],
                             )));
-                            self.emit_folders(backend.as_mut(), store);
+                            self.emit_folders(&**backend, store);
                         }
                         Err(e) => self.emit(Event::Status(self.trf(
                             "创建文件夹失败：{}",
@@ -1561,7 +1626,7 @@ impl ServiceInner {
                                 "Deleted folder {}",
                                 &[&path],
                             )));
-                            self.emit_folders(backend.as_mut(), store);
+                            self.emit_folders(&**backend, store);
                         }
                         Err(e) => self.emit(Event::Status(self.trf(
                             "删除文件夹失败：{}",
@@ -1581,7 +1646,7 @@ impl ServiceInner {
                                 "Renamed {} → {}",
                                 &[&old, &new],
                             )));
-                            self.emit_folders(backend.as_mut(), store);
+                            self.emit_folders(&**backend, store);
                         }
                         Err(e) => {
                             self.emit(Event::Status(self.trf(
@@ -1591,7 +1656,7 @@ impl ServiceInner {
                             )));
                             // UI 侧是乐观改名：失败时重发真实文件夹列表拉回真相，
                             // 否则侧栏停在不存在的新名字上点击即报错
-                            self.emit_folders(backend.as_mut(), store);
+                            self.emit_folders(&**backend, store);
                         }
                     }
                 }
@@ -1603,7 +1668,7 @@ impl ServiceInner {
                     ));
                     return false;
                 };
-                match backend.as_mut().ensure_archive_folder() {
+                match (**backend).ensure_archive_folder() {
                     Ok(dest) => {
                         self.emit(Event::Status(self.trf(
                             "归档到 {}…",
@@ -1677,7 +1742,7 @@ impl ServiceInner {
                     ));
                     return false;
                 };
-                match backend.as_mut().ensure_junk_folder() {
+                match (**backend).ensure_junk_folder() {
                     Ok(dest) => {
                         self.emit(Event::Status(self.trf(
                             "移到 {}（标为垃圾）…",
@@ -1719,7 +1784,7 @@ impl ServiceInner {
         let Conn::Up { backend, .. } = &mut *conn else {
             return; // 离线：仅本地，下次在线保存时上传
         };
-        let backend = backend.as_mut();
+        let backend = &**backend;
         let old_mid = store.draft_message_id(draft_id).ok().flatten();
         let new_mid = format!(
             "<s-mail-draft-{}.{}@{}>",
@@ -1775,7 +1840,7 @@ impl ServiceInner {
     /// 离线标记回放（v4 队列）：重连/初连后先把本地改动推回服务器，成功一项清一项；
     /// 失败保留队列下轮重试（意图语义：后到覆盖，最终收敛）。
     /// 必须在 sync_folder 之前调：本地意图先落地，同步 diff 才不会把本地改动反向覆盖
-    fn push_pending_flags(&self, backend: &mut dyn MailBackend, store: &Store) {
+    fn push_pending_flags(&self, backend: &dyn MailBackend, store: &Store) {
         let pending = store.pending_flags().unwrap_or_default();
         if pending.is_empty() {
             return;
@@ -1817,7 +1882,7 @@ impl ServiceInner {
     /// 本地已关联但服务器无 → 对端已删 → 删本地；同 ID 冲突保留本地
     /// （IMAP 客户端改草稿 = 新 APPEND 新 Message-ID，天然收敛）。
     /// 空 Message-ID 的服务器草稿无法做身份对账，跳过（不导入不删除）
-    fn sync_drafts(&self, backend: &mut dyn MailBackend, store: &Store) {
+    fn sync_drafts(&self, backend: &dyn MailBackend, store: &Store) {
         let Some(folder) = backend.drafts_folder_name() else {
             return;
         };
@@ -1892,7 +1957,7 @@ impl ServiceInner {
         }
     }
 
-    fn sync_folder(&self, backend: &mut dyn MailBackend, store: &Store, folder: &str) {
+    fn sync_folder(&self, backend: &dyn MailBackend, store: &Store, folder: &str) {
         self.emit(Event::Status(self.trf(
             "正在同步 {}…",
             "Syncing {}…",
@@ -2020,7 +2085,7 @@ impl ServiceInner {
             ));
             return;
         };
-        let backend = backend.as_mut();
+        let backend = &**backend;
         let mut moved = 0usize;
         for (folder, group) in group_by_folder(store, hashes) {
             if folder.eq_ignore_ascii_case(dest) {
@@ -2073,7 +2138,7 @@ impl ServiceInner {
             ));
             return;
         };
-        let backend = backend.as_mut();
+        let backend = &**backend;
         let mut done = 0usize;
         for (folder, group) in group_by_folder(store, hashes) {
             let batch: Vec<u64> = group.iter().map(|h| *h as u64).collect();
@@ -2133,7 +2198,7 @@ impl ServiceInner {
             return;
         };
         // 同单封语义：废纸篓内的批量删除=永久；其余=移入废纸篓
-        let trash_dest = backend.as_mut().ensure_trash_folder().ok();
+        let trash_dest = (**backend).ensure_trash_folder().ok();
         let (perm, to_trash): (Vec<i64>, Vec<i64>) = hashes.iter().partition(|h| {
             store
                 .get(**h)
@@ -2150,7 +2215,7 @@ impl ServiceInner {
                     self.move_messages_cmd(conn, store, &to_trash, &d);
                     // Trash 可能新建（同上）：LIST 确保侧栏可见
                     if let Conn::Up { backend, .. } = &mut *conn {
-                        self.emit_folders(backend.as_mut(), store);
+                        self.emit_folders(&**backend, store);
                     }
                     for h in &to_trash {
                         if store.get(*h).ok().flatten().is_none() {
@@ -2163,7 +2228,7 @@ impl ServiceInner {
         }
         let hashes = &perm;
         let backend = match &mut *conn {
-            Conn::Up { backend, .. } => backend.as_mut(),
+            Conn::Up { backend, .. } => &**backend,
             Conn::Down { .. } => return,
         };
         let mut deleted = 0usize;
@@ -2200,7 +2265,7 @@ impl ServiceInner {
     ///（旧版逐封逐 flag 服务器往返：N 封命中 = 2N+ 次 IMAP 往返，批量后每桶空flag/1 次）
     fn apply_rules(
         &self,
-        backend: &mut dyn MailBackend,
+        backend: &dyn MailBackend,
         store: &Store,
         folder: &str,
         new_rows: Vec<MessageRow>,
@@ -2337,7 +2402,7 @@ impl ServiceInner {
         self.emit(Event::Folders(infos));
     }
 
-    fn emit_folders(&self, backend: &mut dyn MailBackend, store: &Store) {
+    fn emit_folders(&self, backend: &dyn MailBackend, store: &Store) {
         let names = backend.list_folders().unwrap_or_default();
         self.folders_ready.set(true);
         let infos = names
@@ -2350,135 +2415,6 @@ impl ServiceInner {
             })
             .collect();
         self.emit(Event::Folders(infos));
-    }
-
-    fn open_message(&self, hash: i64, backend: &mut dyn MailBackend, store: &Store) {
-        let Some(row) = store.get(hash).ok().flatten() else {
-            self.emit(Event::Status(self.trf(
-                "找不到邮件 {}",
-                "Message {} not found",
-                &[&hash],
-            )));
-            return;
-        };
-        let path = self.body_path(hash);
-        let bytes = if path.exists() {
-            match std::fs::read(&path) {
-                Ok(b) => b,
-                Err(e) => {
-                    self.emit(Event::Status(self.trf(
-                        "读缓存失败：{}",
-                        "Failed to read cache: {}",
-                        &[&e],
-                    )));
-                    return;
-                }
-            }
-        } else {
-            let bytes = match backend.fetch_body(hash as u64) {
-                Ok(b) => b,
-                Err(e) => {
-                    self.emit(Event::Status(self.trf(
-                        "拉取正文失败：{}",
-                        "Failed to fetch body: {}",
-                        &[&e],
-                    )));
-                    return;
-                }
-            };
-            if let Err(e) = std::fs::write(&path, &bytes) {
-                self.emit(Event::Status(self.trf(
-                    "正文落盘失败：{}",
-                    "Failed to write body: {}",
-                    &[&e],
-                )));
-                return;
-            }
-            store.mark_has_body(hash).ok();
-            bytes
-        };
-
-        if !row.seen {
-            store.set_seen(hash, true).ok();
-            let _ = backend.set_flags(&row.folder, &[hash as u64], FlagChange::Seen(true));
-        }
-
-        // M5-c：PGP/MIME 先行处理（解密/验签），结果再进正文管线（HTML 渲染复用）
-        let (parse_bytes, pgp_status) = self.pgp_process(&bytes);
-        let (body, is_html) = extract_body(&parse_bytes);
-        if pgp_status.is_none() {
-            store.index_body(hash, &body).ok(); // 加密邮件正文不进全文索引（安全默认）
-        }
-        let attachments = extract_attachments(&parse_bytes);
-        let (to_addrs, cc_addrs) = extract_recipients(&parse_bytes);
-        let unsubscribe = extract_unsubscribe(&parse_bytes);
-        let inline_images = extract_inline_images(&parse_bytes);
-        let remote_images = if let Some(html) = parse_bytes_html(&parse_bytes) {
-            html::remote_img_urls(html.as_ref())
-        } else {
-            vec![]
-        };
-        // 图片附件预览：魔数过滤防解码 panic，单张 2MB 上限（与远程图同护栏）
-        let attachment_images: Vec<(String, Vec<u8>)> = m_atch_images(&parse_bytes);
-        // PDF 附件缩略图：QuickLook（macOS 原生 qlmanage；其他平台空）
-        let attachment_previews = pdf_thumbnails(&parse_bytes, &self.data_dir);
-        self.emit(Event::BodyLoaded {
-            hash,
-            attachment_images,
-            attachment_previews,
-            subject: row.subject.clone(),
-            to_addrs,
-            cc_addrs,
-            unsubscribe,
-            inline_images,
-            remote_images,
-            body,
-            is_html,
-            attachments,
-            pgp: pgp_status,
-        });
-        if !row.seen {
-            self.emit(Event::FlagsChanged {
-                hash,
-                seen: Some(true),
-                flagged: None,
-            });
-        }
-    }
-
-    /// M5-c：顶层 PGP/MIME 处理。返回（用于正文解析的字节, 状态行）。
-    /// 失败不炸：返回原始字节 + 状态说明，正文管线照常跑（显示密文/原文）。
-    fn pgp_process(&self, raw: &[u8]) -> (Vec<u8>, Option<String>) {
-        match pgp::detect_pgp_kind(raw) {
-            Some(pgp::PgpKind::Encrypted) => {
-                let rt = match self.pgp_runtime() {
-                    Err(e) => return (raw.to_vec(), Some(format!("🔒 加密邮件（{e}）"))),
-                    Ok(None) => {
-                        return (raw.to_vec(), Some("🔒 加密邮件（未配置 PGP 私钥）".into()))
-                    }
-                    Ok(Some(rt)) => rt,
-                };
-                let Some(ciphertext) = pgp::extract_pgp_ciphertext(raw) else {
-                    return (raw.to_vec(), Some("🔒 加密邮件（找不到密文部分）".into()));
-                };
-                match rt.decrypt(&ciphertext) {
-                    Ok((plain, status)) => (plain, Some(status)),
-                    Err(e) => (raw.to_vec(), Some(format!("🔒 解密失败：{e}"))),
-                }
-            }
-            Some(pgp::PgpKind::Signed) => {
-                let Some((content, sig)) = pgp::signed_mime_parts(raw) else {
-                    return (raw.to_vec(), None);
-                };
-                let status = match self.pgp_runtime() {
-                    Err(e) => format!("⚠ 签名未验证（{e}）"),
-                    Ok(None) => "⚠ 签名未验证（未配置 PGP）".to_string(),
-                    Ok(Some(rt)) => rt.verify_detached(&content, &sig),
-                };
-                (raw.to_vec(), Some(status))
-            }
-            None => (raw.to_vec(), None),
-        }
     }
 
     fn body_path(&self, hash: i64) -> PathBuf {
@@ -2501,7 +2437,7 @@ impl ServiceInner {
         smail_backend::build_sender(&smtp).map_err(|e| e.to_string())
     }
 
-    fn flush_outbox(&self, backend: &mut dyn MailBackend, store: &Store) {
+    fn flush_outbox(&self, backend: &dyn MailBackend, store: &Store) {
         if let Ok(n) = store.fail_exhausted_outbox() {
             if n > 0 {
                 self.emit(Event::Status(self.trf("{} 封发件重试穷尽，已标 failed（请检查收件人/附件后重发）", "{} outgoing message(s) exhausted retries, marked failed (check recipients/attachments and resend)", &[&n])));
@@ -2553,7 +2489,7 @@ impl ServiceInner {
     #[allow(clippy::too_many_arguments)]
     fn try_send(
         &self,
-        backend: &mut dyn MailBackend,
+        backend: &dyn MailBackend,
         store: &Store,
         outbox_id: i64,
         to: &str,
@@ -2806,7 +2742,7 @@ impl ServiceInner {
     /// 把命令交还主循环优先处理（索引是后台活，不该挡交互）
     fn index_pass(
         &self,
-        backend: &mut dyn MailBackend,
+        backend: &dyn MailBackend,
         store: &Store,
         cmd_rx: &Receiver<Cmd>,
     ) -> Option<Cmd> {
@@ -2837,6 +2773,186 @@ impl ServiceInner {
             store.index_body(hash, &text).ok();
         }
         None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reader 线程（正文取拉）
+// ---------------------------------------------------------------------------
+
+/// 正文取拉线程上下文。每账号一个，start_for 时 spawn：
+/// 承接 OpenMessage 的完整管线（缓存命中 / 网络 FETCH / PGP / 解析 / PDF 缩略图 /
+/// BodyLoaded 事件），使大附件取拉不再阻塞服务主循环（同步/写命令/IDLE 照常）。
+/// backend 经 backend_slot 每次请求时取当前在线实例（断线期间取拉直接报错）
+struct ReaderCtx {
+    backend_slot: Arc<std::sync::RwLock<Option<Arc<dyn MailBackend>>>>,
+    events: tokio::sync::mpsc::UnboundedSender<Event>,
+    data_dir: PathBuf,
+    /// PGP 运行时（start_for 预载；加载失败 None：加密件显示未配置提示）
+    pgp: Option<std::sync::Arc<pgp::PgpRuntime>>,
+    zh: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ReaderCtx {
+    fn emit(&self, ev: Event) {
+        let _ = self.events.send(ev);
+    }
+    fn tr(&self, zh: &'static str, en: &'static str) -> String {
+        tr_str(self.zh.load(std::sync::atomic::Ordering::Relaxed), zh, en)
+    }
+    fn trf(&self, zh: &'static str, en: &'static str, args: &[&dyn std::fmt::Display]) -> String {
+        trf_str(
+            self.zh.load(std::sync::atomic::Ordering::Relaxed),
+            zh,
+            en,
+            args,
+        )
+    }
+
+    fn run(self, rx: Receiver<i64>) {
+        // 独立连接：Reader 与主循环并发读写同一 SQLite（WAL + busy_timeout）。
+        // 开库重试：主循环可能正在建表/写事务，短暂撞锁不应让 Reader 永久罢工
+        let mut store = None;
+        for _ in 0..5 {
+            match Store::open(&self.data_dir.join("index.db")) {
+                Ok(s) => {
+                    store = Some(s);
+                    break;
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(200)),
+            }
+        }
+        let Some(store) = store else {
+            self.emit(Event::Error(
+                self.tr("正文线程打开索引失败", "Reader thread failed to open index"),
+            ));
+            return;
+        };
+        while let Ok(hash) = rx.recv() {
+            self.serve(&store, hash);
+        }
+    }
+
+    /// 单封正文服务。seen 上推已在主循环当场处理，此处只做正文管线
+    fn serve(&self, store: &Store, hash: i64) {
+        let Some(row) = store.get(hash).ok().flatten() else {
+            self.emit(Event::Status(self.trf(
+                "找不到邮件 {}",
+                "Message {} not found",
+                &[&hash],
+            )));
+            return;
+        };
+        let path = self.data_dir.join("bodies").join(format!("{hash}.eml"));
+        let bytes = if path.exists() {
+            match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.emit(Event::Status(self.trf(
+                        "读缓存失败：{}",
+                        "Failed to read cache: {}",
+                        &[&e],
+                    )));
+                    return;
+                }
+            }
+        } else {
+            // 每次请求取当前在线 backend（断线中 → 明确报错而非悬挂等待）
+            let backend = self.backend_slot.read().unwrap().clone();
+            let Some(backend) = backend else {
+                self.emit(Event::Status(
+                    self.tr("未连接，无法拉取正文", "Not connected, cannot fetch body"),
+                ));
+                return;
+            };
+            let bytes = match backend.fetch_body(hash as u64) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.emit(Event::Status(self.trf(
+                        "拉取正文失败：{}",
+                        "Failed to fetch body: {}",
+                        &[&e],
+                    )));
+                    return;
+                }
+            };
+            if let Err(e) = std::fs::write(&path, &bytes) {
+                self.emit(Event::Status(self.trf(
+                    "正文落盘失败：{}",
+                    "Failed to write body: {}",
+                    &[&e],
+                )));
+                return;
+            }
+            store.mark_has_body(hash).ok();
+            bytes
+        };
+
+        // 以下与旧 open_message 管线一致（seen 部分已上移主循环）
+        let (parse_bytes, pgp_status) = pgp_decode(self.pgp.as_ref(), &bytes);
+        let (body, is_html) = extract_body(&parse_bytes);
+        if pgp_status.is_none() {
+            store.index_body(hash, &body).ok(); // 加密邮件正文不进全文索引（安全默认）
+        }
+        let attachments = extract_attachments(&parse_bytes);
+        let (to_addrs, cc_addrs) = extract_recipients(&parse_bytes);
+        let unsubscribe = extract_unsubscribe(&parse_bytes);
+        let inline_images = extract_inline_images(&parse_bytes);
+        let remote_images = if let Some(html) = parse_bytes_html(&parse_bytes) {
+            html::remote_img_urls(html.as_ref())
+        } else {
+            vec![]
+        };
+        let attachment_images: Vec<(String, Vec<u8>)> = m_atch_images(&parse_bytes);
+        let attachment_previews = pdf_thumbnails(&parse_bytes, &self.data_dir);
+        self.emit(Event::BodyLoaded {
+            hash,
+            attachment_images,
+            attachment_previews,
+            subject: row.subject.clone(),
+            to_addrs,
+            cc_addrs,
+            unsubscribe,
+            inline_images,
+            remote_images,
+            body,
+            is_html,
+            attachments,
+            pgp: pgp_status,
+        });
+    }
+}
+
+/// M5-c：顶层 PGP/MIME 处理（Reader 线程用）。返回（用于正文解析的字节, 状态行）。
+/// 失败不炸：返回原始字节 + 状态说明，正文管线照常跑（显示密文/原文）。
+fn pgp_decode(
+    rt: Option<&std::sync::Arc<pgp::PgpRuntime>>,
+    raw: &[u8],
+) -> (Vec<u8>, Option<String>) {
+    match pgp::detect_pgp_kind(raw) {
+        Some(pgp::PgpKind::Encrypted) => {
+            let Some(rt) = rt else {
+                return (raw.to_vec(), Some("🔒 加密邮件（未配置 PGP 私钥）".into()));
+            };
+            let Some(ciphertext) = pgp::extract_pgp_ciphertext(raw) else {
+                return (raw.to_vec(), Some("🔒 加密邮件（找不到密文部分）".into()));
+            };
+            match rt.decrypt(&ciphertext) {
+                Ok((plain, status)) => (plain, Some(status)),
+                Err(e) => (raw.to_vec(), Some(format!("🔒 解密失败：{e}"))),
+            }
+        }
+        Some(pgp::PgpKind::Signed) => {
+            let Some((content, sig)) = pgp::signed_mime_parts(raw) else {
+                return (raw.to_vec(), None);
+            };
+            let status = match rt {
+                Some(rt) => rt.verify_detached(&content, &sig),
+                None => "⚠ 签名未验证（未配置 PGP）".to_string(),
+            };
+            (raw.to_vec(), Some(status))
+        }
+        None => (raw.to_vec(), None),
     }
 }
 

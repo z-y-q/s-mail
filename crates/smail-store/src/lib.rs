@@ -72,11 +72,12 @@ pub struct Store {
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        // WAL 配套：NORMAL 足够（索引可重建，掉电最多丢最后事务不失一致性）；
-        // busy_timeout 防未来多连接场景撞 SQLITE_BUSY 直接报错
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // busy_timeout 必须最先设置：journal_mode 变更需写锁，
+        // 并发首开（服务主循环 + Reader 线程）时无超时会直接 database is locked
         conn.pragma_update(None, "busy_timeout", 5000)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        // WAL 配套：NORMAL 足够（索引可重建，掉电最多丢最后事务不失一致性）
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS messages(
                 envelope_hash INTEGER PRIMARY KEY,
