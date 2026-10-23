@@ -48,6 +48,14 @@ mime_guess = "2"
 # 纯 Rust 加密后端（避免系统 nettle）；压缩包解压用
 sequoia-openpgp = { version = "2", default-features = false, features = ["crypto-rust", "compression-deflate", "allow-experimental-crypto", "allow-variable-time-crypto"] }
 
+# melib 本地补丁（基于 0.8.13）：修 macOS Happy-Eyeballs 竞态——非阻塞 connect
+# 完成后 SO_ERROR 残留 EISCONN，二次 connect 返回 EISCONN 被误判为失败，
+# 导致 macOS 上进入 EINPROGRESS 路径的连接必挂（OS error 56）。
+# 详见 vendor/melib/src/utils/connections/std_net.rs 的 s-mail patch 注释。
+# 升级 melib 前先确认上游已修（git.meli-email.org std_net.rs poll_once）。
+[patch.crates-io]
+melib = { path = "vendor/melib" }
+
 [profile.release]
 # S2 列表滚动等性能验证必须用 release
 debug = 1

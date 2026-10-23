@@ -3869,8 +3869,6 @@ dependencies = [
 [[package]]
 name = "melib"
 version = "0.8.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42d6c64725f565ae76ee81430cf843bdf6270c1d650099a080a2ea2c65353e8b"
 dependencies = [
  "async-fn-stream",
  "async-io",
