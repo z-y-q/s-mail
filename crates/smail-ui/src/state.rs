@@ -118,6 +118,26 @@ pub(crate) struct Nav {
     pub(crate) list_view_h: f32,
 }
 
+/// M7 批量操作（选择集与确认面板）
+pub(crate) struct BatchOps {
+    /// 批量选择（账号, hash）：全账号唯一键，搜索结果跨账号也可批量
+    pub(crate) selection: std::collections::HashSet<(usize, i64)>,
+    /// 批量移动目标选择面板展开中
+    pub(crate) move_open: bool,
+    pub(crate) pending_delete: bool,
+    /// 读信区「移动到」面板展开中：（账号, hash）
+    pub(crate) move_picker: Option<(usize, i64)>,
+}
+
+/// 侧栏文件夹内联编辑（新建/改名/删除确认）
+pub(crate) struct FolderEdit {
+    /// 新建输入中：（账号, 名字）
+    pub(crate) new_folder: Option<(usize, String)>,
+    /// 改名输入中：（账号, 旧路径, 新路径）
+    pub(crate) rename_folder: Option<(usize, String, String)>,
+    pub(crate) pending_delete: Option<(usize, String)>,
+}
+
 pub(crate) struct State {
     pub(crate) prefs: Prefs,
     pub(crate) nav: Nav,
@@ -157,19 +177,10 @@ pub(crate) struct State {
     pub(crate) data_root: PathBuf,
     /// M6：OAuth 设备流横幅（url, code）；下一条 Status/Error 事件自动清除
     pub(crate) oauth_prompt: Option<(String, String)>,
-    // ---- M7 ----
-    /// 批量选择（账号, hash）：全账号唯一键，搜索结果跨账号也可批量
-    pub(crate) selection: std::collections::HashSet<(usize, i64)>,
-    /// 批量移动目标选择面板展开中
-    pub(crate) batch_move_open: bool,
-    pub(crate) pending_batch_delete: bool,
-    /// 读信区「移动到」面板展开中：（账号, hash）
-    pub(crate) move_picker: Option<(usize, i64)>,
-    /// 侧栏新建文件夹输入中：（账号, 名字）
-    pub(crate) new_folder: Option<(usize, String)>,
-    /// 侧栏改名文件夹输入中：（账号, 旧路径, 新路径）
-    pub(crate) rename_folder: Option<(usize, String, String)>,
-    pub(crate) pending_folder_delete: Option<(usize, String)>,
+    /// M7 批量操作（选择集与确认面板）
+    pub(crate) batch: BatchOps,
+    /// 侧栏文件夹内联编辑（新建/改名/删除确认）
+    pub(crate) folder_edit: FolderEdit,
     /// 最近联系人（Cmd::ListContacts 回填，进入 compose 时拉取）
     pub(crate) contacts: Vec<String>,
     /// 发件箱行（Cmd::ListOutbox 回填；按账号聚合）
@@ -268,13 +279,17 @@ impl State {
                     expanded: HashMap::new(),
                     screen: Screen::Mail,
                     statuses: HashMap::new(),
-                    selection: Default::default(),
-                    batch_move_open: false,
-                    pending_batch_delete: false,
-                    move_picker: None,
-                    new_folder: None,
-                    rename_folder: None,
-                    pending_folder_delete: None,
+                    batch: BatchOps {
+                        selection: Default::default(),
+                        move_open: false,
+                        pending_delete: false,
+                        move_picker: None,
+                    },
+                    folder_edit: FolderEdit {
+                        new_folder: None,
+                        rename_folder: None,
+                        pending_delete: None,
+                    },
                     contacts: vec![],
                     outbox_rows: vec![],
                     outbox_counts: HashMap::new(),
@@ -375,13 +390,17 @@ impl State {
                     expanded: HashMap::new(),
                     screen: Screen::Setup(setup),
                     statuses: HashMap::new(),
-                    selection: Default::default(),
-                    batch_move_open: false,
-                    pending_batch_delete: false,
-                    move_picker: None,
-                    new_folder: None,
-                    rename_folder: None,
-                    pending_folder_delete: None,
+                    batch: BatchOps {
+                        selection: Default::default(),
+                        move_open: false,
+                        pending_delete: false,
+                        move_picker: None,
+                    },
+                    folder_edit: FolderEdit {
+                        new_folder: None,
+                        rename_folder: None,
+                        pending_delete: None,
+                    },
                     contacts: vec![],
                     outbox_rows: vec![],
                     outbox_counts: HashMap::new(),
@@ -467,11 +486,11 @@ pub(crate) fn persist_and_reload(
     }
     // 账号增删后索引位移：所有按账号索引 key 的缓存与指向旧账号位的
     // 瞬态全部作发（含空账号集分支——它提前 return，不能只放在后面）
-    state.selection.clear();
+    state.batch.selection.clear();
     state.expanded.clear();
-    state.move_picker = None;
-    state.batch_move_open = false;
-    state.pending_batch_delete = false;
+    state.batch.move_picker = None;
+    state.batch.move_open = false;
+    state.batch.pending_delete = false;
     state.pending_delete = None;
     state.export_target = None;
     state.body_req = None;

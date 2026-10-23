@@ -70,6 +70,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                     .map(|(_, r)| r.envelope_hash)
                     .collect();
                 state
+                    .batch
                     .selection
                     .retain(|(a, h)| *a != acct || alive.contains(h));
                 state.expanded.retain(|h, _| alive.contains(h));
@@ -78,9 +79,9 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                         state.pending_delete = None;
                     }
                 }
-                if let Some((a, h)) = state.move_picker {
+                if let Some((a, h)) = state.batch.move_picker {
                     if a == acct && !alive.contains(&h) {
-                        state.move_picker = None;
+                        state.batch.move_picker = None;
                     }
                 }
                 // selected 同样随死引用清理（无阅读态时 close_reading_if_gone

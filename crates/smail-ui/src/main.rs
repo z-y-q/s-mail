@@ -414,15 +414,15 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.nav.cur = Some((0, "__all_inbox__".into()));
             state.rows.clear();
             state.unified_contrib.clear();
-            state.selection.clear();
+            state.batch.selection.clear();
             state.nav.list_offset = 0.0;
             state.reading = None;
             state.selected = None; // 残留 selected 会让快捷键作用于不可见邮件
             state.body_req = None;
-            state.move_picker = None;
+            state.batch.move_picker = None;
             state.pending_delete = None;
-            state.batch_move_open = false;
-            state.pending_batch_delete = false;
+            state.batch.move_open = false;
+            state.batch.pending_delete = false;
             state.rebuild_display();
             state.nav.load_more_pending = false;
             state.nav.load_more_done = false;
@@ -485,10 +485,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.nav.viewing_unified = false;
             state.nav.search_text.clear();
             state.nav.list_offset = 0.0; // 虚拟化窗口回顶；部件本身靠 scroll_to（见下）
-            state.selection.clear(); // 选择不跨文件夹（批量操作按当前列表语义）
-            state.batch_move_open = false;
-            state.pending_batch_delete = false;
-            state.move_picker = None;
+            state.batch.selection.clear(); // 选择不跨文件夹（批量操作按当前列表语义）
+            state.batch.move_open = false;
+            state.batch.pending_delete = false;
+            state.batch.move_picker = None;
             state.pending_delete = None; // 确认条不跨文件夹（确认会删不可见邮件）
             state.body_req = None; // 在途正文不再属于新列表
             if folder == "__drafts__" {
@@ -1185,14 +1185,14 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::DeleteMail(acct, hash) => {
             state.pending_delete = None;
-            state.move_picker = None;
+            state.batch.move_picker = None;
             state
                 .rows
                 .retain(|(a, r)| !(*a == acct && r.envelope_hash == hash));
             state.rebuild_display();
-            state.selection.remove(&(acct, hash)); // 后续批量不再携带死 hash
-                                                   // 精确关闭：仅当正在阅读的正是被删邮件（同账号另封信不受牵连），
-                                                   // 同时清 body_req 防迟到正文回弹
+            state.batch.selection.remove(&(acct, hash)); // 后续批量不再携带死 hash
+                                                         // 精确关闭：仅当正在阅读的正是被删邮件（同账号另封信不受牵连），
+                                                         // 同时清 body_req 防迟到正文回弹
             close_reading_if_gone(state);
             state.send(acct, Cmd::DeleteMessage(hash));
             Task::none()
@@ -1222,10 +1222,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.body_req = None;
             // 批量状态同样不跨视图：搜索前选中的邮件不属于搜索结果，
             // 残留会让「批量移动/删除」误作用于旧列表的邮件
-            state.selection.clear();
-            state.batch_move_open = false;
-            state.pending_batch_delete = false;
-            state.move_picker = None;
+            state.batch.selection.clear();
+            state.batch.move_open = false;
+            state.batch.pending_delete = false;
+            state.batch.move_picker = None;
             state.pending_delete = None;
             state.nav.list_offset = 0.0;
             if let Some(tx) = &state.cmd_tx {
@@ -1333,7 +1333,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         // ---------------- M7：移动 / 批量 / 文件夹 / 联系人 ----------------
         Message::MoveTo(acct, hash) => {
             // 切换面板：同封再点关闭，换封重开
-            state.move_picker = if state.move_picker == Some((acct, hash)) {
+            state.batch.move_picker = if state.batch.move_picker == Some((acct, hash)) {
                 None
             } else {
                 Some((acct, hash))
@@ -1341,13 +1341,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::MoveToDest(acct, hash, dest) => {
-            state.move_picker = None;
+            state.batch.move_picker = None;
             // 乐观更新：立即从列表移除；服务器结果仅状态提示（失败下次同步回真）
             state
                 .rows
                 .retain(|(a, r)| !(*a == acct && r.envelope_hash == hash));
             state.rebuild_display();
-            state.selection.remove(&(acct, hash));
+            state.batch.selection.remove(&(acct, hash));
             if state.selected == Some((acct, hash)) {
                 state.reading = None;
                 state.selected = None;
@@ -1357,8 +1357,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleSelect(acct, hash) => {
-            if !state.selection.remove(&(acct, hash)) {
-                state.selection.insert((acct, hash));
+            if !state.batch.selection.remove(&(acct, hash)) {
+                state.batch.selection.insert((acct, hash));
             }
             Task::none()
         }
@@ -1369,14 +1369,14 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     DispKind::ThreadRoot { latest, .. } => *latest,
                     _ => d.row.envelope_hash,
                 };
-                state.selection.insert((d.acct, hash));
+                state.batch.selection.insert((d.acct, hash));
             }
             Task::none()
         }
         Message::ClearSelection => {
-            state.selection.clear();
-            state.batch_move_open = false;
-            state.pending_batch_delete = false;
+            state.batch.selection.clear();
+            state.batch.move_open = false;
+            state.batch.pending_delete = false;
             Task::none()
         }
         Message::BatchSeen(seen) => {
@@ -1406,13 +1406,14 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::BatchMoveOpen => {
-            state.batch_move_open = !state.batch_move_open;
-            state.pending_batch_delete = false;
+            state.batch.move_open = !state.batch.move_open;
+            state.batch.pending_delete = false;
             Task::none()
         }
         Message::BatchMoveDest(acct, dest) => {
-            state.batch_move_open = false;
+            state.batch.move_open = false;
             let hashes: Vec<i64> = state
+                .batch
                 .selection
                 .iter()
                 .filter(|(a, _)| *a == acct)
@@ -1432,22 +1433,22 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.selected = None;
                 state.body_req = None;
             }
-            state.selection.retain(|(a, _)| *a != acct);
+            state.batch.selection.retain(|(a, _)| *a != acct);
             state.send(acct, Cmd::BatchMove { hashes, dest });
             Task::none()
         }
         Message::AskBatchDelete => {
-            state.pending_batch_delete = true;
-            state.batch_move_open = false;
+            state.batch.pending_delete = true;
+            state.batch.move_open = false;
             Task::none()
         }
         Message::BatchDeleteConfirm => {
-            state.pending_batch_delete = false;
+            state.batch.pending_delete = false;
             for (acct, hashes) in selection_by_acct(state) {
                 state
                     .rows
                     .retain(|(a, r)| !(*a == acct && hashes.contains(&r.envelope_hash)));
-                state.selection.retain(|(a, _)| *a != acct);
+                state.batch.selection.retain(|(a, _)| *a != acct);
                 state.send(acct, Cmd::BatchDelete { hashes });
             }
             state.rebuild_display();
@@ -1456,21 +1457,21 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::BatchDeleteCancel => {
-            state.pending_batch_delete = false;
+            state.batch.pending_delete = false;
             Task::none()
         }
         Message::NewFolderOpen(acct) => {
-            state.new_folder = Some((acct, String::new()));
+            state.folder_edit.new_folder = Some((acct, String::new()));
             Task::none()
         }
         Message::NewFolderInput(name) => {
-            if let Some((_, n)) = &mut state.new_folder {
+            if let Some((_, n)) = &mut state.folder_edit.new_folder {
                 *n = name;
             }
             Task::none()
         }
         Message::NewFolderConfirm => {
-            let Some((acct, name)) = state.new_folder.take() else {
+            let Some((acct, name)) = state.folder_edit.new_folder.take() else {
                 return Task::none();
             };
             let name = name.trim().to_string();
@@ -1482,22 +1483,22 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::NewFolderCancel => {
-            state.new_folder = None;
+            state.folder_edit.new_folder = None;
             Task::none()
         }
         Message::RenameFolderOpen(acct, path) => {
             // 预填当前名（微调场景多；全选替换也方便）
-            state.rename_folder = Some((acct, path.clone(), path));
+            state.folder_edit.rename_folder = Some((acct, path.clone(), path));
             Task::none()
         }
         Message::RenameFolderInput(name) => {
-            if let Some((_, _, n)) = &mut state.rename_folder {
+            if let Some((_, _, n)) = &mut state.folder_edit.rename_folder {
                 *n = name;
             }
             Task::none()
         }
         Message::RenameFolderConfirm => {
-            let Some((acct, old, new)) = state.rename_folder.take() else {
+            let Some((acct, old, new)) = state.folder_edit.rename_folder.take() else {
                 return Task::none();
             };
             let new = new.trim().to_string();
@@ -1533,15 +1534,15 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::RenameFolderCancel => {
-            state.rename_folder = None;
+            state.folder_edit.rename_folder = None;
             Task::none()
         }
         Message::AskFolderDelete(acct, path) => {
-            state.pending_folder_delete = Some((acct, path));
+            state.folder_edit.pending_delete = Some((acct, path));
             Task::none()
         }
         Message::FolderDeleteConfirm => {
-            let Some((acct, path)) = state.pending_folder_delete.take() else {
+            let Some((acct, path)) = state.folder_edit.pending_delete.take() else {
                 return Task::none();
             };
             // 正在浏览该文件夹：清视图（本地记录由服务线程清理）
@@ -1566,7 +1567,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::FolderDeleteCancel => {
-            state.pending_folder_delete = None;
+            state.folder_edit.pending_delete = None;
             Task::none()
         }
         Message::ContactPicked(field, addr) => {
@@ -1779,8 +1780,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 .rows
                 .retain(|(a, r)| !(*a == acct && r.envelope_hash == hash));
             state.rebuild_display();
-            state.selection.remove(&(acct, hash));
-            state.move_picker = None;
+            state.batch.selection.remove(&(acct, hash));
+            state.batch.move_picker = None;
             state.reading = None;
             state.selected = None;
             state.body_req = None;
@@ -1792,7 +1793,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 state
                     .rows
                     .retain(|(a, r)| !(*a == acct && hashes.contains(&r.envelope_hash)));
-                state.selection.retain(|(a, _)| *a != acct);
+                state.batch.selection.retain(|(a, _)| *a != acct);
                 state.send(acct, Cmd::Spam(hashes));
             }
             state.rebuild_display();
@@ -1842,8 +1843,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 .rows
                 .retain(|(a, r)| !(*a == acct && r.envelope_hash == hash));
             state.rebuild_display();
-            state.selection.remove(&(acct, hash));
-            state.move_picker = None;
+            state.batch.selection.remove(&(acct, hash));
+            state.batch.move_picker = None;
             state.reading = None;
             state.selected = None;
             state.body_req = None;
@@ -1855,7 +1856,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 state
                     .rows
                     .retain(|(a, r)| !(*a == acct && hashes.contains(&r.envelope_hash)));
-                state.selection.retain(|(a, _)| *a != acct);
+                state.batch.selection.retain(|(a, _)| *a != acct);
                 state.send(acct, Cmd::Archive(hashes));
             }
             state.rebuild_display();
@@ -2163,7 +2164,7 @@ fn close_reading_if_gone(state: &mut State) {
 /// 选择按账号分组（批量命令路由到各账号服务线程）
 fn selection_by_acct(state: &State) -> Vec<(usize, Vec<i64>)> {
     let mut by: std::collections::BTreeMap<usize, Vec<i64>> = Default::default();
-    for (a, h) in &state.selection {
+    for (a, h) in &state.batch.selection {
         by.entry(*a).or_default().push(*h);
     }
     by.into_iter().collect()

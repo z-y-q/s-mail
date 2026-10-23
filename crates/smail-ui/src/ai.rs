@@ -576,7 +576,7 @@ pub(crate) fn organize_go(state: &mut State) -> iced::Task<Message> {
         return iced::Task::none();
     }
     let max = state.ai.cfg.max_mails_per_organize;
-    if state.selection.is_empty() || state.selection.len() > max {
+    if state.batch.selection.is_empty() || state.batch.selection.len() > max {
         state.error = Some(crate::lang::f(state.l().ai_err_too_many, &[&max]));
         return iced::Task::none();
     }
@@ -584,7 +584,7 @@ pub(crate) fn organize_go(state: &mut State) -> iced::Task<Message> {
         return iced::Task::none();
     }
     // 快照（编号 → 账号/hash + 元数据）；正文片段在阻塞任务里读本地 .eml
-    let mut sel: Vec<(usize, i64)> = state.selection.iter().copied().collect();
+    let mut sel: Vec<(usize, i64)> = state.batch.selection.iter().copied().collect();
     sel.sort_unstable();
     let mut by_idx = HashMap::new();
     /// (编号, 账号, hash, 主题, 发件人, 日期, 已读, 星标)
@@ -713,7 +713,7 @@ pub(crate) fn plan_ready(
         Ok(raw) => {
             // 落地前按「当前选择」复核归属（请求期间用户可能已改选），
             // 文件夹白名单用当前列表重建
-            let cur: std::collections::HashSet<(usize, i64)> = state.selection.clone();
+            let cur: std::collections::HashSet<(usize, i64)> = state.batch.selection.clone();
             let mut folders = HashMap::new();
             for a in cur
                 .iter()
@@ -821,7 +821,7 @@ pub(crate) fn plan_apply(state: &mut State) {
     }
     if !applied.is_empty() {
         for (a, h) in &applied {
-            state.selection.remove(&(*a, *h));
+            state.batch.selection.remove(&(*a, *h));
         }
         state.rebuild_display();
         crate::close_reading_if_gone(state);

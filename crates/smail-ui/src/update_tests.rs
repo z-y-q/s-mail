@@ -2,7 +2,9 @@
 //! 防止后续重构复发。覆盖：视图切换残留清理、异步迟到守卫、
 //! 死引用清理、翻页触发条件、整理计划白名单校验。
 
-use crate::{ai, update, ListFilter, Message, Nav, Reading, RowEntry, Screen, State};
+use crate::{
+    ai, update, BatchOps, FolderEdit, ListFilter, Message, Nav, Reading, RowEntry, Screen, State,
+};
 use smail_core::{Event, FolderInfo, FolderKind};
 use smail_store::MessageRow;
 
@@ -76,13 +78,17 @@ fn ts() -> State {
         expanded: Default::default(),
         screen: Screen::Mail,
         statuses: Default::default(),
-        selection: Default::default(),
-        batch_move_open: false,
-        pending_batch_delete: false,
-        move_picker: None,
-        new_folder: None,
-        rename_folder: None,
-        pending_folder_delete: None,
+        batch: BatchOps {
+            selection: Default::default(),
+            move_open: false,
+            pending_delete: false,
+            move_picker: None,
+        },
+        folder_edit: FolderEdit {
+            new_folder: None,
+            rename_folder: None,
+            pending_delete: None,
+        },
         contacts: vec![],
         outbox_rows: vec![],
         outbox_counts: Default::default(),
@@ -102,27 +108,27 @@ fn ts() -> State {
 #[test]
 fn search_submit_clears_batch_state() {
     let mut s = ts();
-    s.selection.insert((0, 1));
-    s.batch_move_open = true;
-    s.pending_batch_delete = true;
-    s.move_picker = Some((0, 1));
+    s.batch.selection.insert((0, 1));
+    s.batch.move_open = true;
+    s.batch.pending_delete = true;
+    s.batch.move_picker = Some((0, 1));
     s.pending_delete = Some((0, 1));
     s.nav.search_text = "周报".into();
     let _ = update(&mut s, Message::SearchSubmit);
-    assert!(s.selection.is_empty(), "搜索前批量选择必须清空");
-    assert!(!s.batch_move_open && !s.pending_batch_delete);
-    assert!(s.move_picker.is_none() && s.pending_delete.is_none());
+    assert!(s.batch.selection.is_empty(), "搜索前批量选择必须清空");
+    assert!(!s.batch.move_open && !s.batch.pending_delete);
+    assert!(s.batch.move_picker.is_none() && s.pending_delete.is_none());
 }
 
 #[test]
 fn folder_selected_clears_transient_refs() {
     let mut s = ts();
-    s.selection.insert((0, 1));
+    s.batch.selection.insert((0, 1));
     s.pending_delete = Some((0, 1));
     s.body_req = Some((0, 1));
     s.selected = Some((0, 1));
     let _ = update(&mut s, Message::FolderSelected(0, "INBOX".into()));
-    assert!(s.selection.is_empty() && s.pending_delete.is_none() && s.body_req.is_none());
+    assert!(s.batch.selection.is_empty() && s.pending_delete.is_none() && s.body_req.is_none());
     assert!(s.selected.is_none());
 }
 
@@ -157,8 +163,8 @@ fn late_body_loaded_dropped_without_body_req() {
 fn folder_loaded_prunes_dead_refs() {
     let mut s = ts();
     s.rows = vec![(0, row(1, false, false)), (0, row(2, true, false))];
-    s.selection.insert((0, 1));
-    s.selection.insert((0, 99)); // 对端已删
+    s.batch.selection.insert((0, 1));
+    s.batch.selection.insert((0, 99)); // 对端已删
     s.pending_delete = Some((0, 99));
     s.selected = Some((0, 99));
     let _ = update(
@@ -171,8 +177,8 @@ fn folder_loaded_prunes_dead_refs() {
             },
         }),
     );
-    assert!(s.selection.contains(&(0, 1)), "存活邮件保留");
-    assert!(!s.selection.contains(&(0, 99)), "死 hash 清理");
+    assert!(s.batch.selection.contains(&(0, 1)), "存活邮件保留");
+    assert!(!s.batch.selection.contains(&(0, 99)), "死 hash 清理");
     assert!(s.pending_delete.is_none(), "确认条随死引用清理");
     assert!(s.selected.is_none());
 }
@@ -268,8 +274,8 @@ fn plan_ready_whitelist_and_membership() {
     s.ai.in_flight = 7;
     s.ai.next_id = 8;
     s.ai.busy = Some(ai::BusyKind::Organize);
-    s.selection.insert((0, 1));
-    s.selection.insert((0, 2));
+    s.batch.selection.insert((0, 1));
+    s.batch.selection.insert((0, 2));
     let mut ctx = HashMap::new();
     ctx.insert(0usize, (0usize, 1i64));
     ctx.insert(1usize, (0usize, 2i64));

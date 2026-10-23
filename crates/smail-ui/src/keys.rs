@@ -36,18 +36,20 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
                 state.pending_empty_trash = false;
             } else if state.pending_delete.is_some() {
                 state.pending_delete = None;
-            } else if state.batch_move_open
-                || state.pending_batch_delete
-                || state.move_picker.is_some()
+            } else if state.batch.move_open
+                || state.batch.pending_delete
+                || state.batch.move_picker.is_some()
             {
                 // 层级退出也要能关批量面板（否则无鼠标路径之外被困）
-                state.batch_move_open = false;
-                state.pending_batch_delete = false;
-                state.move_picker = None;
-            } else if state.new_folder.is_some() || state.rename_folder.is_some() {
+                state.batch.move_open = false;
+                state.batch.pending_delete = false;
+                state.batch.move_picker = None;
+            } else if state.folder_edit.new_folder.is_some()
+                || state.folder_edit.rename_folder.is_some()
+            {
                 // 先关侧栏内联输入（新建/改名），不打断当前浏览
-                state.new_folder = None;
-                state.rename_folder = None;
+                state.folder_edit.new_folder = None;
+                state.folder_edit.rename_folder = None;
             } else if state.nav.in_search {
                 state.nav.in_search = false;
                 state.rows.clear();
@@ -140,11 +142,11 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
         Key::Character(ref c) if matches!(state.screen, Screen::Mail) => {
             let typing_safe = state.nav.search_text.is_empty()
                 && !state.nav.in_search
-                && state.new_folder.is_none()
-                && state.rename_folder.is_none()
-                && state.pending_folder_delete.is_none()
+                && state.folder_edit.new_folder.is_none()
+                && state.folder_edit.rename_folder.is_none()
+                && state.folder_edit.pending_delete.is_none()
                 && state.pending_delete.is_none()
-                && !state.pending_batch_delete;
+                && !state.batch.pending_delete;
             if !typing_safe {
                 return Task::none();
             }
@@ -175,8 +177,8 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
             // 与字母键同 gate：侧栏内联输入编辑时 Delete 是文本操作，不触发删除确认
             if matches!(state.screen, Screen::Mail)
                 && state.nav.search_text.is_empty()
-                && state.new_folder.is_none()
-                && state.rename_folder.is_none()
+                && state.folder_edit.new_folder.is_none()
+                && state.folder_edit.rename_folder.is_none()
                 && state.selected.is_some()
             {
                 let (acct, hash) = state.selected.unwrap();

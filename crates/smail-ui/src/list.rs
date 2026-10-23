@@ -297,7 +297,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             // 层级树：按 '/' 深度缩进；特殊文件夹显示本地化名（选中/操作仍用全路径）
             let depth = f.path.matches('/').count();
             // 改名输入行取代原行（同 new_folder 的两态模式）
-            if let Some((ra, rpath, rname)) = &state.rename_folder {
+            if let Some((ra, rpath, rname)) = &state.folder_edit.rename_folder {
                 if *ra == i && rpath == &f.path {
                     sidebar = sidebar.push(
                         row![
@@ -397,7 +397,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             sidebar = sidebar.push(folder_row);
         }
         // M7：账号组尾——新建文件夹（按钮/输入行两态）
-        if let Some((nf_acct, nf_name)) = &state.new_folder {
+        if let Some((nf_acct, nf_name)) = &state.folder_edit.new_folder {
             if *nf_acct == i {
                 sidebar = sidebar.push(
                     row![
@@ -597,7 +597,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     }
 
     // M7：文件夹删除确认条（破坏性操作，列表顶部醒目确认）
-    if let Some((_fa, fpath)) = &state.pending_folder_delete {
+    if let Some((_fa, fpath)) = &state.folder_edit.pending_delete {
         let fpath = fpath.clone();
         list = list.push(
             container(
@@ -621,7 +621,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     }
 
     // M7：批量操作条（有选择时显示；搜索结果跨账号也可批量）
-    if !is_drafts && !state.selection.is_empty() {
+    if !is_drafts && !state.batch.selection.is_empty() {
         list = list.push(batch_bar(state));
     }
     // AI 整理计划预览（AI 只出建议；「应用」是人工点击，走与手工批量
@@ -1152,7 +1152,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
 // ---------------------------------------------------------------------------
 
 fn select_checkbox(state: &State, acct: usize, hash: i64) -> Element<'_, Message> {
-    let on = state.selection.contains(&(acct, hash));
+    let on = state.batch.selection.contains(&(acct, hash));
     button(text(if on { "☑" } else { "☐" }).size(13))
         .on_press(Message::ToggleSelect(acct, hash))
         .padding([6, 2])
@@ -1167,7 +1167,7 @@ fn select_checkbox(state: &State, acct: usize, hash: i64) -> Element<'_, Message
 }
 
 fn batch_bar(state: &State) -> Element<'_, Message> {
-    let n = state.selection.len();
+    let n = state.batch.selection.len();
     let bar = row![
         text(crate::lang::f(state.l().selected_n, &[&n])).size(12),
         button(text(state.l().select_all).size(12))
@@ -1227,8 +1227,8 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
     let mut col = column![container(bar).padding([4, 6]).style(theme::reader_meta)].spacing(2);
 
     // 移动目标列表：选择涉及的各账号，分组列出（排除各自当前文件夹）
-    if state.batch_move_open {
-        let mut accts: Vec<usize> = state.selection.iter().map(|(a, _)| *a).collect();
+    if state.batch.move_open {
+        let mut accts: Vec<usize> = state.batch.selection.iter().map(|(a, _)| *a).collect();
         accts.sort_unstable();
         accts.dedup();
         let multi = accts.len() > 1;
@@ -1285,7 +1285,7 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
     }
 
     // 批量删除确认（服务器永久删除，不可撤销）
-    if state.pending_batch_delete {
+    if state.batch.pending_delete {
         col = col.push(
             container(
                 row![

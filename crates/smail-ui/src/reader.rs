@@ -51,7 +51,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         .map(|(_, r)| (r.seen, r.flagged))
         .unwrap_or((true, false));
 
-    let move_open = state.move_picker == Some((*acct, hash));
+    let move_open = state.batch.move_picker == Some((*acct, hash));
     // 摘要标签：忙 / 会话聚合 / 已缓存 / 常态（一眼看得出会得到什么）
     let in_thread = state.nav.threaded && !state.nav.in_search && !state.nav.viewing_unified;
     let thread_root_here = in_thread
