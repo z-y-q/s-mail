@@ -111,8 +111,11 @@ fn main() {
     drop(rx);
     drop(session);
 
-    // 注意：不能在这里删容器——CI e2e 矩阵中 m18 在本用例之后跑，
-    // 仍需 dovecot 存活；重复跑由 up.sh 开头的 docker rm -f 兜底
+    // 恢复服务器：CI e2e 矩阵中后续用例（m18 等）仍需 dovecot 存活。
+    // （曾在这里 docker rm 容器 + stop 后不恢复，后续用例全部连不上）
+    let _ = std::process::Command::new("docker")
+        .args(["start", "smail-imap"])
+        .output();
 
     if folders_local && loaded_local > 0 {
         println!(

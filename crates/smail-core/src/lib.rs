@@ -948,21 +948,19 @@ impl ServiceInner {
         // 延迟同步目标（SelectFolder 标记；主循环 drain 完命令后执行，
         // 避免每个文件夹切换的 SELECT+FETCH 阻塞后续命令处理）
         let mut pending_sync: Option<String> = None;
-        let mut conn = self.connect_initial();
+        // 离线优先：连接不在启动路径上阻塞——直接以 Down 态进命令循环，
+        // 首连由重连机制接管（连接 → 回放标记 → 同步当前文件夹 → LIST → 发件箱）。
+        // 命令循环立即可服务：SelectFolder 的本地先行即时出列表，
+        // 打开应用秒见缓存邮件，不必等「连接+同步 INBOX+草稿对账」数秒串行完成
+        let mut conn = Conn::Down {
+            attempts: 0,
+            // 首连前给 UI 恢复命令一个到达窗口：冷启动的 SelectFolder（本地先行）
+            // 必须赶在连接（数秒）之前落地——否则 recv_timeout(0) 立即去连接，
+            // 恢复命令又被堵在连接后面，离线优先失效（用户实测回归点）
+            retry_at: Instant::now() + Duration::from_millis(200),
+        };
         // slot 与 conn 状态同步（Reader 取拉用）：Up 时暴露 backend，Down 时清空
-        match &conn {
-            Conn::Up { backend, .. } => *self.backend_slot.write().unwrap() = Some(backend.clone()),
-            Conn::Down { .. } => *self.backend_slot.write().unwrap() = None,
-        }
-
-        // 初次连接成功。顺序影响体感：LIST（最快）先行让侧栏立即可交互，
-        // 再回放离线标记 → 同步 INBOX → 最后草稿对账（可延后不阻塞主流程）
-        if let Conn::Up { backend, .. } = &mut conn {
-            self.emit_folders(&**backend, &store);
-            self.push_pending_flags(&**backend, &store);
-            self.sync_folder(&**backend, &store, "INBOX");
-            self.sync_drafts(&**backend, &store);
-        }
+        *self.backend_slot.write().unwrap() = None;
 
         let mut tick: u32 = 0;
         loop {
@@ -1070,11 +1068,18 @@ impl ServiceInner {
                     if Instant::now() < *retry_at {
                         continue;
                     }
-                    self.emit(Event::Status(self.trf(
-                        "重连中（第 {} 次）…",
-                        "Reconnecting (attempt {})…",
-                        &[&(*attempts + 1)],
-                    )));
+                    // 首连（含冷启动）与重连文案分开：用户区分“第一次连”与“掉了重连”
+                    if *attempts == 0 {
+                        self.emit(Event::Status(
+                            self.tr("连接服务器…", "Connecting to server…"),
+                        ));
+                    } else {
+                        self.emit(Event::Status(self.trf(
+                            "重连中（第 {} 次）…",
+                            "Reconnecting (attempt {})…",
+                            &[&(*attempts + 1)],
+                        )));
+                    }
                     match self.connect_backend() {
                         Ok(backend) => {
                             let watch_rx = match backend.watch() {
@@ -1090,15 +1095,28 @@ impl ServiceInner {
                                     continue;
                                 }
                             };
-                            self.emit(Event::Status(self.tr("已重连", "Reconnected")));
+                            let first = *attempts == 0;
+                            self.emit(Event::Status(if first {
+                                self.tr("已连接", "Connected")
+                            } else {
+                                self.tr("已重连", "Reconnected")
+                            }));
                             // 先回放离线标记再同步：本地意图先落地，同步 diff 才不会反向覆盖
                             self.emit(Event::ConnState(true));
                             self.push_pending_flags(&*backend, &store);
                             // 断网期间其他设备可能改过草稿：重连即对账
                             self.sync_drafts(&*backend, &store);
-                            if let Some(folder) = &current_folder {
-                                let f = folder.clone();
-                                self.sync_folder(&*backend, &store, &f);
+                            // 无选中文件夹时默认同步 INBOX（原启动语义兑底：
+                            // UI 未能复视图/无 last_view 时也能拿到新邮件；
+                            // headless e2e 用例大多依赖此行为）
+                            let target = current_folder
+                                .clone()
+                                .unwrap_or_else(|| "INBOX".to_string());
+                            // pending_sync 已排队同文件夹时跳过：循环尾的延迟同步
+                            // 会执行，避免双重 SELECT+FETCH（冷启动 SelectFolder
+                            // 必然同时设置两者）
+                            if pending_sync.as_deref() != Some(target.as_str()) {
+                                self.sync_folder(&*backend, &store, &target);
                             }
                             self.emit_folders(&*backend, &store);
                             self.flush_outbox(&*backend, &store);
@@ -1106,11 +1124,20 @@ impl ServiceInner {
                             conn = Conn::Up { backend, watch_rx };
                         }
                         Err(e) => {
-                            // 重连失败可见：不打印的话 macOS 下 melib Happy-Eyeballs 竞态
+                            // 连接失败可见：不打印的话 macOS 下 melib Happy-Eyeballs 竞态
                             //（OS error 56 EISCONN）只能看到无限重连，无从诊断
+                            let first = *attempts == 0;
                             self.emit(Event::Status(self.trf(
-                                "重连失败：{}",
-                                "Reconnect failed: {}",
+                                if first {
+                                    "连接失败：{}"
+                                } else {
+                                    "重连失败：{}"
+                                },
+                                if first {
+                                    "Connection failed: {}"
+                                } else {
+                                    "Reconnect failed: {}"
+                                },
                                 &[&e],
                             )));
                             *attempts += 1;
@@ -1182,47 +1209,6 @@ impl ServiceInner {
         connect(&imap)
             .map(|(b, _)| Arc::new(b) as Arc<dyn MailBackend>)
             .map_err(|e| e.to_string())
-    }
-
-    fn connect_initial(&self) -> Conn {
-        self.emit(Event::Status(
-            self.tr("连接服务器…", "Connecting to server…"),
-        ));
-        match self.connect_backend() {
-            Ok(backend) => {
-                let watch_rx = backend.watch().ok();
-                match watch_rx {
-                    Some(rx) => {
-                        self.emit(Event::ConnState(true));
-                        Conn::Up {
-                            backend,
-                            watch_rx: rx,
-                        }
-                    }
-                    None => {
-                        self.emit(Event::Status(
-                            self.tr("启动 IDLE 失败", "Failed to start IDLE"),
-                        ));
-                        Conn::Down {
-                            attempts: 0,
-                            retry_at: Instant::now(),
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                self.emit(Event::Status(self.trf(
-                    "连接失败：{}",
-                    "Connection failed: {}",
-                    &[&e],
-                )));
-                self.emit(Event::ConnState(false));
-                Conn::Down {
-                    attempts: 0,
-                    retry_at: Instant::now() + Duration::from_secs(2),
-                }
-            }
-        }
     }
 
     fn handle_cmd(
@@ -2857,8 +2843,24 @@ impl ReaderCtx {
                 }
             }
         } else {
-            // 每次请求取当前在线 backend（断线中 → 明确报错而非悬挂等待）
-            let backend = self.backend_slot.read().unwrap().clone();
+            // 每次请求取当前在线 backend。首连进行中（冷启动 200ms 窗口后
+            // 连接需 1-3s）时短暂等待：用户秒开列表就点未缓存邮件不应直接报错
+            //（旧启动序连词命令循环阻塞反而不会丢；离线优先重构后需要此处兼容）。
+            // 真断网场景等满 3s 后仍明确报错
+            let backend = {
+                let mut waited = Duration::ZERO;
+                loop {
+                    let b = self.backend_slot.read().unwrap().clone();
+                    match b {
+                        Some(b) => break Some(b),
+                        None if waited < Duration::from_secs(3) => {
+                            std::thread::sleep(Duration::from_millis(100));
+                            waited += Duration::from_millis(100);
+                        }
+                        None => break None,
+                    }
+                }
+            };
             let Some(backend) = backend else {
                 self.emit(Event::Status(
                     self.tr("未连接，无法拉取正文", "Not connected, cannot fetch body"),
