@@ -16,6 +16,29 @@ pub enum TrayAction {
 
 static TRAY_RX: std::sync::OnceLock<std::sync::Mutex<Receiver<TrayAction>>> =
     std::sync::OnceLock::new();
+thread_local! {
+    static TRAY_ICON: std::cell::RefCell<Option<tray_icon::TrayIcon>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 更新托盘 tooltip 的未读数（0 = 无后缀）
+#[cfg(target_os = "macos")]
+pub fn set_unread(n: u32) {
+    // 必须在主线程调用（thread_local；iced update 事件流保证）
+    TRAY_ICON.with(|t| {
+        if let Some(tray) = t.borrow_mut().as_mut() {
+            let tip = if n > 0 {
+                format!("s-mail（{n} 未读）")
+            } else {
+                "s-mail".to_string()
+            };
+            let _ = tray.set_tooltip(Some(tip));
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_unread(_n: u32) {}
 
 /// 订阅入口：读全局接收端（main 启动时已 spawn）
 pub fn take_receiver() -> Option<&'static std::sync::Mutex<Receiver<TrayAction>>> {
@@ -54,8 +77,8 @@ fn spawn_macos() -> Option<Receiver<TrayAction>> {
         .with_icon(icon)
         .build()
         .ok()?;
-    // 托盘与进程同生命周期：有意泄漏（drop 会移除托盘图标）
-    std::mem::forget(tray);
+    // 托盘存 thread_local（TrayIcon 非 Send/Sync；与主线程同生命周期）
+    TRAY_ICON.with(|t| *t.borrow_mut() = Some(tray));
 
     MenuEvent::set_event_handler(Some(move |ev: tray_icon::menu::MenuEvent| {
         match ev.id().0.as_str() {

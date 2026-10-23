@@ -20,6 +20,9 @@
 
 ### 性能与 CI（复查第 N+2 轮续）
 
+- **托盘 tooltip 未读数**：各账号 INBOX 未读之和实时更新（0 = 隐藏后缀）
+- **CI e2e +m9**（PGP 收信——自产密钥，只需 dovecot）→ 14 个
+
 - **索引器 aggressive yield**：有排队命令时不启动索引（旧版先 fetch
   一封再 yield——命令高峰期每 tick 白等 1-2s 网络）；批次 10→5
 - **CI e2e +m11**（应用内配置+OAuth 设备流，需 OAuth mock）→ 13 个

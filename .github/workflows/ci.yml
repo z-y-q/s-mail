@@ -135,6 +135,12 @@ jobs:
           python3 spikes/spike-melib/imap-test/mini_smtp.py 11525 &
           sleep 2
           timeout 120 ./target/debug/examples/m3 80
+
+      - name: m9 PGP 收信 e2e（自产密钥）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.pgp.toml
+          SMAIL_HOME: /tmp/smail-ci-m9
+        run: timeout 90 ./target/debug/examples/m9 70
       - name: m11 应用内配置+OAuth 设备流 e2e（需 OAuth mock）
         env:
           SMAIL_HOME: /tmp/smail-ci-m11

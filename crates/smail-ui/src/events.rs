@@ -26,6 +26,14 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             for info in infos {
                 state.folders.push((acct, info));
             }
+            // 托盘未读数（各账号 INBOX 未读之和）
+            let total: u32 = state
+                .folders
+                .iter()
+                .filter(|(_, f)| f.path.eq_ignore_ascii_case("INBOX"))
+                .map(|(_, f)| f.unseen)
+                .sum();
+            crate::tray::set_unread(total);
         }
         Event::FolderLoaded { folder, rows } => {
             let viewing = state
