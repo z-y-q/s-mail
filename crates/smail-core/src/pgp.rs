@@ -1,13 +1,44 @@
-//! PGP 收信侧（M5-c）：解密 PGP/MIME + 验签（内嵌 one-pass 与 RFC 3156 detached）。
+//! PGP 加密与签名（M5-c）
 //!
-//! 密钥约定（账号数据目录下）：
-//! - 私钥（解密用）：config `[accounts.pgp].key_path` 指向 armored 私钥文件
-//! - 公钥环（验签用）：`[accounts.pgp].pubring_path`，armored，可含多个 cert
+//! ## 职责
 //!
-//! 设计取舍：
-//! - sequoia-openpgp 纯 Rust 后端（crypto-rust），常见算法（Cv25519/RSA/AES）够用
-//! - 解密结果不再进 FTS 索引（加密邮件只有信封可搜，安全默认）
-//! - 明文签名（multipart/signed）按 RFC 3156 手工切 boundary 取精确字节验签
+//! - **解密 PGP/MIME**：multipart/encrypted（RFC 3156）邮件解密
+//! - **签名验证**：内嵌签名（one-pass）+ 分离签名（multipart/signed）
+//! - **发信加密**：PGP 加密 + 签名（基于 sequoia-openpgp）
+//!
+//! ## 密钥约定
+//!
+//! 账号数据目录下：
+//! - **私钥**（解密用）：`config.toml` 中 `[accounts.pgp].key_path` 指向 armored 私钥文件
+//! - **公钥环**（验签用）：`[accounts.pgp].pubring_path`，armored 格式，可含多个证书
+//!
+//! ## 技术栈
+//!
+//! - **sequoia-openpgp**：纯 Rust 实现（crypto-rust 后端）
+//! - **算法支持**：Cv25519/RSA/AES（常见算法够用）
+//!
+//! ## 设计取舍
+//!
+//! - **索引策略**：解密结果不进 FTS5 全文索引（安全默认：加密邮件只有信封可搜）
+//! - **验签精度**：multipart/signed 按 RFC 3156 手工切 boundary 取精确字节验签
+//!   - 避免 MIME 解析器规范化破坏签名
+//! - **密码输入**：首次使用时提示输入私钥密码，内存缓存（不落盘）
+//!
+//! ## 工作流
+//!
+//! ### 收信解密
+//! ```text
+//! multipart/encrypted
+//!   ├─ application/pgp-encrypted (version)
+//!   └─ application/octet-stream (PGP message)
+//!        ↓ DecryptorBuilder
+//!      明文邮件
+//! ```
+//!
+//! ### 发信加密
+//! ```text
+//! 明文邮件 ──Encryptor──> PGP message ──Armorer──> ASCII armor
+//! ```
 
 use std::io::Read as _;
 use std::io::Write as _;
@@ -95,6 +126,7 @@ impl VerificationHelper for Helper {
                     match r {
                         Ok(good) => {
                             let cert = good.ka.cert();
+                            // 无 userid 时用指纹（valid cert 必有指纹）
                             let uid = cert
                                 .userids()
                                 .next()
@@ -668,6 +700,8 @@ fn base64_encode(data: &[u8]) -> String {
 fn b64_wrap(s: &str) -> String {
     let mut out = String::new();
     for chunk in s.as_bytes().chunks(76) {
+        // base64 输出总是 ASCII，from_utf8 理论上不会失败；
+        // 保留 unwrap_or 作为防御，即使失败也只是截断该块而非崩溃
         out.push_str(std::str::from_utf8(chunk).unwrap_or(""));
         out.push_str("\r\n");
     }
@@ -676,6 +710,7 @@ fn b64_wrap(s: &str) -> String {
 
 /// 当前时间的 RFC 2822 日期（UTC，+0000）
 fn rfc2822_now() -> String {
+    // SystemTime 早于 UNIX_EPOCH 只在时钟回拨时发生，回退到 epoch 0（1970-01-01）
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

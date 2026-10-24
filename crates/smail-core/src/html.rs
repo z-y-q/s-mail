@@ -1,10 +1,36 @@
-//! HTML 邮件 → markdown 结构块（M4 管线，DESIGN §5）。
+//! HTML 邮件转 Markdown
 //!
-//! 流程：ammonia 白名单消毒（去 script/事件/危险协议，**删全部 `<img>`**——
-//! 远程图默认禁，防跟踪像素）→ scraper(html5ever) DOM 遍历 → markdown 子集：
-//! 标题/段落/列表/引用/链接/加粗斜体/代码块/表格(尽力而为)。
+//! ## 职责
 //!
-//! 渲染端：iced markdown widget（链接点击由 UI 层接手开浏览器）。
+//! - **HTML → Markdown**：将 HTML 邮件转换为可读 Markdown 文本
+//! - **XSS 防护**：ammonia 白名单消毒（移除 script/事件/危险协议）
+//! - **隐私保护**：默认删除全部远程图片（防跟踪像素）
+//! - **结构保留**：标题/段落/列表/引用/链接/加粗斜体/代码块/表格
+//!
+//! ## 处理流程
+//!
+//! ```text
+//! 原始 HTML
+//!   ↓
+//! ammonia 消毒（删 <script>/<img>，清理事件属性）
+//!   ↓
+//! scraper(html5ever) DOM 遍历
+//!   ↓
+//! Markdown 子集输出
+//!   ↓
+//! iced markdown widget 渲染
+//! ```
+//!
+//! ## 图片策略（M4）
+//!
+//! - **远程图片**：ammonia 删除全部 `<img>`，单独提取 URL 列表供按需加载
+//!   - 隐私默认：不自动加载（防跟踪像素、读回执）
+//!   - 用户点击「显示图片」后，经 `LoadImages` 命令按需下载
+//! - **内嵌图片**（cid:）：由 Reader 线程在解析 multipart 时提取，UI 自动显示
+//!
+//! ## 渲染端
+//!
+//! iced markdown widget，链接点击由 UI 层接手打开浏览器
 
 use scraper::{Html, Node};
 

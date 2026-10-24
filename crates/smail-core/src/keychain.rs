@@ -1,12 +1,40 @@
-//! 系统钥匙串凭据存储（B6）：密码不落 config.toml 明文。
+//! 系统钥匙串凭据存储
 //!
-//! 方案：config 里存标记 `keychain:<账号键>`（如 `keychain:me@x.com/imap`），
-//! 真实密码进系统钥匙串——macOS Keychain（`security` CLI）/ Linux
-//! secret-service（`secret-tool`）。解析只发生在 `AccountService::start_for`
-//! （服务线程内存中替换），`save_accounts` 原样写回标记，明文永不回写。
+//! ## 职责
 //!
-//! 已知取舍：macOS `security add-generic-password -w` 经参数传密码，
-//! 写入瞬间可在本机 `ps` 短暂可见（毫秒级）；secret-tool 走 stdin 无此问题。
+//! - **密码安全存储**：密码不落 config.toml 明文
+//! - **系统集成**：使用系统钥匙串（macOS Keychain / Linux secret-service）
+//! - **透明读取**：启动时自动从钥匙串读取密码替换标记
+//!
+//! ## 存储方案
+//!
+//! config.toml 中存标记：
+//! ```toml
+//! [account.imap]
+//! password = "keychain:me@x.com/imap"
+//! ```
+//!
+//! 真实密码存系统钥匙串：
+//! - **macOS**：Keychain（`security` CLI）
+//! - **Linux**：secret-service（`secret-tool`）
+//!
+//! ## 运行时流程
+//!
+//! ```text
+//! AccountService::start_for()
+//!   ↓
+//! 检测 password 是否以 "keychain:" 开头
+//!   ↓
+//! 调用系统钥匙串 API 获取真实密码
+//!   ↓
+//! 内存替换（仅服务线程持有，不回写配置文件）
+//! ```
+//!
+//! ## 安全权衡
+//!
+//! - **macOS 限制**：`security add-generic-password -w` 经参数传密码，写入瞬间可在 `ps` 短暂可见（毫秒级）
+//! - **Linux 安全**：`secret-tool` 走 stdin，无此问题
+//! - **明文永不回写**：`save_accounts` 原样保留标记
 
 const SERVICE: &str = "s-mail";
 

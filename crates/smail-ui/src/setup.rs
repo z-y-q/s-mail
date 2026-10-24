@@ -1,4 +1,29 @@
-//! M6：账号配置屏——预设/表单/视图 + 表单→配置映射。
+//! 账号配置视图（M6）
+//!
+//! ## 职责
+//!
+//! - **首次设置引导**：应用启动无配置时自动进入
+//! - **服务商预设**：QQ/163/Gmail/Outlook 自动填充参数
+//! - **表单验证**：邮箱格式、端口号、必填项检查
+//! - **OAuth 授权**：设备流引导（显示 URL + 验证码）
+//! - **配置持久化**：生成 config.toml + 写入系统钥匙串
+//!
+//! ## 服务商预设
+//!
+//! | 预设 | IMAP | SMTP | 认证方式 |
+//! |------|------|------|---------|
+//! | QQ 邮箱 | imap.qq.com:993 | smtp.qq.com:465 | 密码/授权码 |
+//! | 163 邮箱 | imap.163.com:993 | smtp.163.com:465 | 密码/授权码 |
+//! | Gmail | imap.gmail.com:993 | smtp.gmail.com:465 | OAuth 2.0 |
+//! | Outlook | outlook.office365.com:993 | smtp.office365.com:587 | OAuth 2.0 |
+//! | 自定义 | 手动填写 | 手动填写 | 密码/OAuth |
+//!
+//! ## 表单字段
+//!
+//! - **基础信息**：姓名、邮箱地址
+//! - **IMAP 配置**：服务器、端口、TLS、用户名、密码
+//! - **SMTP 配置**：服务器、端口、TLS、用户名、密码
+//! - **OAuth**（Gmail/Outlook）：自动触发设备流授权
 
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Element, Length};
@@ -849,6 +874,7 @@ pub(crate) fn build_account(
         pgp: None,
         rules: vec![],
         signature: None,
+        sync_config: Default::default(),
     };
     Ok(cfg)
 }

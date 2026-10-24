@@ -43,6 +43,7 @@ toml = "0.8"
 ureq = { version = "2", features = ["json"] }
 base64 = "0.22"
 anyhow = "1"
+thiserror = "2"
 sha1 = "0.10"
 mime_guess = "2"
 # 纯 Rust 加密后端（避免系统 nettle）；压缩包解压用

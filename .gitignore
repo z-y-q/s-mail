@@ -5,3 +5,5 @@ spikes/spike-melib/config.toml
 spikes/spike-melib/imap-test/mail/
 # 打包产物
 /dist
+# 编辑器临时备份
+*.bak

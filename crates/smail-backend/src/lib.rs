@@ -1,11 +1,35 @@
-//! smail-backend：melib IMAP 封装 + lettre SMTP 发信。
+//! IMAP/SMTP 后端封装
 //!
-//! melib 独立使用三坑（S3 实证，勿删注释）：
-//! 1. [`MailBackend::is_online`] 必须最先调用（否则 "Offline"）
-//! 2. server_* 配置是顶层 flatten 字符串表（server_port 也要引号）
-//! 3. watch 事件可能重复到达 —— 上层只当信号，靠 diff 补差
+//! ## 职责
 //!
-//! 同步模型：阻塞方法跑在调用方专职线程；watch 内部线程 → channel。
+//! - **IMAP 同步**：基于 melib 的文件夹列表、信封拉取、IDLE 监听
+//! - **SMTP 发信**：基于 lettre 的 OAuth/密码认证、TLS 连接
+//! - **文件夹分类**：识别 Inbox/Drafts/Sent/Trash/Junk/Archive 特殊文件夹
+//!
+//! ## melib 集成要点（S3 实证，勿删）
+//!
+//! 1. **is_online() 必须最先调用**：否则所有操作返回 "Offline" 错误
+//! 2. **server_* 配置是顶层 flatten**：server_port 也要引号（字符串表）
+//! 3. **watch 事件可能重复到达**：上层只当信号，靠 diff 补差
+//!
+//! ## 同步模型
+//!
+//! ```text
+//! 服务线程 ──阻塞调用──> Backend::fetch_envelopes()
+//!                                 (melib 阻塞 I/O)
+//!
+//! melib 内部线程 ──watch 事件──> channel ──> 服务线程 IDLE 推送
+//! ```
+//!
+//! ## 关键类型
+//!
+//! - `Backend`：IMAP 后端实例（melib MailBackend 包装）
+//! - `SmtpClient`：SMTP 发信客户端（lettre SmtpTransport 包装）
+//! - `FolderKind`：特殊文件夹类型（UI 图标/动作路由）
+
+mod error;
+
+pub use error::{BackendError, Result};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -144,25 +168,6 @@ pub fn folder_kind(path: &str) -> FolderKind {
     }
 }
 
-#[derive(Debug)]
-pub struct BackendError(pub String);
-
-impl std::fmt::Display for BackendError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "backend error: {}", self.0)
-    }
-}
-
-impl std::error::Error for BackendError {}
-
-impl From<melib::Error> for BackendError {
-    fn from(e: melib::Error) -> Self {
-        BackendError(format!("{e}"))
-    }
-}
-
-pub type Result<T> = std::result::Result<T, BackendError>;
-
 // ---------------------------------------------------------------------------
 // trait
 // ---------------------------------------------------------------------------
@@ -195,7 +200,7 @@ pub trait MailBackend: Send + Sync {
     // --- B2：草稿云同步（v1 单向：本地保存→上传，本地删除→服务器清理） ---
     /// APPEND 草稿到服务器 Drafts 类文件夹，返回文件夹名。默认不支持
     fn append_draft(&self, _bytes: Vec<u8>) -> Result<String> {
-        Err(BackendError("该后端不支持草稿上传".into()))
+        Err(BackendError::Other("该后端不支持草稿上传".into()))
     }
     /// 在 Drafts 类文件夹按 Message-ID 找到并删除服务器草稿。
     /// 返回是否找到并删（找不到不算错——对方设备可能已处理）
@@ -209,17 +214,17 @@ pub trait MailBackend: Send + Sync {
     /// 归档目标文件夹：找到既有（archive/归档/All Mail），没有则新建 Archive。
     /// 一键归档动作用。默认不支持
     fn ensure_archive_folder(&self) -> Result<String> {
-        Err(BackendError("该后端不支持归档".into()))
+        Err(BackendError::Other("该后端不支持归档".into()))
     }
     /// 垃圾目标文件夹：找到既有（junk/spam/垃圾），没有则新建 Junk。
     /// 「标为垃圾」动作用。默认不支持
     fn ensure_junk_folder(&self) -> Result<String> {
-        Err(BackendError("该后端不支持垃圾标记".into()))
+        Err(BackendError::Other("该后端不支持垃圾标记".into()))
     }
     /// 废纸篓：找到既有（trash/deleted/已删除/废纸篓），没有则新建 Trash。
     /// 「删除=进废纸篓可恢复」语义用（Foxmail/Outlook 惯例）。默认不支持
     fn ensure_trash_folder(&self) -> Result<String> {
-        Err(BackendError("该后端不支持废纸篓".into()))
+        Err(BackendError::Other("该后端不支持废纸篓".into()))
     }
 }
 
@@ -252,12 +257,14 @@ impl MelibBackend {
         if cfg.use_oauth2 {
             // melib 会 base64 解码 server_password 后作为 SASL 初始响应发出
             if cfg.password.as_deref().unwrap_or("").is_empty() {
-                return Err(BackendError(
+                return Err(BackendError::ConfigError(
                     "use_oauth2=true 需要 password 为 base64 SASL 串".into(),
                 ));
             }
         } else if cfg.password.as_deref().unwrap_or("").is_empty() {
-            return Err(BackendError("缺少 imap 密码（或改配 [oauth]）".into()));
+            return Err(BackendError::ConfigError(
+                "缺少 imap 密码（或改配 [oauth]）".into(),
+            ));
         }
         // 安全：经 serde 序列化生成配置文档（自动转义 " 与换行）。
         // 此前 format! 直拼 TOML，密码/用户名含 " 或换行可注入任意配置项
@@ -297,9 +304,9 @@ impl MelibBackend {
             timeout: "30".into(),
         };
         let settings_toml = toml::to_string(&doc)
-            .map_err(|e| BackendError(format!("序列化 IMAP 配置失败: {e}")))?;
+            .map_err(|e| BackendError::ConfigError(format!("序列化 IMAP 配置失败: {e}")))?;
         let settings: AccountSettings = toml::from_str(&settings_toml)
-            .map_err(|e| BackendError(format!("构造 AccountSettings 失败: {e}")))?;
+            .map_err(|e| BackendError::ConfigError(format!("构造 AccountSettings 失败: {e}")))?;
 
         let event_consumer = BackendEventConsumer::new(Arc::new(|_acct, _ev| {}));
         let backend: Box<dyn MelibMailBackend> =
@@ -318,12 +325,14 @@ impl MelibBackend {
             .iter()
             .find(|(p, _)| p.eq_ignore_ascii_case(folder))
             .map(|(_, h)| *h)
-            .ok_or_else(|| BackendError(format!("文件夹 {folder:?} 不在服务器列表中")))
+            .ok_or_else(|| BackendError::FolderNotFound(folder.to_string()))
     }
 
     fn batch_of(&self, hashes: &[u64]) -> Result<EnvelopeHashBatch> {
         let mut it = hashes.iter();
-        let first = it.next().ok_or_else(|| BackendError("空哈希列表".into()))?;
+        let first = it
+            .next()
+            .ok_or_else(|| BackendError::Other("空哈希列表".into()))?;
         Ok(EnvelopeHashBatch {
             first: EnvelopeHash(*first),
             rest: it.map(|h| EnvelopeHash(*h)).collect(),
@@ -341,7 +350,7 @@ impl MelibBackend {
                 l.contains("draft") || l.contains("草稿")
             })
             .cloned()
-            .ok_or_else(|| BackendError("服务器上没有类 Drafts 文件夹".into()))
+            .ok_or_else(|| BackendError::FolderNotFound("Drafts".into()))
     }
 }
 
@@ -602,7 +611,7 @@ impl MailBackend for MelibBackend {
                 l.contains("sent") || l.contains("已发送") || l.contains("已发送消息")
             })
             .cloned()
-            .ok_or_else(|| BackendError("服务器上没有类 Sent 文件夹".into()))?;
+            .ok_or_else(|| BackendError::FolderNotFound("Sent".into()))?;
         let mb = self.mailbox_of(&sent)?;
         let fut = self.with_backend(|b| b.save(bytes, mb, Some(Flag::SEEN)));
         futures::executor::block_on(fut?)?;
@@ -677,7 +686,7 @@ pub fn send_mail(cfg: &SmtpConfig, mail: &OutgoingMail) -> Result<Vec<u8>> {
     sender
         .transport
         .send(&email)
-        .map_err(|e| BackendError(format!("SMTP 发送失败: {e}")))?;
+        .map_err(|e| BackendError::SmtpProtocol(format!("发送失败: {e}")))?;
     // 返回与发送内容一致的完整字节（lettre 的 formatted 输出）
     Ok(email.formatted())
 }
@@ -695,19 +704,18 @@ fn build_transport(cfg: &SmtpConfig) -> Result<lettre::SmtpTransport> {
         "none" => lettre::SmtpTransport::builder_dangerous(&cfg.host).port(cfg.port),
         "ssl" => {
             let params = TlsParameters::new(cfg.host.clone())
-                .map_err(|e| BackendError(format!("TLS 初始化失败: {e}")))?;
+                .map_err(|e| BackendError::TlsFailed(e.to_string()))?;
             lettre::SmtpTransport::builder_dangerous(&cfg.host)
                 .port(cfg.port)
                 .tls(Tls::Wrapper(params))
         }
         _ => lettre::SmtpTransport::relay(&cfg.host)
-            .map_err(|e| BackendError(format!("SMTP relay 失败: {e}")))?
+            .map_err(|e| BackendError::SmtpProtocol(format!("relay 失败: {e}")))?
             .port(cfg.port),
     };
-    let password = cfg
-        .password
-        .clone()
-        .ok_or_else(|| BackendError("缺少 smtp 密码（oauth 账号由上层填 token）".into()))?;
+    let password = cfg.password.clone().ok_or_else(|| {
+        BackendError::ConfigError("缺少 smtp 密码（oauth 账号由上层填 token）".into())
+    })?;
     transport_builder =
         transport_builder.credentials(Credentials::new(cfg.username.clone(), password));
     if cfg.auth.as_deref() == Some("xoauth2") {
@@ -746,7 +754,7 @@ impl SmtpSender {
         use lettre::Transport;
         self.transport
             .send(&email)
-            .map_err(|e| BackendError(format!("SMTP 发送失败: {e}")))?;
+            .map_err(|e| BackendError::SmtpProtocol(format!("发送失败: {e}")))?;
         Ok(email.formatted())
     }
 
@@ -756,19 +764,19 @@ impl SmtpSender {
         use lettre::Transport;
         let sender: Address = from
             .parse()
-            .map_err(|e| BackendError(format!("发件人 {from:?} 无效: {e}")))?;
+            .map_err(|e| BackendError::InvalidMailFormat(format!("发件人 {from:?} 无效: {e}")))?;
         let to: Vec<Address> = recipients
             .iter()
             .map(|r| {
                 r.parse::<Address>()
-                    .map_err(|e| BackendError(format!("收件人 {r:?} 无效: {e}")))
+                    .map_err(|e| BackendError::InvalidMailFormat(format!("收件人 {r:?} 无效: {e}")))
             })
             .collect::<std::result::Result<_, _>>()?;
         let envelope = Envelope::new(Some(sender), to)
-            .map_err(|e| BackendError(format!("信封构造失败: {e}")))?;
+            .map_err(|e| BackendError::InvalidMailFormat(format!("信封构造失败: {e}")))?;
         self.transport
             .send_raw(&envelope, bytes)
-            .map_err(|e| BackendError(format!("SMTP 发送失败: {e}")))?;
+            .map_err(|e| BackendError::SmtpProtocol(format!("发送失败: {e}")))?;
         Ok(())
     }
 }
@@ -781,24 +789,24 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
     let from: Mailbox = mail
         .from
         .parse()
-        .map_err(|e| BackendError(format!("发件人地址无效: {e}")))?;
+        .map_err(|e| BackendError::InvalidMailFormat(format!("发件人地址无效: {e}")))?;
     let mut builder = Message::builder().from(from);
     for to in &mail.to {
         let m: Mailbox = to
             .parse()
-            .map_err(|e| BackendError(format!("收件人 {to:?} 无效: {e}")))?;
+            .map_err(|e| BackendError::InvalidMailFormat(format!("收件人 {to:?} 无效: {e}")))?;
         builder = builder.to(m);
     }
     for cc in &mail.cc {
         let m: Mailbox = cc
             .parse()
-            .map_err(|e| BackendError(format!("抄送 {cc:?} 无效: {e}")))?;
+            .map_err(|e| BackendError::InvalidMailFormat(format!("抄送 {cc:?} 无效: {e}")))?;
         builder = builder.cc(m);
     }
     for bcc in &mail.bcc {
         let m: Mailbox = bcc
             .parse()
-            .map_err(|e| BackendError(format!("密送 {bcc:?} 无效: {e}")))?;
+            .map_err(|e| BackendError::InvalidMailFormat(format!("密送 {bcc:?} 无效: {e}")))?;
         builder = builder.bcc(m);
     }
     let builder = builder
@@ -820,8 +828,9 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
             let mime = mime_guess::from_path(name)
                 .first_or_octet_stream()
                 .to_string();
-            let ct = ContentType::parse(&mime)
-                .map_err(|e| BackendError(format!("附件 {name:?} 类型无效: {e}")))?;
+            let ct = ContentType::parse(&mime).map_err(|e| {
+                BackendError::InvalidMailFormat(format!("附件 {name:?} 类型无效: {e}"))
+            })?;
             multipart = multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
         }
         MaybeMultipart::Multi(multipart)
@@ -830,7 +839,7 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
         MaybeMultipart::Plain(p) => builder.singlepart(p),
         MaybeMultipart::Multi(m) => builder.multipart(m),
     }
-    .map_err(|e| BackendError(format!("构造邮件失败: {e}")))
+    .map_err(|e| BackendError::InvalidMailFormat(format!("构造邮件失败: {e}")))
 }
 
 /// 构造草稿完整字节（B2 云同步：不走 SMTP，只组 MIME；Message-ID 由调用方

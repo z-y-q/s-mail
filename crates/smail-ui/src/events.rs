@@ -1,5 +1,27 @@
-//! 服务线程事件回流（Event -> State）：同步落地、正文装载、
-//! 标记变更、聚合视图合并等（从 main.rs 拆出）。
+//! 事件处理（服务线程 → UI）
+//!
+//! ## 职责
+//!
+//! - **事件回流处理**：TaggedEvent → State 状态更新
+//! - **同步落地**：文件夹列表、邮件列表、正文加载
+//! - **标记变更**：乐观更新 + 服务器确认
+//! - **聚合视图合并**：搜索结果、统一收件箱
+//! - **错误处理**：状态横幅、OAuth 提示
+//!
+//! ## 关键事件
+//!
+//! - `Event::Folders`：文件夹列表更新 + 托盘未读数
+//! - `Event::FolderLoaded`：邮件列表加载 + 会话聚合
+//! - `Event::BodyLoaded`：正文装载 + 附件图片
+//! - `Event::FlagsChanged`：标记变更 + 阅读器精确关闭
+//! - `Event::SearchResults`：搜索结果合并（多账号）
+//! - `Event::NewMail`：新邮件通知触发
+//!
+//! ## 状态同步
+//!
+//! - **横幅管理**：新状态冲掉旧错误（show-once 语义）
+//! - **OAuth 流程**：授权提示 → 清空横幅
+//! - **阅读器关闭**：删除/移动邮件后精确判断是否关闭阅读器
 use iced::Task;
 
 use std::sync::Arc;
@@ -313,6 +335,21 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
         }
         Event::ContactsListed(addrs) => {
             state.contacts = addrs;
+        }
+        Event::SyncProgress {
+            folder,
+            total,
+            processed,
+        } => {
+            // 更新状态行：「正在同步 INBOX (120/500)」
+            let progress_text = if processed == 0 {
+                format!("同步 {} 开始…", folder)
+            } else if processed >= total {
+                format!("同步 {} 完成", folder)
+            } else {
+                format!("正在同步 {} ({}/{})", folder, processed, total)
+            };
+            state.statuses.insert(acct, progress_text);
         }
     }
     Task::none()

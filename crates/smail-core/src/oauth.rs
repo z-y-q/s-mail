@@ -1,12 +1,37 @@
-//! XOAUTH2：设备流授权（RFC 8628）+ token 落盘与自动刷新。
+//! OAuth 2.0 设备流认证
 //!
-//! - 提供方：google / microsoft / custom（custom 指定端点，供本地 mock e2e）
-//! - token 存 `<数据目录>/oauth.json`（unix 0600），是 SQLite 之外的可重建状态
-//! - IMAP：melib `use_oauth2`，server_password = base64(SASL 串)
-//!   （melib 会解码后作为 AUTHENTICATE XOAUTH2 的初始响应）
-//! - SMTP：lettre `Mechanism::Xoauth2`，secret = 裸 access token（lettre 自己拼 SASL）
-//! - 刷新策略：过期前 [`REFRESH_MARGIN_SECS`] 内取 token 即刷新；
-//!   Session 主循环在临期前主动重建连接触发刷新
+//! ## 职责
+//!
+//! - **设备流授权**（RFC 8628）：Google/Microsoft/自定义端点
+//! - **令牌管理**：access_token 自动刷新 + 持久化存储
+//! - **IMAP/SMTP 集成**：生成 XOAUTH2 SASL 认证串
+//!
+//! ## 存储策略
+//!
+//! - 位置：`<数据目录>/oauth.json`（Unix 0600 权限）
+//! - 性质：可重建状态（类似 SQLite 缓存，丢失重新授权即可）
+//! - 内容：access_token + refresh_token + 过期时间
+//!
+//! ## 协议适配
+//!
+//! ### IMAP（melib）
+//! ```toml
+//! use_oauth2 = true
+//! server_password = "<base64(user=...\x01auth=Bearer ...)>"
+//! ```
+//! melib 解码后作为 `AUTHENTICATE XOAUTH2` 的初始响应
+//!
+//! ### SMTP（lettre）
+//! ```text
+//! Mechanism::Xoauth2
+//! secret = access_token  // 裸令牌，lettre 自己拼 SASL
+//! ```
+//!
+//! ## 刷新策略
+//!
+//! - **触发条件**：令牌剩余寿命 < [`REFRESH_MARGIN_SECS`]（120秒）
+//! - **主动刷新**：Session 主循环在临期前重建连接触发
+//! - **透明更新**：刷新成功后更新 oauth.json，下次启动直接可用
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -306,6 +331,14 @@ pub fn ensure_token(cfg: &OAuthCfg, dir: &Path) -> Result<String, String> {
         ts = refresh(cfg, &rt).map_err(|e| format!("刷新 token 失败: {e}"))?;
         save_tokens(dir, &ts)?;
     }
+    Ok(ts.access_token)
+}
+
+/// 启动时快速检查：仅验证 token 存在，不刷新（避免阻塞启动）。
+/// 返回当前 token（可能已过期），连接失败时由重连机制触发真正的刷新。
+pub fn try_token_no_refresh(dir: &Path) -> Result<String, String> {
+    let ts = load_tokens(dir)
+        .ok_or_else(|| "尚未授权：请先在终端运行 `s-mail auth <账号名>`".to_string())?;
     Ok(ts.access_token)
 }
 

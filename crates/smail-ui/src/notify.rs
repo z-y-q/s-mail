@@ -1,8 +1,35 @@
-//! macOS 通知：mac-notification-sys（原生 UNUserNotificationCenter）。
+//! 系统通知（macOS）
 //!
-//! 点击跳转 v1：通知发出时记录最近一封新邮件的位置；通知点击会激活
-//! app（macOS 默认行为）→ tray 激活路径消费记录 → 跳转到该邮件。
-//! v2 接 UNUserNotificationCenter delegate 回调可精确到每封邮件（需 .app）。
+//! ## 职责
+//!
+//! - **新邮件通知**：收到新邮件时发出系统通知
+//! - **点击跳转**：点击通知 → 激活 app → 跳转到对应邮件
+//! - **通知队列**：FIFO 队列管理多封新邮件通知
+//!
+//! ## 技术实现
+//!
+//! - **后端**：mac-notification-sys（原生 UNUserNotificationCenter）
+//! - **通知内容**：发件人 + 主题
+//! - **点击载荷**：(账号, 文件夹, hash)
+//!
+//! ## 跳转机制（v2）
+//!
+//! ```text
+//! 新邮件到达 → notify_mail() 发出通知 + 记录载荷
+//!   ↓
+//! 用户点击通知 → macOS 激活 app
+//!   ↓
+//! tray 激活路径 → take_last() 消费队列
+//!   ↓
+//! 跳转到对应邮件（账号/文件夹/hash）
+//! ```
+//!
+//! - **v1**：单条记录，只能跳转最后一封
+//! - **v2**：FIFO 队列，多封新邮件逐次激活逐封跳转
+//!
+//! ## 环境控制
+//!
+//! - `SMAIL_NO_NOTIFY` 环境变量：禁用通知（测试/调试用）
 
 use std::collections::VecDeque;
 use std::sync::Mutex;

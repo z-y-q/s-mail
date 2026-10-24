@@ -55,6 +55,7 @@ fn main() {
         oauth: Some(oauth),
         pgp: None,
         rules: vec![],
+        sync_config: Default::default(),
     };
     let cfg_path = home.join("config.toml");
     save_accounts(&cfg_path, std::slice::from_ref(&acct)).expect("save_accounts");

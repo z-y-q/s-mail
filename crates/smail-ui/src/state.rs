@@ -1,5 +1,25 @@
-//! 应用状态：State 族、启动装载、账号持久化与会话重建、
-//! 阅读器精确关闭与批量选择分组（从 main.rs 拆出，重导出保持调用点不变）。
+//! 应用状态管理
+//!
+//! ## 职责
+//!
+//! - **State 结构体**：应用全局状态（会话、导航、视图、批量操作）
+//! - **Screen 枚举**：视图切换（邮件列表/写信/设置）
+//! - **Reading 结构体**：阅读器状态（正文、附件、图片）
+//! - **启动装载**：配置加载 + 会话重建
+//! - **状态持久化**：账号配置保存、草稿自动存储
+//!
+//! ## State 拆分（M7 重构）
+//!
+//! 原 State 单体拆分为子结构体：
+//! - `Nav`：导航状态（当前账号/文件夹、搜索模式、选中项）
+//! - `BatchOps`：批量操作（勾选列表、操作类型）
+//! - `FolderEdit`：文件夹管理（创建/删除/重命名表单）
+//!
+//! ## 关键类型
+//!
+//! - `Screen`：主视图（Mail/Compose/Setup）
+//! - `Reading`：阅读器精确身份（hash、主题、正文、附件）
+//! - `MailDisp`：邮件列表显示单元（会话聚合后的展示行）
 #![allow(clippy::module_inception)]
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -336,13 +356,17 @@ impl State {
             }
             Err(e) => {
                 let mut setup = SetupForm::new();
-                if cfg_path.exists() {
-                    // 文件在但解析失败：明确警告，避免用户无感知覆盖手写配置
-                    setup.err = Some(format!(
+                // 构造用户可见的错误信息
+                let error_msg = if cfg_path.exists() {
+                    format!(
                         "现有配置文件解析失败：{e}\n保存新账号会覆盖它（建议先备份 {}）",
                         cfg_path.display()
-                    ));
-                }
+                    )
+                } else {
+                    format!("启动失败：{e}")
+                };
+                setup.err = Some(error_msg.clone());
+
                 let state = State {
                     prefs: Prefs {
                         ui_theme: boot_theme,
@@ -360,7 +384,7 @@ impl State {
                     cmd_tx: None,
                     events: None,
                     account_names: vec![],
-                    error: None,
+                    error: Some(error_msg), // ← 关键修复：同步到全局错误横幅
                     setup_hint: None,
                     nav: Nav {
                         folders: vec![],

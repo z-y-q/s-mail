@@ -1,660 +1,85 @@
-//! smail-core：账号服务线程（M3）。
+//! smail-core：邮件客户端核心服务
 //!
-//! M1：收信同步 / 正文懒加载 / IDLE
-//! M2：SMTP 发信 + outbox 队列 / flags 双向 / 断线重连 / 本地草稿
-//! M3：FTS 全文搜索（bigram）+ 后台索引器 + 附件收发
+//! ## 功能矩阵
 //!
-//! 同步策略：全量信封 diff（M4 候选：UID/QRESYNC 增量）。
+//! - **M1**：收信同步 / 正文懒加载 / IDLE 推送
+//! - **M2**：SMTP 发信 + outbox 队列 / 标记双向同步 / 断线重连 / 本地草稿
+//! - **M3**：FTS 全文搜索（bigram）+ 后台索引器 + 附件收发
+//! - **M5**：PGP 签名/加密 / OAuth 2.0 设备流 + 令牌刷新
+//! - **M6**：多账号支持（独立数据目录 + 统一事件流）
+//! - **M7**：批量操作 / 文件夹管理 / 联系人补全
+//!
+//! ## 架构
+//!
+//! ```text
+//! Session (多账号)
+//!   ├─> AccountService (账号0) ─┬─> IMAP Backend (收信/同步)
+//!   │                           ├─> SMTP Backend (发信)
+//!   │                           ├─> Store (SQLite + FTS)
+//!   │                           └─> Reader Thread (正文取拉)
+//!   │
+//!   ├─> AccountService (账号1) ─┬─> ...
+//!   └─> ...
+//! ```
+//!
+//! ## 模块划分
+//!
+//! - `config` - 账号配置管理（TOML 加载/保存，OAuth 集成）
+//! - `session` - 多账号会话管理（命令路由 + 事件流多路复用）
+//! - `protocol` - 通道协议（Cmd/Event 定义）
+//! - `reader` - 邮件正文读取线程（缓存 + 解析 + PGP）
+//! - `lib.rs` - AccountService 主循环（IMAP 同步/IDLE/命令处理）
+//!
+//! ## 同步策略
+//!
+//! 传输层：melib 启用 sqlite3 离线缓存，FETCH 走 CONDSTORE/QRESYNC 增量
+//! （对上层仍全量返回）。上层做全量信封 diff：新信入库、flags 随服务器更新、
+//! 本地有而服务器无 → 删本地行（服务端删除传播，m13 e2e 覆盖）；
+//! UIDVALIDITY 变化时全量集合同样收敛正确。
 
+mod error;
+
+pub mod config;
 pub mod html;
 pub mod keychain;
 pub mod oauth;
 pub mod pgp;
+pub mod protocol;
+pub mod reader;
+pub mod session;
 pub mod threads;
 pub mod wkd;
+
+pub use error::{CoreError, Result, StartError};
 
 use pgp::PgpCfg;
 
 use oauth::OAuthCfg;
+
+use config::SyncConfig;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use smail_backend::{
-    connect, BackendError, EnvelopeSummary, FlagChange, MailBackend, OutgoingMail, ServerEvent,
-};
+use smail_backend::{connect, BackendError, FlagChange, MailBackend, OutgoingMail, ServerEvent};
 pub use smail_backend::{test_connection, FolderKind, ImapConfig, SmtpConfig};
 use smail_store::{DraftRow, MessageRow, Store};
 
-// ---------------------------------------------------------------------------
-// 通道协议
-// ---------------------------------------------------------------------------
+// Re-exports from new modules
+pub use config::{load_accounts, save_accounts, slug_for, AccountConfig, Rule};
+pub use protocol::{Cmd, Event, FolderInfo};
+pub use reader::{extract_body, ReaderCtx};
+pub use session::{Session, SessionCmd, TaggedEvent};
+
+// 内部使用的辅助函数
+use reader::{
+    backoff, extract_attachment_bytes, extract_recipients, group_by_folder, parse_from_addr,
+    split_addrs, to_row,
+};
 
 #[derive(Debug)]
-pub enum Cmd {
-    SelectFolder(String),
-    /// UI 语言（服务线程状态/错误文案用；不改任何数据行为）
-    SetLang(bool),
-    OpenMessage(i64),
-    Shutdown,
-    SendMail {
-        to: String,
-        cc: String,
-        bcc: String,
-        subject: String,
-        body: String,
-        /// 附件文件路径（服务线程读文件）
-        attachments: Vec<String>,
-        /// M5-d：PGP 签名
-        sign: bool,
-        /// M5-d：PGP 加密（隐含签名）
-        encrypt: bool,
-    },
-    SaveDraft {
-        id: Option<i64>,
-        to: String,
-        cc: String,
-        bcc: String,
-        subject: String,
-        body: String,
-    },
-    ListDrafts,
-    /// 发件箱视图：全量列表（含 failed）
-    ListOutbox,
-    /// 发件箱：重发一条（回 pending，立即尝试）
-    OutboxRetry(i64),
-    /// 发件箱：删除一条
-    OutboxRemove(i64),
-    /// 清空废纸篓（服务器永久删除该文件夹全部邮件）
-    EmptyTrash(String),
-    DeleteDraft(i64),
-    MarkSeen(i64, bool),
-    ToggleFlagged(i64, bool),
-    DeleteMessage(i64),
-    // M3
-    Search(String),
-    /// 手动刷新：绕过 TTL 立即全量同步指定文件夹（顶栏 ↻ / F5；TTL 的安全出口）
-    ForceRefresh(String),
-    /// 触底加载下一页（本地索引扩大重发；服务端新邮件由 IDLE 推送）
-    LoadMore(String),
-    /// 一键归档：解析归档目标（无则新建 Archive）后批量移动
-    Archive(Vec<i64>),
-    /// 标为垃圾：解析垃圾目标（无则新建 Junk）后批量移动（v1 无自学习）
-    Spam(Vec<i64>),
-    /// 通讯录：全量列表（管理界面用；带名字与 ID）
-    ListContactsFull,
-    /// 通讯录删除条目
-    DeleteContact(i64),
-    /// 导出原始 .eml 到指定路径（UI 先弹保存对话框拿路径）
-    ExportEml {
-        hash: i64,
-        path: String,
-    },
-    /// 按需加载远程图片（用户点击「显示图片」后；隐私默认禁远程图）
-    LoadImages {
-        hash: i64,
-        urls: Vec<String>,
-    },
-    /// 只读本地索引发列表（统一收件箱聚合用；不触发服务器同步，
-    /// 新邮件由 IDLE 推送）
-    LocalList(String),
-    SaveAttachment {
-        hash: i64,
-        name: String,
-    },
-    // ---- M7：手动移动/批量操作/文件夹管理/联系人 ----
-    /// 单封移动（读信视图「移动到」）
-    MoveMessage {
-        hash: i64,
-        dest: String,
-    },
-    /// 批量标记（seen/flagged 至少其一；可跨文件夹，服务按 folder 分组）
-    BatchFlags {
-        hashes: Vec<i64>,
-        seen: Option<bool>,
-        flagged: Option<bool>,
-    },
-    BatchMove {
-        hashes: Vec<i64>,
-        dest: String,
-    },
-    BatchDelete {
-        hashes: Vec<i64>,
-    },
-    CreateFolder(String),
-    DeleteFolder(String),
-    RenameFolder(String, String),
-    /// 最近联系人（compose 自动补全用）
-    ListContacts,
-}
-
-#[derive(Debug, Clone)]
-pub struct FolderInfo {
-    pub path: String,
-    pub total: u32,
-    pub unseen: u32,
-    /// 特殊文件夹类型（UI 图标/Drafts 重定向/Junk 动作）
-    pub kind: smail_backend::FolderKind,
-}
-
-#[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)] // BodyLoaded 带图片字节——事件流一次性传递，盒装收益小于可读性代价
-pub enum Event {
-    Status(String),
-    Error(String),
-    Folders(Vec<FolderInfo>),
-    FolderLoaded {
-        folder: String,
-        rows: Vec<MessageRow>,
-    },
-    BodyLoaded {
-        hash: i64,
-        /// 图片附件（name, bytes）：UI 内联预览用；魔数过滤 + 2MB/张上限
-        attachment_images: Vec<(String, Vec<u8>)>,
-        /// PDF 附件缩略图（name, png_bytes）：QuickLook 生成，UI 预览用
-        attachment_previews: Vec<(String, Vec<u8>)>,
-        subject: String,
-        /// 原信收件人（"名字 <a@b>, …" 原样，回复全部用）
-        to_addrs: String,
-        cc_addrs: String,
-        /// List-Unsubscribe 退订入口（http/mailto），无则 None
-        unsubscribe: Option<String>,
-        /// 内嵌图片（cid；随邮件自带，自动显示）：(cid, 字节)
-        inline_images: Vec<(String, Vec<u8>)>,
-        /// 远程图片 URL（隐私默认不加载；用户点击后经 LoadImages 按需下载）
-        remote_images: Vec<String>,
-        /// M5-c：PGP 状态（None=非 PGP 邮件）
-        pgp: Option<String>,
-        body: String,
-        /// true = body 是 markdown（源自 HTML 邮件，UI 用 markdown widget 渲染）
-        is_html: bool,
-        /// (文件名, 字节数)
-        attachments: Vec<(String, usize)>,
-    },
-    MailSent {
-        to: String,
-        subject: String,
-    },
-    DraftsListed(Vec<DraftRow>),
-    DraftSaved {
-        id: i64,
-    },
-    DraftDeleted(i64),
-    MessageDeleted(i64),
-    FlagsChanged {
-        hash: i64,
-        seen: Option<bool>,
-        flagged: Option<bool>,
-    },
-    /// 发件箱计数变化（侧栏入口显隐/刷新信号）
-    OutboxPending {
-        pending: usize,
-        failed: usize,
-    },
-    /// 发件箱全量（发件箱视图）
-    OutboxListed(Vec<smail_store::OutboxRow>),
-    /// 连接状态（true=已连接；断连时 UI 持续提示而非一闪而过的状态行）
-    ConnState(bool),
-    // M3
-    SearchResults {
-        query: String,
-        rows: Vec<MessageRow>,
-        /// 匹配正文片段（与 rows 同序；空=仅主题命中）
-        snippets: Vec<String>,
-    },
-    /// 统一收件箱聚合行（LocalList 的回流；带账号标签）
-    UnifiedRows {
-        rows: Vec<MessageRow>,
-    },
-    /// 远程图片下载完成（按需加载；键回 hash）
-    ImagesLoaded {
-        hash: i64,
-        images: Vec<(String, Vec<u8>)>,
-    },
-    /// M6：OAuth 设备流等待用户授权（GUI 显示链接+验证码横幅）
-    OAuthPrompt {
-        url: String,
-        code: String,
-    },
-    AttachmentSaved {
-        path: String,
-    },
-    // ---- M7 ----
-    /// INBOX 增量新信（系统通知用；初次全量同步不发）
-    NewMail {
-        from: String,
-        subject: String,
-        /// 新邮件所在文件夹（通知跳转直达；空=未知）
-        folder: String,
-        /// 新邮件 hash（通知跳转直达）
-        hash: i64,
-    },
-    /// 最近联系人（Cmd::ListContacts 的响应）
-    /// 通讯录补全数据（compose 用，display 格式 "名字 <a@b>"）
-    ContactsListed(Vec<String>),
-    /// 通讯录全量（管理界面用）
-    ContactsFull(Vec<smail_store::ContactRow>),
-}
-
-// ---------------------------------------------------------------------------
-// M3-b：多账号配置与 Session 多路复用
-// ---------------------------------------------------------------------------
-
-#[derive(serde::Deserialize)]
-struct AccountEntry {
-    name: Option<String>,
-    imap: ImapConfig,
-    smtp: Option<SmtpConfig>,
-    #[serde(default)]
-    oauth: Option<OAuthCfg>,
-    #[serde(default)]
-    rules: Vec<Rule>,
-    #[serde(default)]
-    pgp: Option<PgpCfg>,
-    #[serde(default)]
-    signature: Option<String>,
-}
-
-/// M5-b：过滤规则（同步时对新见到的邮件应用，天然幂等）
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct Rule {
-    /// 发件人子串（不区分大小写）
-    #[serde(default)]
-    pub from: Option<String>,
-    /// 主题子串（不区分大小写）
-    #[serde(default)]
-    pub subject: Option<String>,
-    /// 只在该文件夹应用（缺省=任意文件夹）
-    #[serde(default)]
-    pub folder: Option<String>,
-    #[serde(default)]
-    pub mark_seen: bool,
-    #[serde(default)]
-    pub flag: bool,
-    /// 移动到该服务器文件夹
-    #[serde(default)]
-    pub move_to: Option<String>,
-}
-
-impl Rule {
-    fn matches(&self, m: &MessageRow) -> bool {
-        if self.from.is_none() && self.subject.is_none() {
-            return false;
-        }
-        if let Some(f) = &self.from {
-            if !m.from_addr.to_lowercase().contains(&f.to_lowercase()) {
-                return false;
-            }
-        }
-        if let Some(sub) = &self.subject {
-            if !m.subject.to_lowercase().contains(&sub.to_lowercase()) {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn has_action(&self) -> bool {
-        self.mark_seen || self.flag || self.move_to.is_some()
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct FileCfgV2 {
-    /// 旧版单账号（[account]/[smtp]），保留兼容
-    account: Option<ImapConfig>,
-    smtp: Option<SmtpConfig>,
-    /// 旧版单账号的 [oauth]
-    #[serde(default)]
-    oauth: Option<OAuthCfg>,
-    #[serde(default)]
-    accounts: Vec<AccountEntry>,
-}
-
-/// 解析后的账号配置
-#[derive(Clone)]
-pub struct AccountConfig {
-    pub name: String,
-    /// 数据目录名（只留安全字符）
-    pub slug: String,
-    pub imap: ImapConfig,
-    pub smtp: Option<SmtpConfig>,
-    pub oauth: Option<OAuthCfg>,
-    pub rules: Vec<Rule>,
-    pub pgp: Option<PgpCfg>,
-    pub identity: String,
-    /// 发信签名（compose 预填到正文尾）
-    pub signature: Option<String>,
-}
-
-/// 数据目录名（slug）派生：ASCII 安全字符，纯中文名回退 username，再不行回退 acct-N。
-/// load_accounts 与 GUI 保存共用，保证手写配置与界面添加行为一致。
-pub fn slug_for(name_or_user: &str, fallback: &str, idx: usize) -> String {
-    let sanitize = |x: &str| -> String {
-        x.chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect()
-    };
-    let mut slug = sanitize(name_or_user);
-    if !slug.chars().any(|c| c.is_ascii_alphanumeric()) {
-        slug = sanitize(fallback);
-    }
-    if !slug.chars().any(|c| c.is_ascii_alphanumeric()) {
-        slug = format!("acct-{idx}");
-    }
-    slug
-}
-
-/// 同时接受 [[accounts]] 多账号与旧版 [account]/[smtp] 单账号格式
-pub fn load_accounts(cfg_path: &Path) -> Result<Vec<AccountConfig>, StartError> {
-    let raw = std::fs::read_to_string(cfg_path)
-        .map_err(|_| StartError::ConfigMissing(cfg_path.to_path_buf()))?;
-    let file: FileCfgV2 = toml::from_str(&raw).map_err(|e| {
-        StartError::BadConfig(format!(
-            "{e}（[[accounts]] 或旧版 [account] 格式，见 config.example.toml）"
-        ))
-    })?;
-
-    let mut out = Vec::new();
-    let slugify = |s: &str, fallback: &str, idx: usize| -> String { slug_for(s, fallback, idx) };
-
-    if let Some(imap) = file.account {
-        let smtp = file.smtp.clone();
-        let identity = smtp
-            .as_ref()
-            .and_then(|s| s.from.clone())
-            .unwrap_or_else(|| imap.username.clone());
-        let idx = out.len() + 1;
-        out.push(AccountConfig {
-            slug: slugify(&imap.username, &imap.username, idx),
-            name: "默认".into(),
-            identity,
-            imap,
-            smtp,
-            oauth: file.oauth,
-            rules: Vec::new(),
-            pgp: None,
-            signature: None,
-        });
-    }
-    for entry in file.accounts {
-        let identity = entry
-            .smtp
-            .as_ref()
-            .and_then(|s| s.from.clone())
-            .unwrap_or_else(|| entry.imap.username.clone());
-        let name = entry.name.unwrap_or_else(|| entry.imap.username.clone());
-        let idx = out.len() + 1;
-        out.push(AccountConfig {
-            slug: slugify(&name, &entry.imap.username, idx),
-            name,
-            identity,
-            imap: entry.imap,
-            smtp: entry.smtp,
-            oauth: entry.oauth,
-            rules: entry.rules,
-            pgp: entry.pgp,
-            signature: entry.signature,
-        });
-    }
-    if out.is_empty() {
-        return Err(StartError::BadConfig("配置里没有任何账号".into()));
-    }
-    // 规则校验：无匹配条件或无动作的规则直接报配置错（静默失效更糟）
-    for (i, a) in out.iter().enumerate() {
-        for (j, r) in a.rules.iter().enumerate() {
-            if r.from.is_none() && r.subject.is_none() {
-                return Err(StartError::BadConfig(format!(
-                    "账号#{} 规则#{} 缺少 from/subject 匹配条件",
-                    i + 1,
-                    j + 1
-                )));
-            }
-            if !r.has_action() {
-                return Err(StartError::BadConfig(format!(
-                    "账号#{} 规则#{} 没有任何动作（mark_seen/flag/move_to）",
-                    i + 1,
-                    j + 1
-                )));
-            }
-        }
-    }
-    // slug 去重（同名账号）
-    let mut seen: Vec<String> = Vec::new();
-    for a in out.iter_mut() {
-        let base = a.slug.clone();
-        let mut n = 1;
-        while seen.contains(&a.slug) {
-            n += 1;
-            a.slug = format!("{base}-{n}");
-        }
-        seen.push(a.slug.clone());
-    }
-    Ok(out)
-}
-
-/// M6：写回配置（[[accounts]] 格式，原子替换）。GUI 里添加/删除账号后调用。
-pub fn save_accounts(cfg_path: &Path, accounts: &[AccountConfig]) -> Result<(), StartError> {
-    #[derive(serde::Serialize)]
-    struct FileOut<'a> {
-        name: &'a str,
-        imap: &'a ImapConfig,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        smtp: Option<&'a SmtpConfig>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        oauth: Option<&'a OAuthCfg>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pgp: Option<&'a PgpCfg>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        signature: Option<&'a str>,
-        #[serde(skip_serializing_if = "<[Rule]>::is_empty")]
-        rules: &'a [Rule],
-    }
-    #[derive(serde::Serialize)]
-    struct Wrapper<'a> {
-        accounts: Vec<FileOut<'a>>,
-    }
-    let out = Wrapper {
-        accounts: accounts
-            .iter()
-            .map(|a| FileOut {
-                name: &a.name,
-                imap: &a.imap,
-                smtp: a.smtp.as_ref(),
-                oauth: a.oauth.as_ref(),
-                pgp: a.pgp.as_ref(),
-                signature: a.signature.as_deref(),
-                rules: &a.rules,
-            })
-            .collect(),
-    };
-    let body = toml::to_string_pretty(&out)
-        .map_err(|e| StartError::BadConfig(format!("序列化配置失败: {e}")))?;
-    if let Some(parent) = cfg_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| StartError::BadConfig(format!("建配置目录失败: {e}")))?;
-    }
-    let tmp = cfg_path.with_extension("toml.tmp");
-    // 密码/授权码明文落盘：创建即 0600（umask 补不上，必须显式 mode；
-    // 与 oauth.json 的 0600 策略一致）
-    #[cfg(unix)]
-    let mut f = {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(|e| StartError::BadConfig(format!("写配置失败: {e}")))?
-    };
-    #[cfg(not(unix))]
-    let mut f = std::fs::File::create(&tmp)
-        .map_err(|e| StartError::BadConfig(format!("写配置失败: {e}")))?;
-    use std::io::Write as _;
-    f.write_all(body.as_bytes())
-        .map_err(|e| StartError::BadConfig(format!("写配置失败: {e}")))?;
-    drop(f);
-    std::fs::rename(&tmp, cfg_path)
-        .map_err(|e| StartError::BadConfig(format!("替换配置失败: {e}")))?;
-    Ok(())
-}
-
-/// 多账号命令
-#[derive(Debug)]
-pub enum SessionCmd {
-    /// 路由到指定账号
-    Route {
-        account: usize,
-        cmd: Cmd,
-    },
-    /// 全账号搜索（结果逐账号回流）
-    SearchAll(String),
-    /// 统一收件箱：各账号本地 INBOX 列表回流聚合
-    UnifiedInbox,
-    /// 通讯录全量列表（各账号回流，管理界面聚合显示）
-    ContactsFull,
-    /// UI 语言切换：广播到全部服务线程（状态/错误文案跟随）
-    SetLang(bool),
-    Shutdown,
-}
-
-/// 带账号标签的事件
-#[derive(Debug, Clone)]
-pub struct TaggedEvent {
-    pub account: usize,
-    pub event: Event,
-}
-
-/// 多账号会话：每账号一个服务线程，事件统一打标签回流
-pub struct Session {
-    pub cmd_tx: std::sync::mpsc::Sender<SessionCmd>,
-    mux: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        let _ = self.cmd_tx.send(SessionCmd::Shutdown);
-        if let Some(h) = self.mux.take() {
-            let _ = h.join();
-        }
-    }
-}
-
-impl Session {
-    pub fn start(
-        cfg_path: &Path,
-        data_root: &Path,
-    ) -> Result<(Self, tokio::sync::mpsc::Receiver<TaggedEvent>), StartError> {
-        let accounts = load_accounts(cfg_path)?;
-        std::fs::create_dir_all(data_root)
-            .map_err(|e| StartError::Backend(format!("建数据目录失败: {e}")))?;
-
-        let mut services = Vec::new();
-        for acfg in &accounts {
-            let dir = data_root.join(&acfg.slug);
-            let (svc, rx) = AccountService::start_for(acfg, &dir)?;
-            services.push((svc, rx));
-        }
-
-        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<SessionCmd>();
-        // 有界（UI 卡住时背压到 mux 线程，而不是无界堆内存；此前 unbounded
-        // 在 UI 冻结期间事件无限累积）
-        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TaggedEvent>(1000);
-        let zh_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        // 终报必须在 mux 线程内、循环退出后发——此前误放主线程（每次启动
-        // 立即误报“会话已结束”，m5 e2e 苔出）；loop 内用 break 退出。
-        let mux = std::thread::spawn(move || {
-            'mux: loop {
-                match cmd_rx.recv_timeout(Duration::from_millis(100)) {
-                    Ok(SessionCmd::SetLang(zh)) => {
-                        zh_flag.store(zh, std::sync::atomic::Ordering::Relaxed);
-                        for (svc, _) in &services {
-                            let _ = svc.cmd_tx.send(Cmd::SetLang(zh));
-                        }
-                    }
-                    Ok(SessionCmd::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
-                        for (svc, _) in &services {
-                            let _ = svc.cmd_tx.send(Cmd::Shutdown);
-                        }
-                        for (svc, _) in &mut services {
-                            svc.stop(); // join 服务线程：会话 Drop 返回时数据目录独占可保证
-                        }
-                        break 'mux;
-                    }
-                    Ok(SessionCmd::Route { account, cmd }) => {
-                        if let Some((svc, _)) = services.get(account) {
-                            let _ = svc.cmd_tx.send(cmd);
-                        }
-                    }
-                    Ok(SessionCmd::SearchAll(q)) => {
-                        for (svc, _) in &services {
-                            let _ = svc.cmd_tx.send(Cmd::Search(q.clone()));
-                        }
-                    }
-                    Ok(SessionCmd::UnifiedInbox) => {
-                        for (svc, _) in &services {
-                            let _ = svc.cmd_tx.send(Cmd::LocalList("INBOX".into()));
-                        }
-                    }
-                    Ok(SessionCmd::ContactsFull) => {
-                        for (svc, _) in &services {
-                            let _ = svc.cmd_tx.send(Cmd::ListContactsFull);
-                        }
-                    }
-                    Err(RecvTimeoutError::Timeout) => {}
-                }
-                for (i, (_, rx)) in services.iter_mut().enumerate() {
-                    while let Ok(ev) = rx.try_recv() {
-                        // blocking_send：UI 冻结时 mux 等待（背压），通道关闭则结束
-                        if event_tx
-                            .blocking_send(TaggedEvent {
-                                account: i,
-                                event: ev,
-                            })
-                            .is_err()
-                        {
-                            break 'mux;
-                        }
-                    }
-                }
-            }
-            // mux 退出（Shutdown / 全部服务结束）：给 UI 一个显式终报，
-            // 而不是事件流悄悄断掉（用户表现为“再无任何同步”）
-            let zh = zh_flag.load(std::sync::atomic::Ordering::Relaxed);
-            let _ = event_tx.blocking_send(TaggedEvent {
-                account: 0,
-                event: Event::Error(tr_str(
-                    zh,
-                    "会话已结束（如非主动退出，请重启应用）",
-                    "Session ended (if unexpected, please restart the app)",
-                )),
-            });
-        });
-
-        Ok((
-            Self {
-                cmd_tx,
-                mux: Some(mux),
-            },
-            event_rx,
-        ))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 服务
-// ---------------------------------------------------------------------------
-
 pub struct AccountService {
     pub cmd_tx: Sender<Cmd>,
     handle: Option<std::thread::JoinHandle<()>>,
@@ -668,71 +93,12 @@ impl Drop for AccountService {
     }
 }
 
-#[derive(Debug)]
-pub enum StartError {
-    ConfigMissing(PathBuf),
-    BadConfig(String),
-    Backend(String),
-}
-
-impl std::fmt::Display for StartError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StartError::ConfigMissing(p) => write!(f, "配置文件不存在: {}", p.display()),
-            StartError::BadConfig(e) => write!(f, "配置解析失败: {e}"),
-            StartError::Backend(e) => write!(f, "后端初始化失败: {e}"),
-        }
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct FileCfg {
-    account: ImapConfig,
-    smtp: Option<SmtpConfig>,
-    #[serde(default)]
-    oauth: Option<OAuthCfg>,
-}
-
-/// 应用配置（UI 显示用）
-#[derive(Clone)]
-pub struct AppConfig {
-    pub imap: ImapConfig,
-    pub smtp: Option<SmtpConfig>,
-    pub oauth: Option<OAuthCfg>,
-    pub rules: Vec<Rule>,
-    pub pgp: Option<PgpCfg>,
-    pub identity: String,
-}
-
-pub fn load_config(cfg_path: &Path) -> Result<AppConfig, StartError> {
-    let raw = std::fs::read_to_string(cfg_path)
-        .map_err(|_| StartError::ConfigMissing(cfg_path.to_path_buf()))?;
-    let file: FileCfg = toml::from_str(&raw).map_err(|e| {
-        StartError::BadConfig(format!(
-            "{e}（参考 spikes/spike-melib/config.example.toml）"
-        ))
-    })?;
-    let identity = file
-        .smtp
-        .as_ref()
-        .and_then(|s| s.from.clone())
-        .unwrap_or_else(|| file.account.username.clone());
-    Ok(AppConfig {
-        imap: file.account,
-        smtp: file.smtp,
-        oauth: file.oauth,
-        rules: Vec::new(),
-        pgp: None,
-        identity,
-    })
-}
-
 impl AccountService {
     /// 旧入口（examples 用）：单账号配置文件
     pub fn start(
         cfg_path: &Path,
         data_dir: &Path,
-    ) -> Result<(Self, tokio::sync::mpsc::UnboundedReceiver<Event>), StartError> {
+    ) -> std::result::Result<(Self, tokio::sync::mpsc::UnboundedReceiver<Event>), StartError> {
         let mut accounts = load_accounts(cfg_path)?;
         let first = accounts.swap_remove(0);
         Self::start_for(&first, data_dir)
@@ -742,15 +108,15 @@ impl AccountService {
     pub fn start_for(
         cfg: &AccountConfig,
         data_dir: &Path,
-    ) -> Result<(Self, tokio::sync::mpsc::UnboundedReceiver<Event>), StartError> {
+    ) -> std::result::Result<(Self, tokio::sync::mpsc::UnboundedReceiver<Event>), StartError> {
         // B6：keychain 标记 → 真实密码（只在此处解析进内存；save_accounts 写回标记）
         let imap_password = keychain::resolve_password(cfg.imap.password.clone(), "IMAP 密码")
-            .map_err(StartError::Backend)?;
+            .map_err(|e| StartError::Core(CoreError::KeychainFailed(e.to_string())))?;
         let smtp_password = keychain::resolve_password(
             cfg.smtp.as_ref().and_then(|s| s.password.clone()),
             "SMTP 密码",
         )
-        .map_err(StartError::Backend)?;
+        .map_err(|e| StartError::Core(CoreError::KeychainFailed(e.to_string())))?;
         let cfg = AppConfig {
             imap: ImapConfig {
                 password: imap_password,
@@ -764,9 +130,9 @@ impl AccountService {
             rules: cfg.rules.clone(),
             pgp: cfg.pgp.clone(),
             identity: cfg.identity.clone(),
+            sync_config: cfg.sync_config.clone(),
         };
-        std::fs::create_dir_all(data_dir)
-            .map_err(|e| StartError::Backend(format!("建数据目录失败: {e}")))?;
+        std::fs::create_dir_all(data_dir)?;
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Cmd>();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
         let data_dir = data_dir.to_path_buf();
@@ -777,18 +143,22 @@ impl AccountService {
         let (read_tx, read_rx) = std::sync::mpsc::channel::<i64>();
         let backend_slot = Arc::new(std::sync::RwLock::new(None::<Arc<dyn MailBackend>>));
         let zh_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        // P2 优化：backend 就绪通知机制（Condvar 替代轮询）
+        let backend_ready = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let reader_pgp = match &cfg.pgp {
             Some(p) => pgp::PgpRuntime::load(p).ok().map(std::sync::Arc::new),
             None => None,
         };
         {
-            let reader = ReaderCtx {
-                backend_slot: backend_slot.clone(),
-                events: event_tx.clone(),
-                data_dir: data_dir.clone(),
-                pgp: reader_pgp,
-                zh: zh_flag.clone(),
-            };
+            let reader = ReaderCtx::new(
+                backend_slot.clone(),
+                event_tx.clone(),
+                data_dir.clone(),
+                reader_pgp,
+                zh_flag.clone(),
+                cfg.sync_config.reader_cold_start_timeout(),
+                backend_ready.clone(),
+            );
             std::thread::spawn(move || reader.run(read_rx));
         }
         let handle = std::thread::spawn(move || {
@@ -797,6 +167,7 @@ impl AccountService {
                 data_dir,
                 zh: zh_flag,
                 backend_slot,
+                backend_ready,
                 read_tx,
                 events: event_tx,
                 stop: stop_flag,
@@ -829,11 +200,17 @@ impl AccountService {
 
 /// 列表单次返回上限（无分页；UI 在满额时提示）
 pub const UI_LIST_LIMIT: u32 = 500;
-/// 后台索引器每批条数（约 3 秒一批）
-const INDEX_BATCH: u32 = 5;
-/// 切换文件夹时的重同步阈值：TTL 内信任本地索引，不再全量拉取
-///（变更由 IDLE 推送补齐；避免来回切换反复 FETCH 整个文件夹）
-const FOLDER_RESYNC_TTL: Duration = Duration::from_secs(60);
+
+/// 内部运行时配置（已解析 keychain 密码）
+struct AppConfig {
+    imap: ImapConfig,
+    smtp: Option<SmtpConfig>,
+    oauth: Option<OAuthCfg>,
+    rules: Vec<Rule>,
+    pgp: Option<PgpCfg>,
+    identity: String,
+    sync_config: SyncConfig,
+}
 
 struct ServiceInner {
     cfg: AppConfig,
@@ -844,6 +221,8 @@ struct ServiceInner {
     /// 当前在线 backend 的共享槽：Reader 每次请求时 clone 一份。
     /// 断线清 None（旧 backend 的连接已死，取拉直接报错而不是悬挂）
     backend_slot: Arc<std::sync::RwLock<Option<Arc<dyn MailBackend>>>>,
+    /// backend 就绪通知：连接成功时 notify Reader 线程（P2 优化：Condvar 替代轮询）
+    backend_ready: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
     /// Reader 线程请求端：OpenMessage 分流（hash）
     read_tx: Sender<i64>,
     events: tokio::sync::mpsc::UnboundedSender<Event>,
@@ -899,7 +278,7 @@ impl ServiceInner {
 
     /// PGP 运行时（带缓存）：密钥环盘读+证书解析贵，每封重载浪费；
     /// 未配置返回 Ok(None)。加载失败不缓存（下次重试）
-    fn pgp_runtime(&self) -> Result<Option<std::sync::Arc<pgp::PgpRuntime>>, String> {
+    fn pgp_runtime(&self) -> std::result::Result<Option<std::sync::Arc<pgp::PgpRuntime>>, String> {
         let Some(cfg) = &self.cfg.pgp else {
             return Ok(None);
         };
@@ -1080,7 +459,8 @@ impl ServiceInner {
                             &[&(*attempts + 1)],
                         )));
                     }
-                    match self.connect_backend() {
+                    // 首连用快速模式（不刷新 token，避免阻塞启动）；重连时强制刷新
+                    match self.connect_backend(*attempts > 0) {
                         Ok(backend) => {
                             let watch_rx = match backend.watch() {
                                 Ok(rx) => rx,
@@ -1091,7 +471,8 @@ impl ServiceInner {
                                         &[&e],
                                     )));
                                     *attempts += 1;
-                                    *retry_at = Instant::now() + backoff(*attempts);
+                                    *retry_at = Instant::now()
+                                        + backoff(*attempts, self.cfg.sync_config.max_backoff_secs);
                                     continue;
                                 }
                             };
@@ -1112,15 +493,19 @@ impl ServiceInner {
                             let target = current_folder
                                 .clone()
                                 .unwrap_or_else(|| "INBOX".to_string());
-                            // pending_sync 已排队同文件夹时跳过：循环尾的延迟同步
-                            // 会执行，避免双重 SELECT+FETCH（冷启动 SelectFolder
-                            // 必然同时设置两者）
-                            if pending_sync.as_deref() != Some(target.as_str()) {
-                                self.sync_folder(&*backend, &store, &target);
-                            }
+                            // 重连时清空 pending_sync：避免断线前的旧文件夹残留导致
+                            // 重复同步（重连已同步当前文件夹，延迟同步队列应清空）
+                            pending_sync = None;
+                            self.sync_folder(&*backend, &store, &target);
                             self.emit_folders(&*backend, &store);
                             self.flush_outbox(&*backend, &store);
                             *self.backend_slot.write().unwrap() = Some(backend.clone());
+                            // P2 优化：backend 就绪后通知 Reader 线程（Condvar 唤醒等待）
+                            {
+                                let (lock, cvar) = &*self.backend_ready;
+                                *lock.lock().unwrap() = true;
+                                cvar.notify_all();
+                            }
                             conn = Conn::Up { backend, watch_rx };
                         }
                         Err(e) => {
@@ -1141,7 +526,8 @@ impl ServiceInner {
                                 &[&e],
                             )));
                             *attempts += 1;
-                            *retry_at = Instant::now() + backoff(*attempts);
+                            *retry_at = Instant::now()
+                                + backoff(*attempts, self.cfg.sync_config.max_backoff_secs);
                         }
                     }
                 }
@@ -1172,10 +558,22 @@ impl ServiceInner {
     }
 
     /// oauth 账号：解析/刷新 token 后建后端（重连与初连共用，token 每次重建都最新）
-    fn connect_backend(&self) -> Result<Arc<dyn MailBackend>, String> {
+    ///
+    /// `force_refresh`: 是否强制检查刷新 token（重连时 true，首连时 false 避免阻塞启动）
+    fn connect_backend(
+        &self,
+        force_refresh: bool,
+    ) -> std::result::Result<Arc<dyn MailBackend>, String> {
         let mut imap = self.cfg.imap.clone();
         if let Some(o) = &self.cfg.oauth {
-            if let Err(e) = oauth::ensure_token(o, &self.data_dir) {
+            // 首连时用 try_token_no_refresh 快速取 token（可能过期），连接失败后重连时再刷新
+            let token_result = if force_refresh {
+                oauth::ensure_token(o, &self.data_dir)
+            } else {
+                oauth::try_token_no_refresh(&self.data_dir)
+            };
+
+            if let Err(e) = token_result {
                 if !e.contains("尚未授权") {
                     return Err(e);
                 }
@@ -1202,7 +600,11 @@ impl ServiceInner {
                 );
                 res.map_err(|e| format!("设备流授权失败：{e}"))?;
             }
-            let tok = oauth::ensure_token(o, &self.data_dir)?;
+            let tok = if force_refresh {
+                oauth::ensure_token(o, &self.data_dir)?
+            } else {
+                oauth::try_token_no_refresh(&self.data_dir)?
+            };
             imap.password = Some(oauth::sasl_b64(&imap.username, &tok));
             imap.use_oauth2 = true;
         }
@@ -1237,13 +639,17 @@ impl ServiceInner {
                 }
                 // TTL 内不重复全量拉（IDLE 会推送变更，切回就重拉是冗余网络往返）
                 let fresh = match self.last_sync.borrow().get(&folder) {
-                    Some(t) => t.elapsed() > FOLDER_RESYNC_TTL,
+                    Some(t) => t.elapsed() > self.cfg.sync_config.folder_resync_ttl(),
                     None => true,
                 };
                 if fresh {
-                    // 延迟同步：不阻塞命令循环（用户快速切文件夹时每个
-                    // SELECT+FETCH 2-5s 串行排队 → 主循环 drain 完后只同步最终选中的）
-                    *pending_sync = Some(folder);
+                    // TTL 过期：立即同步，不延迟（否则用户看到过期缓存直到命令队列
+                    // drain 完才刷新）；连接中则直接同步，断线时设置 pending_sync
+                    if let Conn::Up { backend, .. } = &conn {
+                        self.sync_folder(&**backend, store, &folder);
+                    } else {
+                        *pending_sync = Some(folder);
+                    }
                 }
             }
             Cmd::ForceRefresh(folder) => {
@@ -1960,6 +1366,13 @@ impl ServiceInner {
                 return;
             }
         };
+        let total = envelopes.len();
+        // 进度起点：0/total
+        self.emit(Event::SyncProgress {
+            folder: folder.to_string(),
+            total,
+            processed: 0,
+        });
         let known = store.known_flags(folder).unwrap_or_default();
         let mut new_rows: Vec<MessageRow> = Vec::new();
         // 服务器 flags 回传（A1 修复）：旧路径对已知 hash 直接跳过，手机上读掉的
@@ -2006,6 +1419,13 @@ impl ServiceInner {
                 )));
             }
         }
+        // 进度更新：批量处理完成（新邮件 + 标记更新视为已处理部分）
+        let processed = new_count + flag_updates.len();
+        self.emit(Event::SyncProgress {
+            folder: folder.to_string(),
+            total,
+            processed: processed.min(total),
+        });
         // M7：INBOX 增量新信 → 系统通知（初次全量同步 known 为空，不打扰）
         if !known.is_empty() && folder.eq_ignore_ascii_case("INBOX") {
             for row in new_rows.iter().filter(|r| !r.seen).take(3) {
@@ -2049,6 +1469,12 @@ impl ServiceInner {
         self.last_sync
             .borrow_mut()
             .insert(folder.to_string(), Instant::now());
+        // 进度完成：total/total
+        self.emit(Event::SyncProgress {
+            folder: folder.to_string(),
+            total,
+            processed: total,
+        });
         self.emit(Event::FolderLoaded {
             folder: folder.to_string(),
             rows,
@@ -2411,7 +1837,7 @@ impl ServiceInner {
 
     /// 组装发信凭据（oauth token 注入）+ 建可复用 sender。
     /// oauth/token 失败返 Err：单发路径报错留 pending，flush 路径整轮暂缓重试
-    fn smtp_sender(&self) -> Result<smail_backend::SmtpSender, String> {
+    fn smtp_sender(&self) -> std::result::Result<smail_backend::SmtpSender, String> {
         let Some(mut smtp) = self.cfg.smtp.clone() else {
             return Err("未配置 [smtp] 段，无法发信".into());
         };
@@ -2523,8 +1949,8 @@ impl ServiceInner {
         // M5-d：PGP 发信（构造完整 MIME 后走 raw 通道；
         // 密钥类失败是永久错误 → failed，不进重试队列）
         let sent_bytes: std::result::Result<Vec<u8>, BackendError> = if let Some(mode) = pgp_mode {
-            let fail_permanent = |msg: String| BackendError(msg);
-            let built = (|| -> Result<Vec<u8>, String> {
+            let fail_permanent = |msg: String| BackendError::Other(msg);
+            let built = (|| -> std::result::Result<Vec<u8>, String> {
                 let rt = self
                     .pgp_runtime()?
                     .ok_or("未配置 [accounts.pgp]，无法 PGP 发信")?;
@@ -2644,7 +2070,7 @@ impl ServiceInner {
                 } else {
                     "发送失败（稍后自动重试）"
                 };
-                store.outbox_mark(outbox_id, status, &e.0).ok();
+                store.outbox_mark(outbox_id, status, &e.to_string()).ok();
                 self.emit(Event::Status(self.trf("{}：{}", "{}: {}", &[&hint, &e])));
             }
         }
@@ -2737,7 +2163,9 @@ impl ServiceInner {
         if let Ok(cmd) = cmd_rx.try_recv() {
             return Some(cmd);
         }
-        let todo = store.unindexed(INDEX_BATCH).unwrap_or_default();
+        let todo = store
+            .unindexed(self.cfg.sync_config.index_batch)
+            .unwrap_or_default();
         for hash in todo {
             if let Ok(cmd) = cmd_rx.try_recv() {
                 return Some(cmd);
@@ -2762,591 +2190,22 @@ impl ServiceInner {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Reader 线程（正文取拉）
-// ---------------------------------------------------------------------------
-
-/// 正文取拉线程上下文。每账号一个，start_for 时 spawn：
-/// 承接 OpenMessage 的完整管线（缓存命中 / 网络 FETCH / PGP / 解析 / PDF 缩略图 /
-/// BodyLoaded 事件），使大附件取拉不再阻塞服务主循环（同步/写命令/IDLE 照常）。
-/// backend 经 backend_slot 每次请求时取当前在线实例（断线期间取拉直接报错）
-struct ReaderCtx {
-    backend_slot: Arc<std::sync::RwLock<Option<Arc<dyn MailBackend>>>>,
-    events: tokio::sync::mpsc::UnboundedSender<Event>,
-    data_dir: PathBuf,
-    /// PGP 运行时（start_for 预载；加载失败 None：加密件显示未配置提示）
-    pgp: Option<std::sync::Arc<pgp::PgpRuntime>>,
-    zh: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl ReaderCtx {
-    fn emit(&self, ev: Event) {
-        let _ = self.events.send(ev);
-    }
-    fn tr(&self, zh: &'static str, en: &'static str) -> String {
-        tr_str(self.zh.load(std::sync::atomic::Ordering::Relaxed), zh, en)
-    }
-    fn trf(&self, zh: &'static str, en: &'static str, args: &[&dyn std::fmt::Display]) -> String {
-        trf_str(
-            self.zh.load(std::sync::atomic::Ordering::Relaxed),
-            zh,
-            en,
-            args,
-        )
-    }
-
-    fn run(self, rx: Receiver<i64>) {
-        // 独立连接：Reader 与主循环并发读写同一 SQLite（WAL + busy_timeout）。
-        // 开库重试：主循环可能正在建表/写事务，短暂撞锁不应让 Reader 永久罢工
-        let mut store = None;
-        for _ in 0..5 {
-            match Store::open(&self.data_dir.join("index.db")) {
-                Ok(s) => {
-                    store = Some(s);
-                    break;
-                }
-                Err(_) => std::thread::sleep(Duration::from_millis(200)),
-            }
-        }
-        let Some(store) = store else {
-            self.emit(Event::Error(
-                self.tr("正文线程打开索引失败", "Reader thread failed to open index"),
-            ));
-            return;
-        };
-        while let Ok(hash) = rx.recv() {
-            self.serve(&store, hash);
-        }
-    }
-
-    /// 单封正文服务。seen 上推已在主循环当场处理，此处只做正文管线
-    fn serve(&self, store: &Store, hash: i64) {
-        let Some(row) = store.get(hash).ok().flatten() else {
-            self.emit(Event::Status(self.trf(
-                "找不到邮件 {}",
-                "Message {} not found",
-                &[&hash],
-            )));
-            return;
-        };
-        let path = self.data_dir.join("bodies").join(format!("{hash}.eml"));
-        let bytes = if path.exists() {
-            match std::fs::read(&path) {
-                Ok(b) => b,
-                Err(e) => {
-                    self.emit(Event::Status(self.trf(
-                        "读缓存失败：{}",
-                        "Failed to read cache: {}",
-                        &[&e],
-                    )));
-                    return;
-                }
-            }
-        } else {
-            // 每次请求取当前在线 backend。首连进行中（冷启动 200ms 窗口后
-            // 连接需 1-3s）时短暂等待：用户秒开列表就点未缓存邮件不应直接报错
-            //（旧启动序连词命令循环阻塞反而不会丢；离线优先重构后需要此处兼容）。
-            // 真断网场景等满 3s 后仍明确报错
-            let backend = {
-                let mut waited = Duration::ZERO;
-                loop {
-                    let b = self.backend_slot.read().unwrap().clone();
-                    match b {
-                        Some(b) => break Some(b),
-                        None if waited < Duration::from_secs(3) => {
-                            std::thread::sleep(Duration::from_millis(100));
-                            waited += Duration::from_millis(100);
-                        }
-                        None => break None,
-                    }
-                }
-            };
-            let Some(backend) = backend else {
-                self.emit(Event::Status(
-                    self.tr("未连接，无法拉取正文", "Not connected, cannot fetch body"),
-                ));
-                return;
-            };
-            let bytes = match backend.fetch_body(hash as u64) {
-                Ok(b) => b,
-                Err(e) => {
-                    self.emit(Event::Status(self.trf(
-                        "拉取正文失败：{}",
-                        "Failed to fetch body: {}",
-                        &[&e],
-                    )));
-                    return;
-                }
-            };
-            if let Err(e) = std::fs::write(&path, &bytes) {
-                self.emit(Event::Status(self.trf(
-                    "正文落盘失败：{}",
-                    "Failed to write body: {}",
-                    &[&e],
-                )));
-                return;
-            }
-            store.mark_has_body(hash).ok();
-            bytes
-        };
-
-        // 以下与旧 open_message 管线一致（seen 部分已上移主循环）
-        let (parse_bytes, pgp_status) = pgp_decode(self.pgp.as_ref(), &bytes);
-        let (body, is_html) = extract_body(&parse_bytes);
-        if pgp_status.is_none() {
-            store.index_body(hash, &body).ok(); // 加密邮件正文不进全文索引（安全默认）
-        }
-        let attachments = extract_attachments(&parse_bytes);
-        let (to_addrs, cc_addrs) = extract_recipients(&parse_bytes);
-        let unsubscribe = extract_unsubscribe(&parse_bytes);
-        let inline_images = extract_inline_images(&parse_bytes);
-        let remote_images = if let Some(html) = parse_bytes_html(&parse_bytes) {
-            html::remote_img_urls(html.as_ref())
-        } else {
-            vec![]
-        };
-        let attachment_images: Vec<(String, Vec<u8>)> = m_atch_images(&parse_bytes);
-        let attachment_previews = pdf_thumbnails(&parse_bytes, &self.data_dir);
-        self.emit(Event::BodyLoaded {
-            hash,
-            attachment_images,
-            attachment_previews,
-            subject: row.subject.clone(),
-            to_addrs,
-            cc_addrs,
-            unsubscribe,
-            inline_images,
-            remote_images,
-            body,
-            is_html,
-            attachments,
-            pgp: pgp_status,
-        });
-    }
-}
-
-/// M5-c：顶层 PGP/MIME 处理（Reader 线程用）。返回（用于正文解析的字节, 状态行）。
-/// 失败不炸：返回原始字节 + 状态说明，正文管线照常跑（显示密文/原文）。
-fn pgp_decode(
-    rt: Option<&std::sync::Arc<pgp::PgpRuntime>>,
-    raw: &[u8],
-) -> (Vec<u8>, Option<String>) {
-    match pgp::detect_pgp_kind(raw) {
-        Some(pgp::PgpKind::Encrypted) => {
-            let Some(rt) = rt else {
-                return (raw.to_vec(), Some("🔒 加密邮件（未配置 PGP 私钥）".into()));
-            };
-            let Some(ciphertext) = pgp::extract_pgp_ciphertext(raw) else {
-                return (raw.to_vec(), Some("🔒 加密邮件（找不到密文部分）".into()));
-            };
-            match rt.decrypt(&ciphertext) {
-                Ok((plain, status)) => (plain, Some(status)),
-                Err(e) => (raw.to_vec(), Some(format!("🔒 解密失败：{e}"))),
-            }
-        }
-        Some(pgp::PgpKind::Signed) => {
-            let Some((content, sig)) = pgp::signed_mime_parts(raw) else {
-                return (raw.to_vec(), None);
-            };
-            let status = match rt {
-                Some(rt) => rt.verify_detached(&content, &sig),
-                None => "⚠ 签名未验证（未配置 PGP）".to_string(),
-            };
-            (raw.to_vec(), Some(status))
-        }
-        None => (raw.to_vec(), None),
-    }
-}
-
-fn backoff(attempts: u32) -> Duration {
-    let secs = 1u64.saturating_mul(1 << attempts.min(6));
-    Duration::from_secs(secs.min(60))
-}
-
-/// 从原始邮件抽 To/Cc 头（回复全部用；简单按头名取值，不解码 MIME 名字）
-fn extract_recipients(raw: &[u8]) -> (String, String) {
-    let txt = String::from_utf8_lossy(raw);
-    let header_end = txt.find("\r\n\r\n").unwrap_or(txt.len());
-    let head = &txt[..header_end];
-    let mut to = String::new();
-    let mut cc = String::new();
-    // 0=To 1=Cc 2=无（折行续接归属上一个头）
-    let mut cur = 2u8;
-    for line in head.lines() {
-        let lower = line.to_lowercase();
-        if lower.starts_with("to:") {
-            cur = 0;
-            to.push_str(line[3..].trim());
-        } else if lower.starts_with("cc:") {
-            cur = 1;
-            cc.push_str(line[3..].trim());
-        } else if line.starts_with(' ') || line.starts_with('\t') {
-            match cur {
-                0 => {
-                    to.push(' ');
-                    to.push_str(line.trim());
-                }
-                1 => {
-                    cc.push(' ');
-                    cc.push_str(line.trim());
-                }
-                _ => {}
-            }
-        } else {
-            cur = 2;
-        }
-    }
-    (to.trim().to_string(), cc.trim().to_string())
-}
-
-/// "名字 <a@b>" → (a@b, 名字)；无尖括号 → (整串, "")。通讯录收集用
-fn parse_from_addr(s: &str) -> (String, String) {
-    match s.find('<') {
-        Some(st) => {
-            let email = s[st + 1..].trim_end_matches('>').trim().to_string();
-            let name = s[..st].trim().to_string();
-            (email, name)
-        }
-        None => (s.trim().to_string(), String::new()),
-    }
-}
-
-fn split_addrs(s: &str) -> Vec<String> {
-    s.split([',', ';', '，', '；'])
-        .map(|p| p.trim().to_string())
-        .filter(|p| !p.is_empty())
-        .collect()
-}
-
-/// 状态文案双语（服务线程用；zh 由 SetLang 运行时切换）
-pub(crate) fn tr_str(zh: bool, zh_s: &'static str, en_s: &'static str) -> String {
+// 双语辅助函数
+fn tr_str(zh: bool, zh_text: &str, en_text: &str) -> String {
     if zh {
-        zh_s.into()
+        zh_text.to_string()
     } else {
-        en_s.into()
+        en_text.to_string()
     }
 }
-pub(crate) fn trf_str(
-    zh: bool,
-    zh_s: &'static str,
-    en_s: &'static str,
-    args: &[&dyn std::fmt::Display],
-) -> String {
-    let mut out = if zh { zh_s } else { en_s }.to_string();
-    for a in args {
-        out = out.replacen("{}", &a.to_string(), 1);
+
+fn trf_str(zh: bool, zh_tpl: &str, en_tpl: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let tpl = if zh { zh_tpl } else { en_tpl };
+    let mut out = tpl.to_string();
+    for arg in args {
+        if let Some(pos) = out.find("{}") {
+            out.replace_range(pos..pos + 2, &arg.to_string());
+        }
     }
     out
-}
-
-#[cfg(test)]
-mod unsubscribe_tests {
-    use super::extract_unsubscribe;
-
-    #[test]
-    fn prefers_http_over_mailto() {
-        let raw = b"From: a@b\r\n\
-List-Unsubscribe: <https://ml.example.com/u/1>, <mailto:unsub@example.com>\r\n\
-\r\nbody";
-        assert_eq!(
-            extract_unsubscribe(raw).as_deref(),
-            Some("https://ml.example.com/u/1")
-        );
-    }
-
-    #[test]
-    fn mailto_fallback_and_folding() {
-        // 折行续接 + 无 http 候选
-        let raw = b"From: a@b\r\n\
-List-Unsubscribe: <mailto:leave@example.com?subject=bye>,\r\n <https://x/1>\r\n\
-\r\nbody";
-        assert_eq!(extract_unsubscribe(raw).as_deref(), Some("https://x/1"));
-        let raw2 = b"Subject: s\r\nList-Unsubscribe: <mailto:unsub@x>\r\n\r\nb";
-        assert_eq!(extract_unsubscribe(raw2).as_deref(), Some("mailto:unsub@x"));
-    }
-
-    #[test]
-    fn absent_or_garbage() {
-        assert_eq!(extract_unsubscribe(b"From: a\r\n\r\nb"), None);
-        // 值里的候选都不是 URL 形态
-        assert_eq!(
-            extract_unsubscribe(b"List-Unsubscribe: <ftp://x>, noise\r\n\r\nb"),
-            None
-        );
-    }
-}
-
-/// 按名取任意头值（含折行续接；大小写不敏感）
-fn extract_header_value(head: &str, name: &str) -> Option<String> {
-    let lower_name = name.to_lowercase();
-    let mut val = String::new();
-    let mut hit = false;
-    for line in head.lines() {
-        let lower = line.to_lowercase();
-        if lower.starts_with(&format!("{lower_name}:")) {
-            hit = true;
-            val.push_str(line.split_once(':').map(|x| x.1).unwrap_or("").trim());
-        } else if hit && (line.starts_with(' ') || line.starts_with('\t')) {
-            val.push_str(line.trim());
-        } else if hit {
-            break;
-        }
-    }
-    if val.is_empty() {
-        None
-    } else {
-        Some(val)
-    }
-}
-
-/// List-Unsubscribe（RFC 2369/8058）：`<https://…>, <mailto:…>`，
-/// 优先 http(s)（浏览器一键退订），退回 mailto
-fn extract_unsubscribe(raw: &[u8]) -> Option<String> {
-    let txt = String::from_utf8_lossy(raw);
-    let header_end = txt.find("\r\n\r\n").unwrap_or(txt.len());
-    let head = &txt[..header_end];
-    let v = extract_header_value(head, "List-Unsubscribe")?;
-    let mut http = None;
-    let mut mailto = None;
-    for part in v.split(',') {
-        let p = part.trim().trim_start_matches('<').trim_end_matches('>');
-        if p.starts_with("http://") || p.starts_with("https://") {
-            http = http.or(Some(p.to_string()));
-        } else if p.starts_with("mailto:") {
-            mailto = mailto.or(Some(p.to_string()));
-        }
-    }
-    http.or(mailto)
-}
-
-fn to_row(env: &EnvelopeSummary, folder: &str) -> MessageRow {
-    MessageRow {
-        envelope_hash: env.hash as i64,
-        folder: folder.to_string(),
-        message_id: env.message_id.clone(),
-        in_reply_to: env.in_reply_to.clone(),
-        subject: env.subject.clone(),
-        from_addr: env.from_addr.clone(),
-        date_unix: env.date_unix,
-        seen: env.seen,
-        flagged: env.flagged,
-        has_body: false,
-    }
-}
-
-/// M7：哈希按所在文件夹分组（批量操作一次 IMAP 往返一组）；
-/// 本地已不存在的哈希安全跳过
-fn group_by_folder(store: &Store, hashes: &[i64]) -> Vec<(String, Vec<i64>)> {
-    let mut groups: std::collections::BTreeMap<String, Vec<i64>> = Default::default();
-    for h in hashes {
-        if let Ok(Some(row)) = store.get(*h) {
-            groups.entry(row.folder).or_default().push(*h);
-        }
-    }
-    groups.into_iter().collect()
-}
-
-/// HTML 部分（无则 None）——远程图片 URL 提取用
-fn parse_bytes_html(bytes: &[u8]) -> Option<String> {
-    use mail_parser::MessageParser;
-    Some(
-        MessageParser::default()
-            .parse(bytes)?
-            .body_html(0)?
-            .into_owned(),
-    )
-}
-
-/// 内嵌图片（Content-Disposition: inline）：(归一化 cid, 字节)。
-/// HTML 的 <img src="cid:…"> 引用它们；随邮件自带无隐私问题，自动显示
-fn extract_inline_images(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-    use mail_parser::{MessageParser, MimeHeaders};
-    let Some(m) = MessageParser::default().parse(bytes) else {
-        return vec![];
-    };
-    m.attachments()
-        .filter(|a| {
-            a.content_disposition()
-                .map(|d| d.is_inline())
-                .unwrap_or(false)
-        })
-        .filter_map(|a| {
-            let cid = a
-                .content_id()?
-                .trim()
-                .trim_start_matches('<')
-                .trim_end_matches('>')
-                .to_string();
-            if cid.is_empty() {
-                return None;
-            }
-            Some((cid, a.contents().to_vec()))
-        })
-        .collect()
-}
-
-/// 附件清单（名字 + 大小）
-/// 图片附件字节（预览用）：PNG/JPEG/GIF/WebP/BMP 魔数 + 单张 2MB
-fn m_atch_images(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-    use mail_parser::{MessageParser, MimeHeaders};
-    const MAX: usize = 2 * 1024 * 1024;
-    let Some(m) = MessageParser::default().parse(bytes) else {
-        return vec![];
-    };
-    m.attachments()
-        .filter_map(|a| {
-            let name = a.attachment_name()?.to_string();
-            let c = a.contents();
-            if c.len() > MAX || !is_image_content(c) {
-                return None;
-            }
-            Some((name, c.to_vec()))
-        })
-        .collect()
-}
-
-pub fn is_image_content(b: &[u8]) -> bool {
-    b.starts_with(b"\x89PNG")
-        || b.starts_with(b"\xff\xd8\xff")
-        || b.starts_with(b"GIF8")
-        || b.starts_with(b"RIFF") && b.len() > 11 && &b[8..12] == b"WEBP"
-        || b.starts_with(b"BM")
-}
-
-/// PDF 附件 → QuickLook 缩略图 PNG（macOS qlmanage；非 macOS / 失败返回空）
-fn pdf_thumbnails(bytes: &[u8], data_dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (bytes, data_dir);
-        return vec![];
-    }
-    #[cfg(target_os = "macos")]
-    {
-        use mail_parser::{MessageParser, MimeHeaders};
-        let Some(m) = MessageParser::default().parse(bytes) else {
-            return vec![];
-        };
-        let tmp_dir = data_dir.join("ql-tmp");
-        let _ = std::fs::create_dir_all(&tmp_dir);
-        let mut out = Vec::new();
-        for (i, a) in m.attachments().enumerate() {
-            let Some(name) = a.attachment_name() else {
-                continue;
-            };
-            if !name.to_lowercase().ends_with(".pdf") {
-                continue;
-            }
-            let contents = a.contents();
-            if contents.len() > 20 * 1024 * 1024 {
-                continue;
-            } // 20MB 上限
-            let pdf_path = tmp_dir.join(format!("preview-{i}.pdf"));
-            if std::fs::write(&pdf_path, contents).is_err() {
-                continue;
-            }
-            // qlmanage -t -s 480：480px 宽 PNG 缩略图
-            let png_path = tmp_dir.join(format!("preview-{i}.pdf.png"));
-            let ok = std::process::Command::new("qlmanage")
-                .args([
-                    "-t",
-                    "-s",
-                    "480",
-                    "-o",
-                    tmp_dir.to_str().unwrap_or("/tmp"),
-                    pdf_path.to_str().unwrap_or(""),
-                ])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            if ok {
-                if let Ok(png) = std::fs::read(&png_path) {
-                    out.push((name.to_string(), png));
-                }
-                let _ = std::fs::remove_file(&png_path);
-            }
-            let _ = std::fs::remove_file(&pdf_path);
-        }
-        let _ = std::fs::remove_dir(&tmp_dir);
-        out
-    }
-}
-
-fn extract_attachments(bytes: &[u8]) -> Vec<(String, usize)> {
-    use mail_parser::{MessageParser, MimeHeaders};
-    let Some(m) = MessageParser::default().parse(bytes) else {
-        return vec![];
-    };
-    m.attachments()
-        .filter_map(|a| {
-            a.attachment_name()
-                .map(|n| (n.to_string(), a.contents().len()))
-        })
-        .collect()
-}
-
-/// 按名取附件字节
-fn extract_attachment_bytes(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
-    use mail_parser::{MessageParser, MimeHeaders};
-    let m = MessageParser::default().parse(bytes)?;
-    let found = m
-        .attachments()
-        .find(|a| a.attachment_name() == Some(name))?;
-    Some(found.contents().to_vec())
-}
-
-/// 从原始 EML 提取可读内容。
-/// 策略（M4）：有 text/html 就走消毒管线转 markdown（现代邮件 HTML 表达力完整）；
-/// 否则 text/plain 原样（GBK 等字符集由 mail-parser 处理）。
-/// 返回 (内容, 是否为 markdown)。
-pub fn extract_body(bytes: &[u8]) -> (String, bool) {
-    use mail_parser::MessageParser;
-    let Some(message) = MessageParser::default().parse(bytes) else {
-        return (format!("[无法解析邮件正文]（{} 字节）", bytes.len()), false);
-    };
-    if let Some(html) = message.body_html(0) {
-        return (crate::html::html_to_markdown(html.as_ref()), true);
-    }
-    if let Some(text) = message.body_text(0) {
-        return (text.into_owned(), false);
-    }
-    (format!("[无文本部分]（{} 字节）", bytes.len()), false)
-}
-
-#[cfg(test)]
-mod tr_tests {
-    use super::{tr_str, trf_str};
-
-    #[test]
-    fn bilingual_selection_and_fill() {
-        assert_eq!(tr_str(true, "已重连", "Reconnected"), "已重连");
-        assert_eq!(tr_str(false, "已重连", "Reconnected"), "Reconnected");
-        assert_eq!(
-            trf_str(true, "已删除 {} 封", "Deleted {} message(s)", &[&3]),
-            "已删除 3 封"
-        );
-        assert_eq!(
-            trf_str(false, "已删除 {} 封", "Deleted {} message(s)", &[&3]),
-            "Deleted 3 message(s)"
-        );
-        // 多参数依序填充
-        assert_eq!(trf_str(false, "{} → {}", "{} → {}", &[&"a", &"b"]), "a → b");
-    }
-}
-
-#[cfg(test)]
-mod recipient_tests {
-    use super::extract_recipients;
-
-    #[test]
-    fn to_cc_with_folding() {
-        let raw = b"From: a@b\r\nTo: Name One <one@x>, two@x,\r\n three@x\r\nCc: cc1@x\r\nSubject: s\r\n\r\nbody";
-        let (to, cc) = extract_recipients(raw);
-        assert!(
-            to.contains("one@x") && to.contains("two@x") && to.contains("three@x"),
-            "{to}"
-        );
-        assert_eq!(cc, "cc1@x");
-    }
 }

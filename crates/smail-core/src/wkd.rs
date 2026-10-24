@@ -1,12 +1,29 @@
-//! WKD（Web Key Directory）公钥自动发现。
+//! WKD（Web Key Directory）公钥自动发现
 //!
-//! <https://datatracker.ietf.org/doc/html/draft-koch-openpgp-webkey-service>：
-//! 按收件人邮箱向其域名查询公开托管的 OpenPGP 证书。advanced 方法
-//! `openpgpkey.<domain>` 优先（防篡改），退回 direct 方法。
+//! ## 职责
 //!
-//! 隐私说明：查询会把收件人邮箱暴露给对方域名服务器——这是 WKD 的固有
-//! 特性（GnuPG 同样如此）；默认关闭（`[accounts.pgp] wkd = true` 显式开启），
-//! 符合本项目“宁可不发不错发”的保守姿态。
+//! - **公钥自动发现**：按收件人邮箱向其域名查询 OpenPGP 证书
+//! - **双方法支持**：advanced 方法（`openpgpkey.<domain>`）优先，退回 direct 方法
+//! - **加密无交互**：自动获取收件人公钥，无需手动导入
+//!
+//! ## 协议
+//!
+//! 基于 [draft-koch-openpgp-webkey-service](https://datatracker.ietf.org/doc/html/draft-koch-openpgp-webkey-service)：
+//!
+//! ```text
+//! 收件人邮箱：user@example.com
+//!   ↓
+//! SHA-1(local-part) → z-base-32 编码
+//!   ↓
+//! Advanced: https://openpgpkey.example.com/.well-known/openpgpkey/example.com/hu/<hash>
+//! Direct:   https://example.com/.well-known/openpgpkey/hu/<hash>
+//! ```
+//!
+//! ## 隐私考量
+//!
+//! - **查询泄露**：收件人邮箱会暴露给其域名服务器（WKD 固有特性，GnuPG 同样如此）
+//! - **默认关闭**：需显式配置 `[accounts.pgp] wkd = true` 开启
+//! - **保守原则**：宁可不发不错发（隐私优先于便利性）
 
 use sequoia_openpgp::cert::prelude::*;
 use sequoia_openpgp::parse::Parse;
