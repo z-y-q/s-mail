@@ -17,12 +17,14 @@ def enc(name: str, addr: str) -> str:
 
 
 MSGS = [
-    # (from, subject, date) —— 规则：promo@→已读；周报→星标；moveme@→移动 Sent
+    # (from, subject, date) —— 规则：promo@→已读；周报→星标；moveme@→移动 Sent；
+    # v2new@v2test.x → 链式：R4 标已读+继续 → R5 星标（v2 continue_after 语义）
     ("promo@shop.io", "限时优惠第三波", "Sat, 18 Oct 2026 12:40:00 +0800"),
     ("promo@mall.cn", "错过再等一年", "Sat, 18 Oct 2026 12:41:00 +0800"),
     ("boss@corp.com", "Q4 周报汇总", "Sat, 18 Oct 2026 12:42:00 +0800"),
     ("moveme@x.org", "挪走我", "Sat, 18 Oct 2026 12:43:00 +0800"),
     ("friend@q.com", "普通邮件对照组", "Sat, 18 Oct 2026 12:44:00 +0800"),
+    ("v2new@v2test.x", "促销闪电战v2", "Sat, 18 Oct 2026 12:45:00 +0800"),
 ]
 
 os.makedirs(MAILDIR_NEW, exist_ok=True)

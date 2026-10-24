@@ -23,21 +23,27 @@ impl ServiceInner {
             backend.list_folders().ok();
             self.folders_ready.set(true);
         }
-        // 逐行找首条命中规则 → 按规则索引分桶（保持“首条命中即用”语义）
+        // 逐行扫规则 → 按规则索引分桶执行（批量 IMAP 往返）。
+        // continue_after=false（旧默认）：首条命中即停，每封只进一个桶；
+        // =true：同一封可叠加后续命中规则的动作（链式）
         let mut buckets: Vec<(usize, Vec<MessageRow>)> = Vec::new();
         for row in new_rows {
-            let Some(ri) = self.cfg.rules.iter().position(|r| {
-                r.folder
+            for (ri, r) in self.cfg.rules.iter().enumerate() {
+                let folder_ok = r
+                    .folder
                     .as_ref()
                     .map(|f| f.eq_ignore_ascii_case(folder))
-                    .unwrap_or(true)
-                    && r.matches(&row)
-            }) else {
-                continue;
-            };
-            match buckets.iter_mut().find(|(b, _)| *b == ri) {
-                Some((_, rows)) => rows.push(row),
-                None => buckets.push((ri, vec![row])),
+                    .unwrap_or(true);
+                if !folder_ok || !r.matches(&row) {
+                    continue;
+                }
+                match buckets.iter_mut().find(|(b, _)| *b == ri) {
+                    Some((_, rows)) => rows.push(row.clone()),
+                    None => buckets.push((ri, vec![row.clone()])),
+                }
+                if !r.continue_after {
+                    break;
+                }
             }
         }
         let mut seen_n = 0usize;
@@ -47,49 +53,53 @@ impl ServiceInner {
             let rule = &self.cfg.rules[ri];
             let hashes: Vec<i64> = rows.iter().map(|r| r.envelope_hash).collect();
             let batch: Vec<u64> = hashes.iter().map(|h| *h as u64).collect();
-            if rule.mark_seen {
-                match backend.set_flags(folder, &batch, FlagChange::Seen(true)) {
-                    Ok(()) => {
-                        for h in &hashes {
-                            store.set_seen(*h, true).ok();
+            for action in &rule.actions {
+                match action {
+                    crate::RuleAction::MarkSeen => {
+                        match backend.set_flags(folder, &batch, FlagChange::Seen(true)) {
+                            Ok(()) => {
+                                for h in &hashes {
+                                    store.set_seen(*h, true).ok();
+                                }
+                                seen_n += rows.len();
+                            }
+                            Err(e) => self.emit(Event::Status(self.trf(
+                                "规则标已读失败：{}",
+                                "Rule mark-read failed: {}",
+                                &[&e],
+                            ))),
                         }
-                        seen_n += rows.len();
                     }
-                    Err(e) => self.emit(Event::Status(self.trf(
-                        "规则标已读失败：{}",
-                        "Rule mark-read failed: {}",
-                        &[&e],
-                    ))),
-                }
-            }
-            if rule.flag {
-                match backend.set_flags(folder, &batch, FlagChange::Flagged(true)) {
-                    Ok(()) => {
-                        for h in &hashes {
-                            store.set_flagged(*h, true).ok();
+                    crate::RuleAction::Flag => {
+                        match backend.set_flags(folder, &batch, FlagChange::Flagged(true)) {
+                            Ok(()) => {
+                                for h in &hashes {
+                                    store.set_flagged(*h, true).ok();
+                                }
+                                flag_n += rows.len();
+                            }
+                            Err(e) => self.emit(Event::Status(self.trf(
+                                "规则星标失败：{}",
+                                "Rule star failed: {}",
+                                &[&e],
+                            ))),
                         }
-                        flag_n += rows.len();
                     }
-                    Err(e) => self.emit(Event::Status(self.trf(
-                        "规则星标失败：{}",
-                        "Rule star failed: {}",
-                        &[&e],
-                    ))),
-                }
-            }
-            if let Some(dest) = &rule.move_to {
-                if !dest.eq_ignore_ascii_case(folder) {
-                    // 目的地=当前文件夹：跳过，防自移动死循环
-                    match backend.move_messages(folder, &batch, dest) {
-                        Ok(()) => {
-                            store.delete_messages_batch(&hashes).ok();
-                            moved_n += rows.len();
+                    crate::RuleAction::Move(dest) => {
+                        if !dest.eq_ignore_ascii_case(folder) {
+                            // 目的地=当前文件夹：跳过，防自移动死循环
+                            match backend.move_messages(folder, &batch, dest) {
+                                Ok(()) => {
+                                    store.delete_messages_batch(&hashes).ok();
+                                    moved_n += rows.len();
+                                }
+                                Err(e) => self.emit(Event::Status(self.trf(
+                                    "规则移动 {}→{} 失败：{}",
+                                    "Rule move {} → {} failed: {}",
+                                    &[&folder, dest, &e],
+                                ))),
+                            }
                         }
-                        Err(e) => self.emit(Event::Status(self.trf(
-                            "规则移动 {}→{} 失败：{}",
-                            "Rule move {} → {} failed: {}",
-                            &[&folder, &dest, &e],
-                        ))),
                     }
                 }
             }

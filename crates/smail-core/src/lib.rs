@@ -68,7 +68,10 @@ pub use smail_backend::{test_connection, FolderKind, ImapConfig, SmtpConfig};
 use smail_backend::{MailBackend, ServerEvent};
 
 // Re-exports from new modules
-pub use config::{load_accounts, save_accounts, slug_for, AccountConfig, Rule};
+pub use config::{
+    load_accounts, save_accounts, slug_for, AccountConfig, Rule, RuleAction, RuleCondition,
+    RuleField, RulePredicate,
+};
 pub use protocol::{Cmd, Event, FolderInfo};
 pub use reader::{extract_body, ReaderCtx};
 pub use session::{Session, SessionCmd, TaggedEvent};

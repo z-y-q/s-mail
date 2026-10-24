@@ -9,7 +9,21 @@ username = "test"
 password = "testpass"
 tls = false
 
-# 规则按声明顺序匹配，首条命中即用；只对新见到的邮件生效
+# 规则按声明顺序匹配；只对新见到的邮件生效。
+# 旧格式（v0：from/subject 子串 + mark_seen/flag/move_to）与新格式（v2）
+# 可混用——v0 加载时归一化进 v2，保存只写 v2。
+
+# ---- v2 链式验证：R4 命中后继续，R5 再命中 → 同一封叠加两个动作 ----
+[[accounts.rules]]
+all_of = [{ field = "from", predicate = "ends_with", value = "@v2test.x" }]
+actions = ["MarkSeen"]
+continue_after = true
+
+[[accounts.rules]]
+any_of = [{ field = "subject", predicate = "starts_with", value = "促销闪电" }]
+actions = ["Flag"]
+
+# ---- v0 旧格式（兼容路径，e2e 主断言）----
 [[accounts.rules]]
 from = "promo@"
 mark_seen = true

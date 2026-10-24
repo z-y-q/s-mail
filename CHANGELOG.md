@@ -30,6 +30,18 @@
 - GUI 冷启动/RSS 无法无头测量，保持 DOGFOOD 手工流程；README
   体积数字同步为实测 26MB（原 20MB 已过时）
 
+### 新增（规则引擎 v2）
+
+- **条件模型升级**：all_of（全部满足）/ any_of（任一满足）条件组、
+  四谓词（contains/equals/starts_with/ends_with）、一条规则多动作、
+  `continue_after` 命中链（默认 false=旧「首条命中即用」）
+- **旧格式完全兼容**：v0 字段（from/subject/mark_seen/flag/move_to）
+  加载时自动转换，保存只写新格式（首次保存即自迁移）；README 同步双格式示例
+- 修复隐患：from 字段匹配改用裸地址——from_addr 存的是
+  「显示名 <a@b>」全形态，equals/ends_with 谓词会撞尖括号
+  （旧 contains 碰巧能用）
+- m8 e2e 扩展：v2 链式规则（同一封叠加两条规则动作）全链路验证
+
 ## [0.1.3] — 2026-10-22
 
 ### 新增（对标 Foxmail/Outlook 的客户端基本承诺）

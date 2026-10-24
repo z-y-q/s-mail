@@ -101,9 +101,20 @@ signature = """
 电话 138xxxx
 """
 
-# 可选：规则过滤
+# 可选：规则过滤（v2 格式：条件组 + 谓词 + 多动作 + 命中链）
 [[accounts.rules]]
-from = "noreply@"
+all_of = [{ field = "from", predicate = "ends_with", value = "@corp.x" }]
+any_of = [
+  { field = "subject", predicate = "starts_with", value = "周报" },
+  { field = "subject", predicate = "contains", value = "月报" },
+]
+actions = ["MarkSeen", "Flag"]        # 可多动作；移动用 { Move = "Archive" }
+# folder = "INBOX"                    # 只在该文件夹应用（缺省=任意）
+# continue_after = true               # 命中后继续试后续规则（默认 false=首条命中即用）
+
+# 旧格式（v0）仍完全兼容——加载时自动转换为新格式，保存只写新格式：
+[[accounts.rules]]
+from = "noreply@"                      # 等价 all_of(from contains)
 mark_seen = true
 
 # 可选：PGP（收信解密/验签 + 发信签名/加密）

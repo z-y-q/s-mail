@@ -108,14 +108,28 @@ fn main() {
         .map(|r| !r.seen && !r.flagged)
         .unwrap_or(false);
     let in_sent = find(&sent_rows, "挪走我").is_some();
+    // v2 链式：同一封命中 R4（标已读+continue）再命中 R5（星标）→ 两个动作叠加
+    let v2_chain_ok = find(&inbox_rows, "促销闪电战v2")
+        .map(|r| r.seen && r.flagged)
+        .unwrap_or(false);
 
     println!(
         "[m8] promo已读={promo_seen_ok} 周报星标={boss_flag_ok} INBOX无挪走我={moved_gone} \\
-对照组不受影响={neutral_ok} Sent有挪走我={in_sent} 规则状态事件={rule_status_seen}"
+对照组不受影响={neutral_ok} Sent有挪走我={in_sent} 规则状态事件={rule_status_seen} \\
+v2链式（已读+星标叠加）={v2_chain_ok}"
     );
 
-    if promo_seen_ok && boss_flag_ok && moved_gone && neutral_ok && in_sent && rule_status_seen {
-        println!("\n[m8 PASS] 自动已读 ✅ 自动星标 ✅ 服务器端移动 ✅ 对照组无副作用 ✅");
+    if promo_seen_ok
+        && boss_flag_ok
+        && moved_gone
+        && neutral_ok
+        && in_sent
+        && rule_status_seen
+        && v2_chain_ok
+    {
+        println!(
+            "\n[m8 PASS] 自动已读 ✅ 自动星标 ✅ 服务器端移动 ✅ 对照组无副作用 ✅ v2 链式 ✅"
+        );
         std::process::exit(0);
     }
     println!("\n[m8 FAIL]");
