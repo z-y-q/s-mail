@@ -38,16 +38,17 @@ jobs:
         run: cargo check --workspace --exclude spike-fts --exclude spike-ime --exclude spike-list --exclude spike-melib --all-targets
 
   check-windows:
-    # 路线图：Windows 构建验证（只 check 不跑 e2e；首跑若红可按报错补平台适配）。
-    # 保持全量 --workspace：兼作 spikes 原型的编译岗哨（其余 job 已排除它们，
-    # 这里是唯一能发现 spike 代码腐烂的地方）
+    # Windows 支持被 melib 上游阻塞（fcntl 文件锁 + 递归类型部题，
+    # meli 客户端不支持 Windows）——全 workspace 永远编不过，只检查
+    # 平台无关 crate（smail-store/smail-ai）；注意此 job 不再是 spikes
+    # 岗哨（spike 依赖 melib/iced，同样编不过）
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: 编译检查（全 workspace 含 spikes）
-        run: cargo check --workspace
+      - name: 编译检查（平台无关 crate）
+        run: cargo check -p smail-store -p smail-ai
 
   perf:
     # 性能回归门禁：核心指标（release，确定性无网络）+ 二进制体积。
@@ -58,8 +59,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: release 构建（含 perf example）
-        run: cargo build --release -p smail-ui -p smail-core --examples
+      - name: release 构建（bin + perf example）
+        # --bins 必须显式：目标选择旗标（--examples）会排除默认目标，
+        # 首跑 CI 曾因此找不到 s-mail 二进制（本地有旧产物未察觉）
+        run: cargo build --release -p smail-ui -p smail-core --bins --examples
       - name: 核心性能基线（万封：冷开/写入/FTS检索/列表）
         run: ./target/release/examples/perf
       - name: 二进制体积门禁（strip 后 < 40MB）

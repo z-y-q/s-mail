@@ -53,7 +53,10 @@ pub fn is_marker(s: &str) -> bool {
 
 /// 密码统一 hex 封装：macOS `security` 对非 ASCII 密码的 `-w` 输出会转十六进制
 /// （实测中文密码读回 "73336372..."），任意字符密码必须封装才能稳定往返。
-/// 解码失败回退原文（兼容用户手动添加的明文条目）
+/// 解码失败回退原文（兼容用户手动添加的明文条目）。
+/// 仅 macOS `security` 路径使用（Linux secret-tool 走原文）——
+/// cfg 限定避免其他平台 dead_code
+#[cfg(target_os = "macos")]
 fn hex_encode(s: &str) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(s.len() * 2 + 4);
@@ -64,6 +67,7 @@ fn hex_encode(s: &str) -> String {
     out
 }
 
+#[cfg(target_os = "macos")]
 fn hex_decode(s: &str) -> Option<String> {
     let s = s.strip_prefix("hex:")?;
     if s.is_empty() {
@@ -217,7 +221,7 @@ pub fn delete(account: &str) -> Result<(), String> {
         if out.status.success() {
             Ok(())
         } else {
-            Err(format!("钥匙串条目删除失败"))
+            Err("钥匙串条目删除失败".to_string())
         }
     }
     #[cfg(not(unix))]
@@ -250,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")] // 测 macOS hex 封装往返
     fn hex_wrap_roundtrip() {
         // 中文/控制字符/纯 hex 样式密码都能稳定往返，且不会歧义解码
         for pw in ["s3cret-密码", "abcd", "6162", "p@ss \u{1}", ""] {

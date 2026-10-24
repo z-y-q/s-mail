@@ -555,7 +555,7 @@ fn pdf_thumbnails(bytes: &[u8], data_dir: &std::path::Path) -> Vec<(String, Vec<
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (bytes, data_dir);
-        return vec![];
+        vec![]
     }
     #[cfg(target_os = "macos")]
     {

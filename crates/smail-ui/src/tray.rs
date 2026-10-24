@@ -16,6 +16,8 @@ pub enum TrayAction {
 
 static TRAY_RX: std::sync::OnceLock<std::sync::Mutex<Receiver<TrayAction>>> =
     std::sync::OnceLock::new();
+// 托盘实例仅 macOS 编译（tray-icon 依赖按平台限定；Linux/Windows 下不编译）
+#[cfg(target_os = "macos")]
 thread_local! {
     static TRAY_ICON: std::cell::RefCell<Option<tray_icon::TrayIcon>> =
         const { std::cell::RefCell::new(None) };

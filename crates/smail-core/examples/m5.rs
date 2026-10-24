@@ -9,7 +9,7 @@
 //! 二号全是"二账号"）→ 打开二号一封信 → 全账号搜索"周报"两号都命中 → 退出码 0。
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use smail_core::{Cmd, Event, Session, SessionCmd, TaggedEvent};
 
@@ -25,6 +25,44 @@ fn main() {
     let home: PathBuf = std::env::var_os("SMAIL_HOME")
         .map(Into::into)
         .unwrap_or_else(|| "/tmp/smail-m5".into());
+
+    // ---- 0. 自播种：断言需要的最小邮件集（CI 空环境不依赖历史种子；
+    // 与本地累积的 maildir 共存——Message-ID/时间戳唯一，重复播种无害）----
+    use base64::Engine as _;
+    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+    let ts = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let seed = |account: &str, subj: &str, i: u64| {
+        let raw = format!(
+            "From: s@{account}
+
+To: {account}@localhost
+
+Subject: =?UTF-8?B?{}?=
+
+Date: Sat, 24 Oct 2026 10:0{i}:00 +0800
+
+Message-ID: <m5-{ts}-{i}@seed>
+
+
+
+{subj} 正文
+
+",
+            b64(subj),
+        );
+        let dir = format!("spikes/spike-melib/imap-test/mail/{account}/Maildir/new");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(format!("{dir}/{ts}.M5{i}P1.local"), raw);
+    };
+    // 账号1：项目周报（断言 any 项目周报 + 无二账号串号；搜索「周报」命中）
+    seed("test", "项目周报W42", 1);
+    // 账号2：二账号专属标记 + 周报（断言 any 二账号 + any 周报；搜索命中）
+    seed("test2", "二账号专属通知", 2);
+    seed("test2", "二号周报汇总", 3);
+    println!("[m5] 已自播种 3 封（账号1 项目周报；账号2 二账号专属+周报）");
 
     let (session, mut rx) = match Session::start(&cfg, &home) {
         Ok(x) => x,

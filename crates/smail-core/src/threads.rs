@@ -106,7 +106,7 @@ pub fn group_threads(rows: &[MessageRow]) -> Vec<Thread> {
             }
         })
         .collect();
-    threads.sort_by(|a, b| b.latest().date_unix.cmp(&a.latest().date_unix));
+    threads.sort_by_key(|a| std::cmp::Reverse(a.latest().date_unix));
     threads
 }
 

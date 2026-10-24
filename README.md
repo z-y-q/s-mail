@@ -195,7 +195,8 @@ GPL-3.0-or-later（melib 为 EUPL/GPL 双许可，本项目选 GPL 保证合规�
 
 ## 路线图
 
-- [ ] Windows 构建验证进 e2e（CI 已有 check-windows 编译门禁）
+- [ ] Windows 支持：被 melib 上游阻塞（fcntl 文件锁，meli 不支持
+      Windows）；CI 仅检查平台无关 crate（smail-store/smail-ai）
 
 设计与里程碑全记录见 [DESIGN.md](DESIGN.md)。
 

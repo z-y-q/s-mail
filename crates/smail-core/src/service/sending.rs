@@ -224,7 +224,7 @@ impl ServiceInner {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_nanos())
                         .unwrap_or(0),
-                    &self.cfg.imap.username
+                    self.cfg.imap.username
                 );
                 pgp::build_outgoing(&pgp::OutgoingPgp {
                     from: &mail.from,
