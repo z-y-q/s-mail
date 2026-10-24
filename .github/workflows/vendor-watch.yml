@@ -1,0 +1,46 @@
+name: vendor-watch
+
+# vendored melib 补丁的上游监控（每周一 03:00 UTC + 手动）。
+#
+# 背景：vendor/melib 基于 0.8.13 打了 macOS Happy-Eyeballs EISCONN 竞态补丁
+# （非阻塞 connect 完成后 SO_ERROR 残留 EISCONN，二次 connect 返回 EISCONN
+# 被误判失败 → macOS 进入 EINPROGRESS 路径的连接必挂，OS error 56）。
+# 详见根 Cargo.toml [patch.crates-io] 注释。
+#
+# 探测启发式：上游修复该问题时 std_net.rs 必然出现 EISCONN 字样
+# （当前上游 master 的 poll_once 对二次 connect 的 Err 一律 set_error，未修）。
+# 修了 → 本 workflow 变红提醒撤销 vendor；forge 不可达 → 黄色警告不误报。
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  melib-eisconn:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉上游 std_net.rs（master）
+        id: fetch
+        continue-on-error: true
+        run: |
+          curl -fsSL --max-time 60 \
+            -o /tmp/upstream.rs \
+            "https://git.meli-email.org/meli/meli/raw/branch/master/melib/src/utils/connections/std_net.rs"
+      - name: 上游是否已修 EISCONN 竞态
+        if: steps.fetch.outcome == 'success'
+        run: |
+          if grep -q "EISCONN" /tmp/upstream.rs; then
+            echo "::error::上游 std_net.rs 已出现 EISCONN 处理——vendor 补丁很可能可以撤销！"
+            echo "复核步骤："
+            echo "1. 对照 vendor/melib/src/utils/connections/std_net.rs（搜 's-mail patch'）确认修复语义等价"
+            echo "2. 删除根 Cargo.toml 的 [patch.crates-io] 与 vendor/ 目录"
+            echo "3. cargo update -p melib 到含修复的版本（注意 imap-codec/imap-types 钉子链）"
+            echo "4. macOS 上跑 m5 e2e 验证连接不再挂（原先 100% 复现 OS error 56）"
+            exit 1
+          fi
+          echo "上游仍未处理 EISCONN，vendor 补丁继续服役 ✅"
+      - name: 上游不可达提醒
+        if: steps.fetch.outcome == 'failure'
+        run: |
+          echo "::warning::git.meli-email.org 不可达，本轮跳过检查（下周自动重试）"
