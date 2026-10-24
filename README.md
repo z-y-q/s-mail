@@ -163,7 +163,10 @@ SMAIL_CONFIG=spikes/spike-melib/config.toml SMAIL_HOME=/tmp/smail-m15 \
 
 - 冷启动（进程→窗口+数据库就绪）：**~0.7s**
 - 稳态内存：**~100MB**（对比 Thunderbird 数百 MB；iced/wgpu 运行时占大头）
-- 二进制：20MB（strip 后）
+- 二进制：~26MB（strip 后；CI 有体积与核心性能门禁，见 perf job）
+
+GUI 冷启动/RSS 无法无头测量，保持手工记录；CI perf job 门禁核心指标
+（万封：冷开/批量写入/FTS 检索/列表查询）与 strip 后体积。
 
 ## 许可
 

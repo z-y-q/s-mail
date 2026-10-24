@@ -46,6 +46,27 @@ jobs:
       - name: 编译检查
         run: cargo check --workspace
 
+  perf:
+    # 性能回归门禁：核心指标（release，确定性无网络）+ 二进制体积。
+    # GUI 冷启动（~0.7s）与稳态 RSS（~100MB）无法无头测量，
+    # 保持 DOGFOOD.md 手工流程；本 job 兼作 release 编译检查。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: release 构建（含 perf example）
+        run: cargo build --release -p smail-ui -p smail-core --examples
+      - name: 核心性能基线（万封：冷开/写入/FTS检索/列表）
+        run: ./target/release/examples/perf
+      - name: 二进制体积门禁（strip 后 < 32MB）
+        run: |
+          strip target/release/s-mail
+          size=$(stat -c%s target/release/s-mail)
+          echo "strip 后二进制：$((size / 1024 / 1024))MB（$size 字节）"
+          # 2026-10 实测约 26MB（README 的 20MB 已过时）；32MB 只拦严重膨胀
+          [ "$size" -lt $((32 * 1024 * 1024)) ]
+
   e2e:
     # e2e 需要 docker 起本地 dovecot；跑 m5（多账号）/ m14（移动批量）/ m15（草稿云同步）
     # 三个 headless 全链路。m2-m13 含 SMTP/OAuth mock 等前置，暂不进矩阵。

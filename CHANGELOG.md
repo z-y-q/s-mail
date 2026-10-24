@@ -22,6 +22,14 @@
   token 轮询命中才计时 drop
 - 三处退出前化妆 sleep 删除（stdout 是行缓冲，无需等）
 
+### 内部（CI 性能门禁）
+
+- 新增 perf job：核心性能基线（万封规模：冷开/批量写入/FTS 检索/
+  列表查询，release、无网络确定性测量）+ strip 后二进制体积门禁
+  （<32MB，当前 ~26MB）；兼作 release 编译检查（此前 CI 只编 debug）
+- GUI 冷启动/RSS 无法无头测量，保持 DOGFOOD 手工流程；README
+  体积数字同步为实测 26MB（原 20MB 已过时）
+
 ## [0.1.3] — 2026-10-22
 
 ### 新增（对标 Foxmail/Outlook 的客户端基本承诺）
