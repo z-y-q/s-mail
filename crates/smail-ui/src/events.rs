@@ -263,7 +263,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                     .iter()
                     .flat_map(|(a, rows)| rows.iter().map(move |r| (*a, r.clone())))
                     .collect();
-                all.sort_by(|a, b| b.1.date_unix.cmp(&a.1.date_unix));
+                all.sort_by_key(|a| std::cmp::Reverse(a.1.date_unix));
                 state.rows = all.into_iter().take(500).collect();
                 state.rebuild_display();
             }

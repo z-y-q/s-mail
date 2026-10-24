@@ -59,36 +59,34 @@ fn main() {
                     is_html,
                     attachments,
                     ..
-                } => {
-                    if Some(hash) == target_hash {
-                        opened = true;
-                        println!("[opened ] is_html={is_html} 附件 {} 个", attachments.len());
-                        println!("--- 提取的 markdown ---");
-                        for line in body.lines().take(20) {
-                            println!("  {line}");
-                        }
-                        println!("--- 断言 ---");
-                        let ok_heading = body.contains("## 订单通知");
-                        let ok_bold = body.contains("**SO-M4**");
-                        let ok_link = body.contains("[物流跟踪](https://example.com/m4)");
-                        let ok_list = body.contains("- 顺丰速运");
-                        let ok_no_script = !body.contains("alert");
-                        let ok_no_img = !body.contains("pixel.gif");
-                        println!(
-                            "标题{ok_heading} 加粗{ok_bold} 链接{ok_link} 列表{ok_list} 无脚本{ok_no_script} 无图片{ok_no_img}"
-                        );
-                        if is_html
-                            && ok_heading
-                            && ok_bold
-                            && ok_link
-                            && ok_list
-                            && ok_no_script
-                            && ok_no_img
-                        {
-                            println!("\n[m4 PASS] HTML 管线全绿");
-                            service.stop();
-                            std::process::exit(0);
-                        }
+                } if Some(hash) == target_hash => {
+                    opened = true;
+                    println!("[opened ] is_html={is_html} 附件 {} 个", attachments.len());
+                    println!("--- 提取的 markdown ---");
+                    for line in body.lines().take(20) {
+                        println!("  {line}");
+                    }
+                    println!("--- 断言 ---");
+                    let ok_heading = body.contains("## 订单通知");
+                    let ok_bold = body.contains("**SO-M4**");
+                    let ok_link = body.contains("[物流跟踪](https://example.com/m4)");
+                    let ok_list = body.contains("- 顺丰速运");
+                    let ok_no_script = !body.contains("alert");
+                    let ok_no_img = !body.contains("pixel.gif");
+                    println!(
+                        "标题{ok_heading} 加粗{ok_bold} 链接{ok_link} 列表{ok_list} 无脚本{ok_no_script} 无图片{ok_no_img}"
+                    );
+                    if is_html
+                        && ok_heading
+                        && ok_bold
+                        && ok_link
+                        && ok_list
+                        && ok_no_script
+                        && ok_no_img
+                    {
+                        println!("\n[m4 PASS] HTML 管线全绿");
+                        service.stop();
+                        std::process::exit(0);
                     }
                 }
                 _ => {}

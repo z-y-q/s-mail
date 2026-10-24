@@ -113,7 +113,7 @@ pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
             })
             .collect();
         if apply_filter && state.nav.list_asc {
-            v.sort_by(|a, b| a.row.date_unix.cmp(&b.row.date_unix));
+            v.sort_by_key(|r| r.row.date_unix);
         }
         v
     }

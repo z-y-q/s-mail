@@ -88,29 +88,27 @@ fn main() {
                         cmd: Cmd::SelectFolder("INBOX".into()),
                     });
                 }
-                Event::FolderLoaded { folder, rows } => {
-                    if folder.eq_ignore_ascii_case("INBOX") {
-                        if !injected {
-                            if let Some(r) = rows.iter().find(|r| r.subject == subject) {
-                                if target.is_none() {
-                                    target = Some(r.envelope_hash);
-                                    initial = Some(rows.len());
-                                    println!(
-                                        "[m13] 首同步 {} 封，靶子 hash={}",
-                                        rows.len(),
-                                        r.envelope_hash
-                                    );
-                                }
+                Event::FolderLoaded { folder, rows } if folder.eq_ignore_ascii_case("INBOX") => {
+                    if !injected {
+                        if let Some(r) = rows.iter().find(|r| r.subject == subject) {
+                            if target.is_none() {
+                                target = Some(r.envelope_hash);
+                                initial = Some(rows.len());
+                                println!(
+                                    "[m13] 首同步 {} 封，靶子 hash={}",
+                                    rows.len(),
+                                    r.envelope_hash
+                                );
                             }
-                        } else {
-                            // 只在本轮触发信可见的快照上判定：避免两类旧视图抢先——
-                            // 1) SelectFolder 驱动的同步与删除并发（含靶子）；
-                            // 2) 历轮残留的 m13-trigger 信让条件恒真
-                            if rows.iter().any(|r| r.subject == trig_subject) {
-                                let gone = rows.iter().all(|r| Some(r.envelope_hash) != target);
-                                after = Some((rows.len(), gone));
-                                after_at = Some(Instant::now());
-                            }
+                        }
+                    } else {
+                        // 只在本轮触发信可见的快照上判定：避免两类旧视图抢先——
+                        // 1) SelectFolder 驱动的同步与删除并发（含靶子）；
+                        // 2) 历轮残留的 m13-trigger 信让条件恒真
+                        if rows.iter().any(|r| r.subject == trig_subject) {
+                            let gone = rows.iter().all(|r| Some(r.envelope_hash) != target);
+                            after = Some((rows.len(), gone));
+                            after_at = Some(Instant::now());
                         }
                     }
                 }

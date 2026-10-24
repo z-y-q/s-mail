@@ -1,0 +1,21 @@
+# 本地 dovecot 测试配置（配合 imap-test/up.sh 使用）
+[account]
+host = "127.0.0.1"
+port = 1143
+username = "test"
+password = "testpass"
+starttls = false
+tls = false
+
+[run]
+folder = "INBOX"
+limit = 100
+idle_seconds = 30
+
+[smtp]
+host = "127.0.0.1"
+port = 11525
+username = "test"
+password = "testpass"
+tls = "none"
+from = "test@local"

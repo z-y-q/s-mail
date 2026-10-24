@@ -63,11 +63,9 @@ fn main() {
                         cmd: Cmd::SelectFolder("INBOX".into()),
                     });
                 }
-                Event::FolderLoaded { folder, rows: r } => {
-                    if folder.eq_ignore_ascii_case("INBOX") {
-                        rows = r;
-                        println!("[loaded {account}] INBOX: {} 封", rows.len());
-                    }
+                Event::FolderLoaded { folder, rows: r } if folder.eq_ignore_ascii_case("INBOX") => {
+                    rows = r;
+                    println!("[loaded {account}] INBOX: {} 封", rows.len());
                 }
                 _ => {}
             }

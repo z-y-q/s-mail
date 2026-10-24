@@ -489,7 +489,7 @@ impl State {
             .iter()
             .flat_map(|(acct, rows)| rows.iter().map(move |r| (*acct, r.clone())))
             .collect();
-        all.sort_by(|a, b| b.1.date_unix.cmp(&a.1.date_unix));
+        all.sort_by_key(|a| std::cmp::Reverse(a.1.date_unix));
         all.into_iter().take(200).collect()
     }
 

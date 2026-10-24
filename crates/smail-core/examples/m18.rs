@@ -102,16 +102,14 @@ fn main() {
                                 }
                             }
                         }
-                        2 => {
-                            if folder.eq_ignore_ascii_case("Trash")
-                                && hit.is_none()
-                                && deleted_forever
-                            {
-                                println!("[gone   ] 靶子已永久消失 ✅");
-                                println!("\n[m18 PASS] 删除→废纸篓 ✅ 废纸篓→永久删除 ✅");
-                                let _ = session.cmd_tx.send(SessionCmd::Shutdown);
-                                std::process::exit(0);
-                            }
+                        2 if folder.eq_ignore_ascii_case("Trash")
+                            && hit.is_none()
+                            && deleted_forever =>
+                        {
+                            println!("[gone   ] 靶子已永久消失 ✅");
+                            println!("\n[m18 PASS] 删除→废纸篓 ✅ 废纸篓→永久删除 ✅");
+                            let _ = session.cmd_tx.send(SessionCmd::Shutdown);
+                            std::process::exit(0);
                         }
                         _ => {}
                     }

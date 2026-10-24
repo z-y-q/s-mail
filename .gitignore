@@ -1,5 +1,4 @@
 /target
-spikes/spike-melib/config.toml
 .DS_Store
 # 本地 e2e 种子邮件数据（可由 seed_demo.py 重生成）
 spikes/spike-melib/imap-test/mail/

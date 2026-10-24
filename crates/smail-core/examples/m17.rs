@@ -98,10 +98,8 @@ fn main() {
                         }
                     }
                 }
-                Event::FolderLoaded { rows, .. } => {
-                    if !rows.is_empty() {
-                        loaded_local = rows.len();
-                    }
+                Event::FolderLoaded { rows, .. } if !rows.is_empty() => {
+                    loaded_local = rows.len();
                 }
                 _ => {}
             }
