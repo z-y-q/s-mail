@@ -17,7 +17,7 @@
 | 附件收发（rfd 选文件、保存到下载目录） | ✅ |
 | HTML 邮件安全渲染（ammonia 消毒 → markdown 子集；内嵌图自动显示，远程图点击加载） | ✅ |
 | 会话视图（In-Reply-To 线程聚合，可切平铺） | ✅ |
-| 规则过滤（from/subject 匹配 → 批量自动已读/星标/移动） | ✅ |
+| 规则过滤 v2（all_of/any_of 条件组 × 四谓词 × 多动作 × 命中链；旧格式自动迁移兼容） | ✅ |
 | 手动移动/归档（读信区「移动到」/「🗃 归档」+ 批量操作 + e 键快捷归档） | ✅ |
 | 批量操作（多选 → 批量已读/星标/移动/删除，搜索结果跨账号可用） | ✅ |
 | 文件夹管理（侧栏新建/改名/删除，IMAP CREATE/RENAME/DELETE，中文 mUTF-7 名支持） | ✅ |
@@ -144,9 +144,13 @@ pubring_path = "~/.s-mail/work/pgp/pub.asc"
 ```
 
 - **存储纪律**：原始邮件（EML）在磁盘，SQLite 索引可随时重建；schema 用
-  `PRAGMA user_version` 迁移
+  `PRAGMA user_version` 迁移；并发首开撞 BUSY 自动重试
 - **HTML 管线**：ammonia 白名单消毒 → scraper DOM → markdown 子集 → iced
-  markdown widget；远程图片、script、追踪像素一律删除
+  markdown widget；远程图片、script、追踪像素一律删除；对抗性加固：
+  正文中的 markdown 图片语法会被断开（防追踪像素注入）、渲染递归有
+  深度上限（防深嵌套 DoS）
+- **网络坚韧性**：所有 IMAP 等待带超时（命令 30s / IDLE 10min），同步
+  超时视为连接半死自动重连自愈；断线指数退避重连 + 离线标记回放
 - **PGP**：sequoia-openpgp；解密结果不进全文索引（安全默认）；发信缺收件人
   公钥直接拒绝（宁可不发不错发）
 
@@ -161,8 +165,14 @@ cargo run -p smail-core --example m5       # 多账号 e2e（m2~m15 各验证一
 ```
 
 m6（XOAUTH2）、m9/m10（PGP）自带 mock OAuth 服务器与 IMAP 翻译代理，全程本地可复现。
-m14（移动/批量/文件夹/联系人）与 m15（草稿云同步）同样全链路 headless，
-并已进入 CI e2e 矩阵：
+m8（规则）已扩展覆盖 v2 条件组与命中链，m14（移动/批量/文件夹/联系人）与
+m15（草稿云同步）同样全链路 headless，均已进入 CI e2e 矩阵（14 个）。
+CI 另有 perf job：核心性能基线（万封：冷开/写入/FTS/列表）+ strip 后
+二进制体积门禁，兼作 release 编译检查：
+
+```bash
+cargo run -p smail-core --release --example perf   # 本地跑同款基线
+```
 
 ```bash
 sh spikes/spike-melib/imap-test/up.sh

@@ -57,7 +57,8 @@ sequoia-openpgp = { version = "2", default-features = false, features = ["crypto
 # 完成后 SO_ERROR 残留 EISCONN，二次 connect 返回 EISCONN 被误判为失败，
 # 导致 macOS 上进入 EINPROGRESS 路径的连接必挂（OS error 56）。
 # 详见 vendor/melib/src/utils/connections/std_net.rs 的 s-mail patch 注释。
-# 升级 melib 前先确认上游已修（git.meli-email.org std_net.rs poll_once）。
+# 上游是否已修由 .github/workflows/vendor-watch.yml 每周自动检查，
+# 修了会变红提醒撤补丁；手动升级前也可看该 workflow 的检查方式。
 [patch.crates-io]
 melib = { path = "vendor/melib" }
 

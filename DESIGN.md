@@ -1,4 +1,8 @@
-# s-mail 设计方案（v0.2）
+# s-mail 设计方案（v0.2，含 v0.3 演进补记）
+
+> **v0.3 补记（2026-10-24）**：§8 里程碑表维护至 M7 为止；M8 起（废纸篓/
+> 发件箱/草稿云同步/离线优先/AI 助手等）的逐项变更见 CHANGELOG.md，
+> 本轮的架构级演进决策汇总见文末 §11。
 
 > **性能承诺修订（2026-10，release 实测）**：M0 期定的"冷启动 <100ms / 内存 <50MB"
 > 产生于 GUI 框架选型之前。实际选型 iced+wgpu 后实测：冷启动 ~0.7s（进程→窗口+SQLite
@@ -223,3 +227,61 @@ s-mail/
 2. 主用邮箱：未答复 ⇒ S3 spike 为 config 驱动（`spikes/spike-melib/config.toml` 填哪家测哪家）
 
 > 原问题 1/2/4（UI 框架、HTML 策略、协议路线）已收敛为"有前提的默认值 + M0 spike 验证"，见 `docs/analysis/`。spike 代码在 `spikes/`，验收标准见 `docs/analysis/round-3-conclusions.md` §2。
+
+## 11. v0.3 架构演进（2026-10-24 重构与加固轮）
+
+M7 后的版本级变更见 CHANGELOG.md（废纸篓两段删除、发件箱、草稿云同步
+双向对账、离线优先冷启动、AI 助手三防线、深色/双语等）。本节只记
+架构级决策及其动因。
+
+### 11.1 巨型文件拆分（纯搬运纪律）
+
+- `smail-core/src/lib.rs` 2211 → ~300 行：服务主循环按职责进 `service/`
+  六模块（runtime/commands/sync/folders/sending/attachments）
+- `smail-ui/src/update.rs` 1809 → ~400 行：Elm update 的巨型 match 按
+  消息域进 `update/` 四模块（account_setup/ai_ops/compose_ops/mail_ops），
+  分发器 or-pattern 委托
+- `smail-store` 拆出 8 个 ops 模块 + 错误类型 thiserror 化
+- **纪律**：重构提交零逻辑变更，脚本逐方法/逐臂 token 级等价校验
+  （core 25/25、ui 137/137），搬完跑 e2e 矩阵验证等价。功能变更绝不
+  混进重构提交
+
+### 11.2 网络坚韧性：超时 + 半死自愈
+
+- 根因：melib 的 IMAP 流在连接半死时永不被唤醒，无超时 `block_on` →
+  服务线程永久卡死（sample 抓栈实证；用户侧「在线但永不同步」）
+- 方案：backend 全部网络等待带超时（命令 30s / IDLE 10min，
+  futures-timer select）；同步超时 = 连接半死 → 走既有重连路径自愈；
+  非超时失败不重试（防热循环打服务器）
+
+### 11.3 HTML 管线对抗性加固
+
+- markdown 图片语法注入：正文里 `![x](url)` 字面量会被 iced 渲染成
+  图片自动外发请求，绕过「远程图不自动加载」→ 文本输出断开 `![`
+- 深嵌套 DoS：渲染递归 MAX_RENDER_DEPTH=64（栈有界，成本 O(宽度×上限)）；
+  解析成本 ~n^1.8 为第三方已知边界（Reader 线程一次性付出，UI 不卡）
+
+### 11.4 规则引擎 v2
+
+- all_of/any_of 条件组 × contains/equals/starts_with/ends_with 谓词 ×
+  actions 多动作 × continue_after 命中链（默认 false=旧首条命中即用）
+- v0 旧字段加载归一化进 v2，保存只写 v2（自迁移）；From 匹配用裸地址
+  （from_addr 存「显示名 <a@b>」全形态，谓词会撞尖括号——m8 首跑红逮住）
+
+### 11.5 存储并发鲁棒性
+
+- 并发首开撞 BUSY：journal_mode=WAL 变更撞另一连接建表事务时 SQLite
+  可绕过 busy_handler 立即报 BUSY → Store::open 幂等整段重试
+  （曾致服务线程启动即死的偶发 e2e 红）
+
+### 11.6 CI 门禁体系
+
+- perf job：核心基线（万封：冷开/写入/FTS/列表，release 确定性测量，
+  阈值=实测×~3）+ strip 体积门禁（<32MB，实测 ~26MB）；兼作 release
+  编译检查。GUI 冷启动/RSS 无法无头测量，留 DOGFOOD 手工流程
+- vendor-watch：每周检查上游 melib 是否已修 EISCONN（修了变红提醒
+  撤 vendor 补丁）
+- e2e 去固定 sleep 化：事件静默期判定 / 等 FolderLoaded / mock 请求
+  日志，替代「睡 N 毫秒赌事件已到」
+- lint/test 排除 spikes（spike-melib 的 maildir/imap-trace 特性会与主
+  构建合并拉长编译）；check-windows 保持全量作 spike 编译岗哨
