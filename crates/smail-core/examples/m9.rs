@@ -54,7 +54,7 @@ fn main() {
     write!(
         enc_mail,
         "From: =?UTF-8?B?{}?= <m9@local>\r\nTo: =?UTF-8?B?{}?= <test@localhost>\r\nSubject: =?UTF-8?B?{}?=\r\nDate: Sat, 18 Oct 2026 13:10:00 +0800\r\nMessage-ID: <m9-enc-{run_tag}@seed>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"m9enc\"\r\n\r\nThis is an OpenPGP/MIME encrypted message (RFC 4880)\r\n\r\n--m9enc\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n\r\n--m9enc\r\nContent-Type: application/octet-stream; name=\"encrypted.asc\"\r\nContent-Disposition: inline; filename=\"encrypted.asc\"\r\n\r\n",
-        b64("m9"), b64("我"), &b64(&format!("PGP加密：机密通知{run_tag}")),
+        b64("m9"), b64("我"), b64(&format!("PGP加密：机密通知{run_tag}")),
     )
     .unwrap();
     enc_mail.extend_from_slice(&armored);
@@ -68,7 +68,7 @@ fn main() {
     write!(
         sig_mail,
         "From: =?UTF-8?B?{}?= <m9@local>\r\nTo: =?UTF-8?B?{}?= <test@localhost>\r\nSubject: =?UTF-8?B?{}?=\r\nDate: Sat, 18 Oct 2026 13:11:00 +0800\r\nMessage-ID: <m9-sig-{run_tag}@seed>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/signed; protocol=\"application/pgp-signature\"; micalg=pgp-sha256; boundary=\"m9sig\"\r\n\r\n--m9sig\r\n",
-        b64("m9"), b64("我"), &b64(&format!("PGP签名：明文公告{run_tag}")),
+        b64("m9"), b64("我"), b64(&format!("PGP签名：明文公告{run_tag}")),
     )
     .unwrap();
     sig_mail.extend_from_slice(signed_content.as_bytes());
