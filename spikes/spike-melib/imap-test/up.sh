@@ -13,10 +13,10 @@ python3 seed_mail.py test2
 # 权限：Linux CI 的 bind mount 严格按 uid——宿主文件（runner 属主）对
 # 容器内 vmail（dovecot 邮箱访问用户）不可写时无法建索引/移动 new→cur，
 # 邮件列不出来（macOS Docker Desktop 放宽权限，本地复现不了）。
-# 注意：dovecot/dovecot 是 distroless 风格镜像，容器内没有 chmod——
-# 必须宿主侧改（mode 是 inode 属性，bind mount 两端即时生效；
-# 曾因容器内 exec chmod 不存在且吞错，CI 静默失败两轮）
-chmod -R a+rwX mail
+# 只放宽「自己属主」的文件（种子产物/目录）：dovecot 容器属主的索引
+# 文件它自己本来可访问，宿主 chmod 反而 Operation not permitted
+#（重置场景 mail/ 已有容器产物，盲 chmod -R 会炸）
+find mail -user "$(id -u)" -exec chmod a+rwX {} +
 
 docker rm -f smail-imap >/dev/null 2>&1 || true
 docker run -d --name smail-imap -p 1143:31143 \
