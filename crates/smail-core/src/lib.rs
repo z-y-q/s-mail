@@ -339,7 +339,7 @@ impl ServiceInner {
             retry_at: Instant::now() + Duration::from_millis(200),
         };
         // slot 与 conn 状态同步（Reader 取拉用）：Up 时暴露 backend，Down 时清空
-        *self.backend_slot.write().unwrap() = None;
+        *self.backend_slot.write().unwrap_or_else(|p| p.into_inner()) = None;
 
         let mut tick: u32 = 0;
         loop {
@@ -394,7 +394,7 @@ impl ServiceInner {
                             &[&reason],
                         )));
                         self.emit(Event::ConnState(false));
-                        *self.backend_slot.write().unwrap() = None;
+                        *self.backend_slot.write().unwrap_or_else(|p| p.into_inner()) = None;
                         conn = Conn::Down {
                             attempts: 0,
                             retry_at: Instant::now(),
@@ -429,7 +429,7 @@ impl ServiceInner {
                             "token near expiry, rebuilding connection…",
                         )));
                         self.emit(Event::ConnState(false));
-                        *self.backend_slot.write().unwrap() = None;
+                        *self.backend_slot.write().unwrap_or_else(|p| p.into_inner()) = None;
                         conn = Conn::Down {
                             attempts: 0,
                             retry_at: Instant::now(),
@@ -499,11 +499,12 @@ impl ServiceInner {
                             self.sync_folder(&*backend, &store, &target);
                             self.emit_folders(&*backend, &store);
                             self.flush_outbox(&*backend, &store);
-                            *self.backend_slot.write().unwrap() = Some(backend.clone());
+                            *self.backend_slot.write().unwrap_or_else(|p| p.into_inner()) =
+                                Some(backend.clone());
                             // P2 优化：backend 就绪后通知 Reader 线程（Condvar 唤醒等待）
                             {
                                 let (lock, cvar) = &*self.backend_ready;
-                                *lock.lock().unwrap() = true;
+                                *lock.lock().unwrap_or_else(|p| p.into_inner()) = true;
                                 cvar.notify_all();
                             }
                             conn = Conn::Up { backend, watch_rx };
@@ -1028,7 +1029,10 @@ impl ServiceInner {
                     }
                 }
             }
-            Cmd::RenameFolder(old, new) => {
+            Cmd::RenameFolder {
+                old_path: old,
+                new_path: new,
+            } => {
                 if let Conn::Up { backend, .. } = &mut *conn {
                     match backend.rename_folder(&old, &new) {
                         Ok(()) => {

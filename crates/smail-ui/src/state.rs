@@ -502,6 +502,8 @@ impl State {
 pub(crate) fn persist_and_reload(
     state: &mut State,
     accounts: Vec<smail_core::AccountConfig>,
+    // 随旧 Session 一并清理的数据目录（删账号时传；在后台线程 join 完成后删除）
+    cleanup_dir: Option<std::path::PathBuf>,
 ) -> bool {
     // 账号删到 1 个后统一收件箱入口消失——强制退出该视图防困死
     if accounts.len() < 2 && state.nav.viewing_unified {
@@ -572,7 +574,25 @@ pub(crate) fn persist_and_reload(
     }
     // 确保数据根目录存在（首次保存）
     let _ = std::fs::create_dir_all(&state.data_root);
-    state.session = None; // Drop：Shutdown + join
+    // 后台释放旧 Session：Session::drop 会同步 join 全部服务线程（可能卡在
+    // 慢网络操作上），绝不能在 UI 线程做。join 返回即数据目录无人持有，
+    // cleanup_dir（删账号）在同一根线程里随后删除——顺序确定性保证，无定时赌运
+    if let Some(old_session) = state.session.take() {
+        std::thread::spawn(move || {
+            drop(old_session);
+            if let Some(dir) = cleanup_dir {
+                if let Err(e) = std::fs::remove_dir_all(&dir) {
+                    eprintln!(
+                        "[s-mail] 删除账号数据目录失败（可手动删 {}: {}",
+                        dir.display(),
+                        e
+                    );
+                }
+            }
+        });
+    }
+    state.cmd_tx = None;
+    state.events = None;
     match smail_core::Session::start(&state.cfg_path, &state.data_root) {
         Ok((session, rx)) => {
             state.session = Some(session);

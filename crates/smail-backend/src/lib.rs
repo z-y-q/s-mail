@@ -440,14 +440,20 @@ impl MailBackend for MelibBackend {
         let mailboxes = futures::executor::block_on(fut?)?;
         let mut names = Vec::with_capacity(mailboxes.len());
         self.folders_lock().clear();
-        self.folder_index.lock().unwrap().clear();
+        self.folder_index
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
         for (hash, mb) in &mailboxes {
             // 解码后的名字作为对外唯一形态；对服务器的所有操作都走 MailboxHash，
             // 不受编码影响（create/rename 是例外：发往服务器的名字要重编码）
             let path = folder_name_decode(mb.path());
             names.push(path.clone());
             self.folders_lock().insert(path.clone(), *hash);
-            self.folder_index.lock().unwrap().insert(*hash, path);
+            self.folder_index
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(*hash, path);
         }
         names.sort();
         Ok(names)
@@ -503,7 +509,11 @@ impl MailBackend for MelibBackend {
                     }
                 };
                 let folder = match &ev {
-                    BackendEvent::Refresh(r) => index.lock().unwrap().get(&r.mailbox_hash).cloned(),
+                    BackendEvent::Refresh(r) => index
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(&r.mailbox_hash)
+                        .cloned(),
                     _ => None,
                 };
                 if let Some(folder) = folder {

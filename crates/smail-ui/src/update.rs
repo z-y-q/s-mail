@@ -310,7 +310,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             if form.preset.is_oauth() || form.force_save {
                 let mut accounts = state.accounts.clone();
                 accounts.push(acct);
-                if persist_and_reload(state, accounts) {
+                if persist_and_reload(state, accounts, None) {
                     state.screen = Screen::Mail;
                 }
                 return Task::none();
@@ -337,7 +337,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                     if let Ok(acct) = build_account(form) {
                         let mut accounts = state.accounts.clone();
                         accounts.push(acct);
-                        if persist_and_reload(state, accounts) {
+                        if persist_and_reload(state, accounts, None) {
                             state.screen = Screen::Mail;
                         }
                     }
@@ -354,22 +354,15 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SetupDelete(i) => {
-            // B6：先清理钥匙串条目（删完配置后 marker 无处可查，条目会孤儿化）
-            // + 数据目录（index.db/bodies/meli cache/oauth token——磁盘泄漏）
+            // B6：先清理钥匙串条目（删完配置后 marker 无处可查，条目会孤儿化）。
+            // 数据目录（index.db/bodies/meli cache/oauth token）由 persist_and_reload
+            // 的后台 drop 线程在 Session join 完成后确定性删除（田版：睡 500ms 赌
+            // Drop 完成的竞赛——慢网络下必输，目录泄漏）
+            let delete_dir = state
+                .accounts
+                .get(i)
+                .map(|a| std::path::PathBuf::from(&state.data_root).join(&a.slug));
             if let Some(a) = state.accounts.get(i) {
-                let slug = a.slug.clone();
-                let data_root = state.data_root.clone();
-                // persist_and_reload 会 Drop Session（等线程退出 → 文件锁释放）
-                // 之后再删目录——放到下一个 iced tick 执行（避免文件锁竞争）
-                let delete_dir = std::path::PathBuf::from(&data_root).join(&slug);
-                if delete_dir.exists() {
-                    // 延迟删：session Drop 在 persist_and_reload 内完成
-                    // 这里先标记，实际删除在 persist_and_reload 成功后
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        let _ = std::fs::remove_dir_all(&delete_dir);
-                    });
-                }
                 let username = a.imap.username.clone();
                 let mut mids: Vec<String> = vec![];
                 if let Some(p) = &a.imap.password {
@@ -393,7 +386,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             let mut accounts = state.accounts.clone();
             if i < accounts.len() {
                 accounts.remove(i);
-                persist_and_reload(state, accounts);
+                persist_and_reload(state, accounts, delete_dir);
             }
             if state.accounts.is_empty() {
                 state.screen = Screen::Setup(SetupForm::new());
@@ -1163,7 +1156,13 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                     viewing_renamed = true;
                 }
             }
-            state.send(acct, Cmd::RenameFolder(old, new.clone()));
+            state.send(
+                acct,
+                Cmd::RenameFolder {
+                    old_path: old,
+                    new_path: new.clone(),
+                },
+            );
             if viewing_renamed {
                 // 服务线程按序处理：先改名（含本地索引换名）再重选；
                 // 本地先行立即用新名字刷新行，消除行内存的旧 folder 字段
@@ -1647,7 +1646,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             if let Some(a) = accounts.get_mut(i) {
                 a.pgp = pgp;
                 // 会话重启（persist_and_reload）后生效；缓存随 ServiceInner 重建自动失效
-                persist_and_reload(state, accounts);
+                persist_and_reload(state, accounts, None);
             }
             Task::none()
         }
@@ -1751,7 +1750,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                         }
                     }
                     // 会话重启后在 start_for 处从钥匙串解析回内存
-                    persist_and_reload(state, accounts);
+                    persist_and_reload(state, accounts, None);
                 }
                 Err(e) => state.error = Some(format!("写入钥匙串失败：{e}")),
             }

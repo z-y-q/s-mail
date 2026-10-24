@@ -114,7 +114,10 @@ pub enum Cmd {
     },
     CreateFolder(String),
     DeleteFolder(String),
-    RenameFolder(String, String),
+    RenameFolder {
+        old_path: String,
+        new_path: String,
+    },
     /// 最近联系人（compose 自动补全用）
     ListContacts,
 }

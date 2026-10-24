@@ -106,6 +106,8 @@ impl ReaderCtx {
             return;
         };
         while let Ok(hash) = rx.recv() {
+            // 最新优先：用户快速切换邮件时，队列积压的旧请求全部跳过，只服务最新的
+            let hash = rx.try_iter().last().unwrap_or(hash);
             self.serve(&store, hash);
         }
     }
@@ -154,17 +156,27 @@ impl ReaderCtx {
             // 真断网场景等满配置时长后仍明确报错（可配置，改善冷启动体验）
             let backend = {
                 // 先快速检查当前状态（乐观路径：已连接直接返回）
-                if let Some(b) = self.backend_slot.read().unwrap().clone() {
+                if let Some(b) = self
+                    .backend_slot
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone()
+                {
                     Some(b)
                 } else {
                     // backend 未就绪：用 Condvar 等待通知（替代 100ms 轮询）
                     let (lock, cvar) = &*self.backend_ready;
                     let start = Instant::now();
-                    let mut ready = lock.lock().unwrap();
+                    let mut ready = lock.lock().unwrap_or_else(|p| p.into_inner());
                     loop {
                         // 检查是否已被通知就绪
                         if *ready {
-                            if let Some(b) = self.backend_slot.read().unwrap().clone() {
+                            if let Some(b) = self
+                                .backend_slot
+                                .read()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .clone()
+                            {
                                 break Some(b);
                             }
                             // ready 标志已置位但 backend_slot 仍空（罕见竞态）：继续等待
@@ -176,9 +188,11 @@ impl ReaderCtx {
                         }
                         let remaining = self.cold_start_timeout - elapsed;
                         // wait_timeout 高效等待：收到 notify 或超时时唤醒
-                        let result = cvar.wait_timeout(ready, remaining).unwrap();
-                        ready = result.0;
-                        if result.1.timed_out() {
+                        let (guard, timed_out) = cvar
+                            .wait_timeout(ready, remaining)
+                            .unwrap_or_else(|p| p.into_inner());
+                        ready = guard;
+                        if timed_out.timed_out() {
                             break None;
                         }
                     }
