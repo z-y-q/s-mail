@@ -186,15 +186,17 @@ jobs:
           SMAIL_CONFIG: spikes/spike-melib/config.pgp.toml
           SMAIL_HOME: /tmp/smail-ci-m9
         run: timeout 90 ./target/debug/examples/m9 70
-      - name: m11 应用内配置+OAuth 设备流 e2e（需 OAuth mock）
+      - name: m11 应用内配置+OAuth 设备流 e2e（需 OAuth mock + 翻译代理）
         env:
           SMAIL_HOME: /tmp/smail-ci-m11
         run: |
-          # 重置 dovecot：m11 是矩阵最后一个 e2e，前面 20 个用例的连接
-          # 累积（含 m17 的 stop/start）后端口代理/conntrack 状态劣化，
-          # 实测首连即 ECONNABORTED；重启容器恢复（up.sh 幂等，含种子）
+          # 重置 dovecot：最后一个用例用干净环境跑（也规避前 20 个用例
+          # 连接累积的端口代理状态）；up.sh 幂等，含种子
           sh spikes/spike-melib/imap-test/down.sh >/dev/null 2>&1 || true
           sh spikes/spike-melib/imap-test/up.sh
           python3 spikes/spike-melib/imap-test/mock_oauth.py 18888 /tmp/mock-oauth-ci.json &
+          # 翻译代理：m11 的 Session 连 11143（XOAUTH2→LOGIN 翻译后连 1143
+          # dovecot）——此前没起，连接必败（本地能过纯粹是残留进程巧合）
+          python3 spikes/spike-melib/imap-test/mock_xoauth2_proxy.py 11143 1143 /tmp/xoauth2-sasl.log &
           sleep 2
           timeout 90 ./target/debug/examples/m11 60
