@@ -183,4 +183,3 @@ open dist/s-mail.app
 ```
 
 打包解锁：Dock 图标与名称、通知归属本应用、Finder 双击启动与 .eml 文件关联。
-（通知点击跳转到具体邮件需要接 UNUserNotificationCenter 回调，见路线图。）

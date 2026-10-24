@@ -194,7 +194,7 @@ impl AccountService {
     }
 }
 
-/// 列表单次返回上限（无分页；UI 在满额时提示）
+/// 列表单次返回上限（触底 LoadMore 逐步扩大；见 folder_limit）
 pub const UI_LIST_LIMIT: u32 = 500;
 
 /// 内部运行时配置（已解析 keychain 密码）
