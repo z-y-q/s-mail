@@ -8,6 +8,9 @@
 
 use std::sync::mpsc::Receiver;
 
+# 托盘动作：构造仅存在于 macOS 托盘回调（cfg 限定），非 macOS 平台
+# 「从未构造」是预期——Message::Tray 的匹配处理跨平台存在，不能 cfg 掉
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
     Open,
