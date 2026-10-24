@@ -34,7 +34,7 @@ pub use error::{BackendError, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use futures::StreamExt;
+use futures::{Future, StreamExt};
 use melib::backends::utf7::encode_utf7_imap;
 use melib::backends::{
     BackendEvent, BackendEventConsumer, EnvelopeHashBatch, FlagOp, IsSubscribedFn,
@@ -82,6 +82,29 @@ pub struct SmtpConfig {
     /// "ssl"=465隐式TLS | "starttls"=587 | "none"=本地测试
     #[serde(default)]
     pub tls: Option<String>,
+}
+
+/// 网络操作单步超时（秒）。melib 的异步流在连接半死时可能永不被唤醒
+/// （block_on 内 park 后 wake 丢失 → 调用线程永久卡死；实测 sample 栈：
+/// fetch_envelopes → block_on → thread::park 永眠，服务线程假死）。
+/// 每个 IMAP 命令/流的单个批次正常远低于 30s。
+const NET_OP_TIMEOUT_SECS: u64 = 30;
+
+/// IDLE watch 流的安静期远长于普通命令（服务器无事件即无唤醒），
+/// 超时视为连接死亡（重连路径接管）。RFC 2177 建议 IDLE <29min 重发。
+const WATCH_TIMEOUT_SECS: u64 = 600;
+
+/// 带超时的 block_on：所有对 melib 网络 future 的同步等待必须走这里
+fn block_on_t<F: Future>(f: F, secs: u64) -> Result<F::Output> {
+    match futures::executor::block_on(futures::future::select(
+        Box::pin(f),
+        Box::pin(futures_timer::Delay::new(std::time::Duration::from_secs(
+            secs,
+        ))),
+    )) {
+        futures::future::Either::Left((out, _)) => Ok(out),
+        futures::future::Either::Right(_) => Err(BackendError::Timeout(secs)),
+    }
 }
 
 fn default_true() -> bool {
@@ -431,13 +454,13 @@ impl MailBackend for MelibBackend {
 
     fn is_online(&self) -> Result<()> {
         let fut = self.with_backend(|b| b.is_online());
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(())
     }
 
     fn list_folders(&self) -> Result<Vec<String>> {
         let fut = self.with_backend(|b| b.mailboxes());
-        let mailboxes = futures::executor::block_on(fut?)?;
+        let mailboxes = block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         let mut names = Vec::with_capacity(mailboxes.len());
         self.folders_lock().clear();
         self.folder_index
@@ -463,7 +486,7 @@ impl MailBackend for MelibBackend {
         let hash = self.mailbox_of(folder)?;
         let mut stream = self.with_backend(|b| b.fetch(hash))?;
         let mut out = Vec::new();
-        while let Some(batch) = futures::executor::block_on(stream.next()) {
+        while let Some(batch) = block_on_t(stream.next(), NET_OP_TIMEOUT_SECS)? {
             for env in batch? {
                 out.push(EnvelopeSummary {
                     hash: env.hash().0,
@@ -490,7 +513,7 @@ impl MailBackend for MelibBackend {
 
     fn fetch_body(&self, hash: u64) -> Result<Vec<u8>> {
         let fut = self.with_backend(|b| b.envelope_bytes_by_hash(EnvelopeHash(hash)));
-        Ok(futures::executor::block_on(fut?)?)
+        Ok(block_on_t(fut?, NET_OP_TIMEOUT_SECS)??)
     }
 
     fn watch(&self) -> Result<std::sync::mpsc::Receiver<ServerEvent>> {
@@ -498,7 +521,17 @@ impl MailBackend for MelibBackend {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut stream = self.with_backend(|b| b.watch())?;
         std::thread::spawn(move || {
-            while let Some(ev) = futures::executor::block_on(stream.next()) {
+            loop {
+                let ev = match block_on_t(stream.next(), WATCH_TIMEOUT_SECS) {
+                    Ok(Some(ev)) => ev,
+                    Ok(None) => break, // 流正常结束（服务器关闭连接）
+                    Err(_) => {
+                        let _ = tx.send(ServerEvent::ConnectionLost {
+                            reason: "IDLE 流超时（连接可能已半死）".into(),
+                        });
+                        break;
+                    }
+                };
                 let ev = match ev {
                     Ok(ev) => ev,
                     Err(err) => {
@@ -540,7 +573,7 @@ impl MailBackend for MelibBackend {
             FlagChange::Flagged(false) => FlagOp::UnSet(Flag::FLAGGED),
         };
         let fut = self.with_backend(|b| b.set_flags(batch, mb, vec![op]));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(())
     }
 
@@ -548,7 +581,7 @@ impl MailBackend for MelibBackend {
         let mb = self.mailbox_of(folder)?;
         let batch = self.batch_of(hashes)?;
         let fut = self.with_backend(|b| b.delete_messages(batch, mb));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(())
     }
 
@@ -557,7 +590,7 @@ impl MailBackend for MelibBackend {
         let dst = self.mailbox_of(dest)?;
         let batch = self.batch_of(hashes)?;
         let fut = self.with_backend(|b| b.copy_messages(batch, src, dst, true));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(())
     }
 
@@ -565,7 +598,7 @@ impl MailBackend for MelibBackend {
         // 服务器只认 mUTF-7：中文文件夹名编码后发（ASCII 原样透传）
         let encoded = encode_utf7_imap(path);
         let fut = self.with_backend(|b| b.create_mailbox(encoded));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         self.list_folders()?; // 刷新映射：新邮箱立即可选为目标
         Ok(())
     }
@@ -573,7 +606,7 @@ impl MailBackend for MelibBackend {
     fn delete_folder(&self, path: &str) -> Result<()> {
         let mb = self.mailbox_of(path)?;
         let fut = self.with_backend(|b| b.delete_mailbox(mb));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         self.folders_lock().remove(path);
         Ok(())
     }
@@ -582,7 +615,7 @@ impl MailBackend for MelibBackend {
         let mb = self.mailbox_of(path)?;
         let encoded = encode_utf7_imap(new_path);
         let fut = self.with_backend(|b| b.rename_mailbox(mb, encoded));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         self.list_folders()?;
         Ok(())
     }
@@ -591,7 +624,7 @@ impl MailBackend for MelibBackend {
         let drafts = self.find_drafts_folder()?;
         let mb = self.mailbox_of(&drafts)?;
         let fut = self.with_backend(|b| b.save(bytes, mb, None));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(drafts)
     }
 
@@ -624,7 +657,7 @@ impl MailBackend for MelibBackend {
             .ok_or_else(|| BackendError::FolderNotFound("Sent".into()))?;
         let mb = self.mailbox_of(&sent)?;
         let fut = self.with_backend(|b| b.save(bytes, mb, Some(Flag::SEEN)));
-        futures::executor::block_on(fut?)?;
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(sent)
     }
 }

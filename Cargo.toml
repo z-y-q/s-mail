@@ -31,6 +31,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 iced = { version = "0.14", features = ["tokio", "markdown", "image"] }
 tokio = { version = "1", features = ["rt", "sync"] }
 futures = "0.3"
+futures-timer = "3"
 mail-parser = "0.11"
 lettre = "0.11"
 ammonia = "4"

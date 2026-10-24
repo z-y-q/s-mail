@@ -129,7 +129,14 @@ impl ServiceInner {
         }
     }
 
-    pub(crate) fn sync_folder(&self, backend: &dyn MailBackend, store: &Store, folder: &str) {
+    /// 同步失败分类：None=成功；Some(Timeout)=连接半死（须重连）；
+    /// Some(其他)=单次失败（Status 已报，不重试）
+    pub(crate) fn sync_folder(
+        &self,
+        backend: &dyn MailBackend,
+        store: &Store,
+        folder: &str,
+    ) -> Option<smail_backend::BackendError> {
         self.emit(Event::Status(self.trf(
             "正在同步 {}…",
             "Syncing {}…",
@@ -143,7 +150,7 @@ impl ServiceInner {
                     "Failed to sync {}: {}",
                     &[&folder, &e],
                 )));
-                return;
+                return Some(e);
             }
         };
         let total = envelopes.len();
@@ -264,6 +271,7 @@ impl ServiceInner {
             "{}: {} messages ({} new)",
             &[&folder, &envelopes.len(), &new_count],
         )));
+        None
     }
 
     // ---------------- M7：移动 / 批量操作 ----------------

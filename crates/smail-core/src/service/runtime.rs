@@ -3,13 +3,33 @@
 use crate::protocol::{Cmd, Event};
 use crate::reader::backoff;
 use crate::{oauth, Conn, ServiceInner};
-use smail_backend::{connect, MailBackend, ServerEvent};
+use smail_backend::{connect, BackendError, MailBackend, ServerEvent};
 use smail_store::Store;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 impl ServiceInner {
+    /// 连接断开/半死的统一善后：状态可见 + 通知 Reader（slot 清空）
+    fn note_conn_lost(&self, reason: String) {
+        self.emit(Event::Status(self.trf(
+            "连接断开：{}，开始重连…",
+            "Connection lost: {}, reconnecting…",
+            &[&reason],
+        )));
+        self.emit(Event::ConnState(false));
+        *self.backend_slot.write().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    /// 同步失败善后：超时=连接半死 → 立即重连（新连接 post-connect 同步自愈）；
+    /// 其他错误不重试（Status 已报，避免热循环打服务器）。返回 true=已请求重连
+    fn sync_failed(&self, e: &BackendError) -> bool {
+        if !matches!(e, BackendError::Timeout(_)) {
+            return false;
+        }
+        self.note_conn_lost("同步超时（连接可能已半死）".into());
+        true
+    }
     pub(crate) fn run(self, cmd_rx: Receiver<Cmd>) {
         let store = match Store::open(&self.data_dir.join("index.db")) {
             Ok(s) => s,
@@ -106,13 +126,7 @@ impl ServiceInner {
                         }
                     }
                     if let Some(reason) = lost {
-                        self.emit(Event::Status(self.trf(
-                            "连接断开：{}，开始重连…",
-                            "Connection lost: {}, reconnecting…",
-                            &[&reason],
-                        )));
-                        self.emit(Event::ConnState(false));
-                        *self.backend_slot.write().unwrap_or_else(|p| p.into_inner()) = None;
+                        self.note_conn_lost(reason);
                         conn = Conn::Down {
                             attempts: 0,
                             retry_at: Instant::now(),
@@ -124,7 +138,15 @@ impl ServiceInner {
                     if let Some(folder) = changed.iter().next() {
                         let f = folder.clone();
                         changed.remove(&f);
-                        self.sync_folder(&**backend, &store, &f);
+                        if let Some(e) = self.sync_folder(&**backend, &store, &f) {
+                            if self.sync_failed(&e) {
+                                conn = Conn::Down {
+                                    attempts: 0,
+                                    retry_at: Instant::now(),
+                                };
+                                continue;
+                            }
+                        }
                         // Drafts 变更 → 草稿对账
                         if let Some(df) = backend.drafts_folder_name() {
                             if f == df {
@@ -214,7 +236,16 @@ impl ServiceInner {
                             // 重连时清空 pending_sync：避免断线前的旧文件夹残留导致
                             // 重复同步（重连已同步当前文件夹，延迟同步队列应清空）
                             pending_sync = None;
-                            self.sync_folder(&*backend, &store, &target);
+                            if let Some(e) = self.sync_folder(&*backend, &store, &target) {
+                                if self.sync_failed(&e) {
+                                    // 半死连接：保持 Down 态立即重连（新连接后再同步）
+                                    conn = Conn::Down {
+                                        attempts: *attempts,
+                                        retry_at: Instant::now(),
+                                    };
+                                    continue;
+                                }
+                            }
                             self.emit_folders(&*backend, &store);
                             self.flush_outbox(&*backend, &store);
                             *self.backend_slot.write().unwrap_or_else(|p| p.into_inner()) =
@@ -269,7 +300,17 @@ impl ServiceInner {
             if pending_sync.is_some() {
                 if let Conn::Up { backend, .. } = &mut conn {
                     let folder = pending_sync.take().unwrap();
-                    self.sync_folder(&**backend, &store, &folder);
+                    if let Some(e) = self.sync_folder(&**backend, &store, &folder) {
+                        if self.sync_failed(&e) {
+                            conn = Conn::Down {
+                                attempts: 0,
+                                retry_at: Instant::now(),
+                            };
+                            continue;
+                        }
+                        // 非超时失败：不重新入队（旧版无限重试会在服务器持续报错时
+                        // 每 200ms 打一次服务器）
+                    }
                     self.emit_folder_counts(&store);
                 }
             }

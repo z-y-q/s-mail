@@ -39,9 +39,13 @@ impl ServiceInner {
                 };
                 if fresh {
                     // TTL 过期：立即同步，不延迟（否则用户看到过期缓存直到命令队列
-                    // drain 完才刷新）；连接中则直接同步，断线时设置 pending_sync
+                    // drain 完才刷新）；连接中则直接同步，断线时设置 pending_sync。
+                    // 失败也回 pending_sync：主循环延迟通道会重试一次
+                    //（超时类由主循环转入重连路径）
                     if let Conn::Up { backend, .. } = &conn {
-                        self.sync_folder(&**backend, store, &folder);
+                        if self.sync_folder(&**backend, store, &folder).is_some() {
+                            *pending_sync = Some(folder);
+                        }
                     } else {
                         *pending_sync = Some(folder);
                     }

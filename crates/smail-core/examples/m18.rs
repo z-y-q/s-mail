@@ -110,7 +110,6 @@ fn main() {
                                 println!("[gone   ] 靶子已永久消失 ✅");
                                 println!("\n[m18 PASS] 删除→废纸篓 ✅ 废纸篓→永久删除 ✅");
                                 let _ = session.cmd_tx.send(SessionCmd::Shutdown);
-                                std::thread::sleep(Duration::from_millis(300));
                                 std::process::exit(0);
                             }
                         }
@@ -160,7 +159,6 @@ fn main() {
             println!("[gone   ] 靶子未复活（6s 窗口）✅");
             println!("\n[m18 PASS] 删除→废纸篓 ✅ 废纸篓→永久删除 ✅");
             let _ = session.cmd_tx.send(SessionCmd::Shutdown);
-            std::thread::sleep(Duration::from_millis(300));
             std::process::exit(0);
         }
         std::thread::sleep(Duration::from_millis(200));

@@ -74,7 +74,30 @@ scopes = ["mail"]
         eprintln!("[m12 FAIL] 未收到 OAuthPrompt");
         std::process::exit(1);
     }
-    std::thread::sleep(Duration::from_secs(3)); // 确保已处于轮询等待中
+
+    // 事件化确认「已处于轮询」：mock 每次被请求都追加 JSONL，看到 ≥2 次
+    // /token 命中即服务线程确已进入轮询循环（旧版睡 3s 赌时序——慢机
+    // 不够快机白等）
+    let mock_log =
+        std::env::var("SMAIL_OAUTH_LOG").unwrap_or_else(|_| "/tmp/mock-oauth-never.json".into());
+    let token_hits = || -> usize {
+        std::fs::read_to_string(&mock_log)
+            .map(|s| {
+                s.lines()
+                    .filter(|l| l.contains("\"path\": \"/token\""))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let poll_deadline = Instant::now() + Duration::from_secs(10);
+    while token_hits() < 2 {
+        if Instant::now() >= poll_deadline {
+            eprintln!("[m12 FAIL] mock 未见到 2 次 token 轮询（log={mock_log}）");
+            std::process::exit(1);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    println!("[m12] mock 已见 ≥2 次 /token 轮询，服务线程确在轮询中");
 
     // 关键测量：drop（触发 Shutdown + stop 旗 + join）
     let t0 = Instant::now();

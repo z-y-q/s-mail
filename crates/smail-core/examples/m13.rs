@@ -63,6 +63,11 @@ fn main() {
     let mut injected = false;
     let mut trig_subject = String::new();
     let mut after: Option<(usize, bool)> = None; // (count, target_gone)
+                                                 // 事件静默期判定：触发信快照后继续泵事件，新快照刷新计时器（最后快照
+                                                 // 为准），静默满 STABLE 后才认定同步稳定——替代旧版「睡 1200ms 赌稳定」
+                                                 // （慢 CI 下 1200ms 不够会误判，快环境下又白等）
+    const STABLE: Duration = Duration::from_millis(1500);
+    let mut after_at: Option<Instant> = None;
 
     while Instant::now() < deadline {
         while let Ok(TaggedEvent { account, event }) = rx.try_recv() {
@@ -104,6 +109,7 @@ fn main() {
                             if rows.iter().any(|r| r.subject == trig_subject) {
                                 let gone = rows.iter().all(|r| Some(r.envelope_hash) != target);
                                 after = Some((rows.len(), gone));
+                                after_at = Some(Instant::now());
                             }
                         }
                     }
@@ -146,11 +152,10 @@ fn main() {
             println!("[m13] 已删 + 注入触发信，等 IDLE 重同步…");
         }
 
-        if after.is_some() {
-            std::thread::sleep(Duration::from_millis(1200)); // 让 FolderLoaded 稳定
-            break;
+        if after_at.is_some_and(|t| t.elapsed() >= STABLE) {
+            break; // 静默期内无新快照：最后一份即稳定结论
         }
-        std::thread::sleep(Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(100)); // 静默计时轮询（事件在上方 try_recv 泵）
     }
     let _ = session.cmd_tx.send(SessionCmd::Shutdown);
 

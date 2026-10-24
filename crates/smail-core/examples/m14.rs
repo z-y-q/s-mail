@@ -176,7 +176,6 @@ fn main() {
             println!(
                 "\n[m14 PASS] 建文件夹 ✅ 手动移动+本地清理 ✅ 批量标记 ✅ 联系人 ✅ 删文件夹 ✅"
             );
-            std::thread::sleep(Duration::from_millis(300));
             std::process::exit(0);
         }
         std::thread::sleep(Duration::from_millis(300));

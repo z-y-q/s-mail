@@ -10,6 +10,7 @@ melib = { workspace = true }
 imap-codec = { workspace = true }
 imap-types = { workspace = true }
 futures = { workspace = true }
+futures-timer = { workspace = true }
 lettre = { workspace = true }
 mime_guess = { workspace = true }
 serde = { workspace = true }

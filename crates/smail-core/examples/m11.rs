@@ -103,6 +103,9 @@ fn main() {
     let mut got_prompt = false;
     let mut got_folders = false;
     let mut selected = false;
+    // 事件驱动完成条件：INBOX 实际加载出邮件（旧版此处睡 1500ms「给加载
+    // 一点时间」——慢 CI 下不够会误报，快环境下白等，且断言从未真检查过加载）
+    let mut inbox_loaded = false;
 
     while Instant::now() < deadline {
         while let Ok(ev) = rx.try_recv() {
@@ -122,6 +125,7 @@ fn main() {
                 }
                 Event::FolderLoaded { folder, rows } => {
                     if folder.eq_ignore_ascii_case("INBOX") && !rows.is_empty() {
+                        inbox_loaded = true;
                         println!("[m11] INBOX {} 封（设备流自动授权后同步成功）", rows.len());
                     }
                 }
@@ -135,21 +139,19 @@ fn main() {
                 cmd: Cmd::SelectFolder("INBOX".into()),
             });
         }
-        if got_prompt && got_folders && selected {
-            // 给 INBOX 加载一点时间
-            std::thread::sleep(Duration::from_millis(1500));
+        if got_prompt && got_folders && selected && inbox_loaded {
             break;
         }
         std::thread::sleep(Duration::from_millis(200));
     }
     let _ = session.cmd_tx.send(SessionCmd::Shutdown);
 
-    if roundtrip_ok && test_ok && got_prompt && got_folders {
-        println!("\n[m11 PASS] 配置写读往返 ✅ 连接测试 ✅ 设备流横幅（GUI 数据源）✅ 服务线程自动授权+同步 ✅");
+    if roundtrip_ok && test_ok && got_prompt && got_folders && inbox_loaded {
+        println!("\n[m11 PASS] 配置写读往返 ✅ 连接测试 ✅ 设备流横幅（GUI 数据源）✅ 服务线程自动授权+同步（INBOX 已加载）✅");
         std::process::exit(0);
     }
     println!(
-        "\n[m11 FAIL] roundtrip={roundtrip_ok} test={test_ok} prompt={got_prompt} folders={got_folders}"
+        "\n[m11 FAIL] roundtrip={roundtrip_ok} test={test_ok} prompt={got_prompt} folders={got_folders} inbox_loaded={inbox_loaded}"
     );
     std::process::exit(1);
 }
