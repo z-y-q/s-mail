@@ -1,5 +1,8 @@
 [workspace]
 resolver = "2"
+# spikes 留在 members（共享 workspace 继承与 IDE），但 CI 的 lint/test
+# 作业用 --exclude 排除它们（spike-melib 的 maildir/imap-trace 特性会
+# 与主构建特性合并拉长编译）；check-windows 保持全量作为 spike 编译岗哨。
 members = [
     "crates/smail-ai",
     "crates/smail-backend",
