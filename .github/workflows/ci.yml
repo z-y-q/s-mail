@@ -86,6 +86,23 @@ jobs:
         run: cargo build -p smail-core --examples
       - name: 起 dovecot
         run: sh spikes/spike-melib/imap-test/up.sh
+      - name: 邮件可见性诊断（排查 CI 空环境 0 封问题，始终保留）
+        run: |
+          echo '--- 宿主侧 new/（数字 uid + mode）---'
+          ls -lan spikes/spike-melib/imap-test/mail/test/Maildir/new/ | head -6
+          echo '--- 容器侧 new/（sh 内建 glob；镜像无 ls/coreutils）---'
+          docker exec smail-imap sh -c 'echo /var/mail/test/Maildir/new/*' | head -3
+          echo '--- IMAP 视角（SELECT INBOX 的 EXISTS）---'
+          python3 - <<'EOF'
+          import imaplib
+          m = imaplib.IMAP4('127.0.0.1', 1143)
+          m.login('test', 'testpass')
+          typ, data = m.select('INBOX')
+          print('SELECT:', typ, data)
+          typ, data = m.search(None, 'ALL')
+          print('SEARCH ALL:', typ, len(data[0].split()), '封')
+          m.logout()
+          EOF
       - name: m5 多账号 e2e
         env:
           SMAIL_CONFIG: spikes/spike-melib/config.multi.toml

@@ -123,11 +123,11 @@ fn main() {
                         f.iter().map(|x| x.path.clone()).collect::<Vec<_>>()
                     );
                 }
-                Event::FolderLoaded { folder, rows } => {
-                    if folder.eq_ignore_ascii_case("INBOX") && !rows.is_empty() {
-                        inbox_loaded = true;
-                        println!("[m11] INBOX {} 封（设备流自动授权后同步成功）", rows.len());
-                    }
+                Event::FolderLoaded { folder, rows }
+                    if folder.eq_ignore_ascii_case("INBOX") && !rows.is_empty() =>
+                {
+                    inbox_loaded = true;
+                    println!("[m11] INBOX {} 封（设备流自动授权后同步成功）", rows.len());
                 }
                 _ => {}
             }
