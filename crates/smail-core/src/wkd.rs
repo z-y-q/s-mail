@@ -88,17 +88,20 @@ fn urlencoding_lite(s: &str) -> String {
 
 /// best-effort 发现：任一 URL 命中且能解析为证书即返回；全部未命中/失败返回 None
 pub fn discover_cert(email: &str) -> Option<Cert> {
+    // 10s 超时；非 2xx 默认报错正好走 continue（best-effort 不需错误体）
+    let agent = ureq::Agent::config_builder()
+        .timeout_per_call(Some(std::time::Duration::from_secs(10)))
+        .build()
+        .new_agent();
     for url in wkd_urls(email).ok()? {
-        let resp = match ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(10))
-            .call()
-        {
-            Ok(r) if r.status() == 200 => r,
+        let resp = match agent.get(&url).call() {
+            Ok(r) if r.status().as_u16() == 200 => r,
             _ => continue,
         };
         let mut bytes = Vec::with_capacity(2048);
         use std::io::Read as _;
         if resp
+            .into_body()
             .into_reader()
             .take(256 * 1024) // 上限 256KB：防御异常大响应
             .read_to_end(&mut bytes)

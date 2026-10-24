@@ -499,15 +499,21 @@ impl ServiceInner {
                 const MAX_TOTAL: u64 = 8 * 1024 * 1024;
                 let mut images = Vec::new();
                 let mut total: u64 = 0;
+                // 10s 超时；非 2xx 默认报错正好走 continue（best-effort）
+                let agent = ureq::Agent::config_builder()
+                    .timeout_per_call(Some(Duration::from_secs(10)))
+                    .build()
+                    .new_agent();
                 for url in &urls {
                     if total >= MAX_TOTAL {
                         break;
                     }
-                    match ureq::get(url).timeout(Duration::from_secs(10)).call() {
-                        Ok(resp) if resp.status() == 200 => {
+                    match agent.get(url).call() {
+                        Ok(resp) if resp.status().as_u16() == 200 => {
                             let mut buf = Vec::new();
                             use std::io::Read as _;
                             if resp
+                                .into_body()
                                 .into_reader()
                                 .take(MAX_EACH)
                                 .read_to_end(&mut buf)

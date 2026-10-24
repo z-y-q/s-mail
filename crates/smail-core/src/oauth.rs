@@ -222,17 +222,34 @@ fn dflt_expires() -> i64 {
     1800
 }
 
+/// HTTP agent（设备流/token 端点共用）：15s 超时 + 非 2xx 不自动报错
+///（4xx 响应体要读出来分类 pending/slow_down/denied）
+fn http_agent(secs: u64) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_per_call(Some(Duration::from_secs(secs)))
+        .http_status_as_error(false)
+        .build()
+        .new_agent()
+}
+
 pub fn device_start(cfg: &OAuthCfg) -> Result<DeviceAuth, String> {
     let (dev_url, _) = cfg.endpoints()?;
     let mut form = cfg.form_common();
     form.push(("scope".into(), cfg.effective_scopes()));
     let form_refs: Vec<(&str, &str)> = form.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let resp = ureq::post(&dev_url)
-        .timeout(Duration::from_secs(15))
-        .send_form(&form_refs)
+    let mut resp = http_agent(15)
+        .post(&dev_url)
+        .send_form(form_refs)
         .map_err(|e| format!("设备流启动失败: {e}"))?;
+    let status = resp.status().as_u16();
+    if status != 200 {
+        let detail = resp.body_mut().read_to_string().unwrap_or_default();
+        let short: String = detail.chars().take(150).collect();
+        return Err(format!("设备流启动失败: HTTP {status} {short}"));
+    }
     let r: DevResp = resp
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("设备流响应解析失败: {e}"))?;
     Ok(DeviceAuth {
         device_code: r.device_code,
@@ -293,17 +310,14 @@ fn poll_or_refresh(
     form: Vec<(String, String)>,
 ) -> Result<PollOutcome, String> {
     let form_refs: Vec<(&str, &str)> = form.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let resp = match ureq::post(url)
-        .timeout(Duration::from_secs(15))
-        .send_form(&form_refs)
-    {
-        Ok(r) => r,
-        Err(ureq::Error::Status(_, r)) => r, // 4xx 带 JSON error 体，读出来分类
-        Err(e) => return Err(format!("token 端点请求失败: {e}")),
-    };
-    let ok = resp.status() == 200;
+    let mut resp = http_agent(15)
+        .post(url)
+        .send_form(form_refs)
+        .map_err(|e| format!("token 端点请求失败: {e}"))?;
+    let ok = resp.status().as_u16() == 200;
     let v: serde_json::Value = resp
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("token 响应解析失败: {e}"))?;
     if ok {
         return Ok(PollOutcome::Granted(parse_tokens(v)?));

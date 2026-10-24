@@ -145,9 +145,12 @@ impl Chat {
     /// 阻塞调用（调用方放 spawn_blocking）。90s 超时（整理建议可能较慢）。
     pub fn complete(&self, system: &str, user: &str, max_tokens: u32) -> Result<String, String> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(90))
-            .build();
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(90)))
+            // 4xx/5xx 不自动报错：错误体（配额/鉴权详情）要透给用户看
+            .http_status_as_error(false)
+            .build()
+            .new_agent();
         let body = serde_json::json!({
             "model": self.model,
             "temperature": 0.4,
@@ -157,19 +160,22 @@ impl Chat {
                 {"role": "user", "content": user},
             ],
         });
-        let resp = agent
+        let mut resp = agent
             .post(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(body)
-            .map_err(|e| match e {
-                ureq::Error::Status(code, r) => {
-                    let snippet = r.into_string().unwrap_or_default();
-                    let short: String = snippet.chars().take(200).collect();
-                    format!("HTTP {code}：{short}")
-                }
-                other => other.to_string(),
-            })?;
-        let v: serde_json::Value = resp.into_json().map_err(|e| format!("响应解析失败：{e}"))?;
+            .header("Authorization", format!("Bearer {}", self.api_key).as_str())
+            .send_json(&body)
+            .map_err(|e| format!("请求失败：{e}"))?;
+        let status = resp.status().as_u16();
+        let text = resp
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| format!("读取响应失败：{e}"))?;
+        if status != 200 {
+            let short: String = text.chars().take(200).collect();
+            return Err(format!("HTTP {status}：{short}"));
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("响应解析失败：{e}"))?;
         v.get("choices")
             .and_then(|c| c.get(0))
             .and_then(|c| c.get("message"))
