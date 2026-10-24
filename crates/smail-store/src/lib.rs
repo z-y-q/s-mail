@@ -127,6 +127,24 @@ impl Store {
         // busy_timeout 必须最先设置：journal_mode 变更需写锁，
         // 并发首开（服务主循环 + Reader 线程）时无超时会直接 database is locked
         conn.pragma_update(None, "busy_timeout", 5000)?;
+        // 并发首开兑底：journal_mode=WAL 变更撞上另一连接的建表事务时，
+        // SQLite 可能不经过 busy handler 直接返回 BUSY（文档行为）。整个
+        // 初始化序列幂等（IF NOT EXISTS / ALTER 已存在则忽略），撞 BUSY 整段重试
+        let mut attempt = 0u32;
+        loop {
+            match Self::init(&conn) {
+                Ok(()) => return Ok(Self { conn }),
+                Err(e) if attempt < 20 && is_busy(&e) => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// 初始化序列（WAL + 建表 + v1~v7 迁移）：全部幂等，可重入
+    fn init(conn: &Connection) -> rusqlite::Result<()> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         // WAL 配套：NORMAL 足够（索引可重建，掉电最多丢最后事务不失一致性）
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -247,13 +265,63 @@ impl Store {
             )?;
             conn.pragma_update(None, "user_version", 7)?;
         }
-        Ok(Self { conn })
+        Ok(())
     }
+}
+
+/// SQLITE_BUSY 判定（journal_mode 变更撞锁时不走 busy handler 的立即返回）
+fn is_busy(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseBusy,
+                ..
+            },
+            _,
+        )
+    )
 }
 
 impl Drop for Store {
     fn drop(&mut self) {
         let _ = self.conn.pragma_update(None, "optimize", 0);
+    }
+}
+
+#[cfg(test)]
+mod concurrent_open_tests {
+    use super::*;
+
+    /// 回归：服务主循环 + Reader 线程并发首开同一新库。journal_mode=WAL
+    /// 变更撞上另一连接的建表事务时 SQLite 可立即返回 BUSY（不走 busy
+    /// handler），曾导致服务线程启动即死（e2e 偶发「打开索引失败」）。
+    /// 修复：Store::open 内整段重试。多线程齐发首开全部必须成功。
+    #[test]
+    fn concurrent_first_open_all_succeed() {
+        let dir = std::env::temp_dir().join(format!("smail-conc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("v.db");
+        let n = 8;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(n));
+        let handles: Vec<_> = (0..n)
+            .map(|_| {
+                let db = db.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Store::open(&db).map(|_| ())
+                })
+            })
+            .collect();
+        let fails: Vec<String> = handles
+            .into_iter()
+            .filter_map(|h| h.join().unwrap().err())
+            .map(|e| e.to_string())
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(fails.is_empty(), "并发首开有失败：{fails:?}");
     }
 }
 
