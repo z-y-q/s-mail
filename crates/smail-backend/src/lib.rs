@@ -872,6 +872,119 @@ pub fn send_raw_mail(
 mod tests {
     use super::*;
 
+    fn sample_mail() -> OutgoingMail {
+        OutgoingMail {
+            from: "me@local".into(),
+            to: vec!["a@x.com".into(), "b@x.com".into()],
+            cc: vec!["c@x.com".into()],
+            bcc: vec!["secret-bcc@x.com".into()],
+            subject: "主题报告".into(),
+            body: "正文内容".into(),
+            attachments: vec![],
+        }
+    }
+
+    #[test]
+    fn folder_kind_common_names() {
+        use FolderKind::*;
+        assert_eq!(folder_kind("INBOX"), Inbox);
+        assert_eq!(folder_kind("inbox"), Inbox);
+        assert_eq!(folder_kind("Drafts"), Drafts);
+        assert_eq!(folder_kind("my-draft-box"), Drafts);
+        assert_eq!(folder_kind("草稿箱"), Drafts);
+        assert_eq!(folder_kind("Sent"), Sent);
+        assert_eq!(folder_kind("已发送"), Sent);
+        assert_eq!(folder_kind("Junk"), Junk);
+        assert_eq!(folder_kind("Spam"), Junk);
+        assert_eq!(folder_kind("垃圾邮件"), Junk);
+        assert_eq!(folder_kind("Archive"), Archive);
+        assert_eq!(folder_kind("归档"), Archive);
+        assert_eq!(folder_kind("[Gmail]/All Mail"), Archive);
+        assert_eq!(folder_kind("Trash"), Trash);
+        assert_eq!(folder_kind("Deleted Items"), Trash);
+        assert_eq!(folder_kind("已删除"), Trash);
+        assert_eq!(folder_kind("废纸篓"), Trash);
+        assert_eq!(folder_kind("Projects/alpha"), Plain);
+        // 顺序即语义：junk/spam 先于 trash 判定，含 "deleted" 的自定义
+        // 垃圾名（"Deleted-Junk"）归 Junk——与实现顺序一致地钉住
+        assert_eq!(folder_kind("Deleted-Junk"), Junk);
+    }
+
+    #[test]
+    fn backend_new_rejects_missing_password_before_network() {
+        let mut cfg = ImapConfig {
+            host: "127.0.0.1".into(),
+            port: 1143,
+            username: "u".into(),
+            password: None,
+            starttls: false,
+            tls: false,
+            use_oauth2: false,
+        };
+        match MelibBackend::new(&cfg) {
+            Err(BackendError::ConfigError(msg)) => {
+                assert!(msg.contains("密码"), "报错应提示密码：{msg}")
+            }
+            Err(other) => panic!("错误类型不对：{other}"),
+            Ok(_) => panic!("不应成功"),
+        }
+        cfg.use_oauth2 = true;
+        match MelibBackend::new(&cfg) {
+            Err(BackendError::ConfigError(msg)) => assert!(
+                msg.contains("oauth2") || msg.contains("SASL"),
+                "oauth2 提示：{msg}"
+            ),
+            Err(other) => panic!("错误类型不对：{other}"),
+            Ok(_) => panic!("不应成功"),
+        }
+    }
+
+    #[test]
+    fn mime_headers_to_cc_present_and_subject_encoded() {
+        let bytes = build_draft_bytes(&sample_mail(), "<t1@x>").unwrap();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("To: "), "应有 To 头\n{s}");
+        assert!(s.contains("a@x.com") && s.contains("b@x.com"));
+        assert!(s.contains("Cc: c@x.com"));
+        // RFC 2047：非 ASCII 主题必须是 encoded-word（B/Q 编码大小写均可），
+        // 不裸写 UTF-8（严格服务器/客户端会拒收）
+        let subject_line = s.lines().find(|l| l.starts_with("Subject:")).unwrap_or("");
+        let subj_lower = subject_line.to_lowercase();
+        assert!(
+            subj_lower.contains("=?utf-8?b?") || subj_lower.contains("=?utf-8?q?"),
+            "中文主题应 encoded-word：{subject_line}"
+        );
+        assert!(!s.contains("Subject: 主题报告"));
+    }
+
+    #[test]
+    fn mime_bcc_privacy_on_the_wire() {
+        // 属性：发往服务器的字节绝不能含 Bcc 收件人地址（收件人不可见谁被密送）。
+        // OutgoingMail.bcc 的契约：「进信封收件人不进 MIME 头」。lettre 的
+        // transport.send 使用 envelope(RCPT TO 含 bcc) + formatted() 作为 DATA；
+        // 本测试钉住 formatted() 输出不含 bcc 地址——若未来升级 lettre 后
+        // 变了行为，这里会立刻红。
+        let bytes = build_draft_bytes(&sample_mail(), "<t2@x>").unwrap();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(
+            !s.contains("secret-bcc@x.com"),
+            "Bcc 地址泄漏进邮件字节（发途/存 Sent 副本都会泄漏给后续读者）\n{s}"
+        );
+    }
+
+    #[test]
+    fn mime_attachment_multipart_and_filename() {
+        let mut mail = sample_mail();
+        mail.attachments
+            .push(("报表.pdf".into(), b"%PDF-fake".to_vec()));
+        let bytes = build_draft_bytes(&mail, "<t3@x>").unwrap();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("multipart/mixed"));
+        assert!(s.contains("application/pdf"));
+        // 文件名非 ASCII：encoded-word / RFC 2231，不裸写
+        assert!(!s.contains("filename=\"报表\""));
+    }
+
     /// QQ 邮箱真实样本：其他文件夹 = &UXZO1mWHTvZZOQ-（UTF-16BE + base64 + mUTF-7）
     #[test]
     fn folder_names_utf7_roundtrip() {
