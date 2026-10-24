@@ -79,14 +79,38 @@ pub fn html_to_markdown(html: &str) -> String {
     normalized.trim().to_string()
 }
 
+/// 渲染递归深度上限：恶意邮件可嵌套上万层标签。超过后不再下钻——
+/// · 栈安全（递归帧有界）
+/// · 渲染成本 O(宽度×上限) 而非 O(节点数×深度)
+/// · 64 层嵌套已远超人类可读邮件结构，内容丢弃无感知
+const MAX_RENDER_DEPTH: usize = 64;
+
 fn render_children<'a, I>(children: I, out: &mut String, list_depth: usize)
 where
     I: Iterator<Item = ego_tree::NodeRef<'a, Node>>,
 {
+    render_children_d(children, out, list_depth, 0)
+}
+
+fn render_children_d<'a, I>(children: I, out: &mut String, list_depth: usize, depth: usize)
+where
+    I: Iterator<Item = ego_tree::NodeRef<'a, Node>>,
+{
+    if depth > MAX_RENDER_DEPTH {
+        return;
+    }
     for node in children {
         match node.value() {
             Node::Text(t) => {
-                out.push_str(&collapse_ws(t));
+                // 断开 markdown 图片语法：文本里的 ![x](url) 字面量会被下游
+                // iced markdown 渲染成图片并自动外发网络请求，绕过
+                // 「远程图不自动加载」的隐私默认（追踪像素注入面）
+                let collapsed = collapse_ws(t);
+                if collapsed.contains("![") {
+                    out.push_str(&collapsed.replace("![", "!\\["));
+                } else {
+                    out.push_str(&collapsed);
+                }
             }
             Node::Element(el) => {
                 let name = el.name();
@@ -94,7 +118,7 @@ where
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         let level = name[1..].parse::<usize>().unwrap_or(2);
                         let mut inner = String::new();
-                        render_children(node.children(), &mut inner, list_depth);
+                        render_children_d(node.children(), &mut inner, list_depth, depth + 1);
                         block(out);
                         out.push_str(&"#".repeat(level.min(6)));
                         out.push(' ');
@@ -106,7 +130,7 @@ where
                     {
                         // 块级容器：整体作为段落
                         let mut inner = String::new();
-                        render_children(node.children(), &mut inner, list_depth);
+                        render_children_d(node.children(), &mut inner, list_depth, depth + 1);
                         if !inner.trim().is_empty() {
                             block(out);
                             out.push_str(inner.trim());
@@ -114,11 +138,11 @@ where
                         }
                     }
                     "ul" | "ol" => {
-                        render_list(node, name == "ol", out, list_depth);
+                        render_list(node, name == "ol", out, list_depth, depth + 1);
                     }
                     "blockquote" => {
                         let mut inner = String::new();
-                        render_children(node.children(), &mut inner, list_depth);
+                        render_children_d(node.children(), &mut inner, list_depth, depth + 1);
                         block(out);
                         for line in inner.trim().lines() {
                             out.push_str("> ");
@@ -146,7 +170,7 @@ where
                     }
                     "strong" | "b" => {
                         let mut inner = String::new();
-                        render_children(node.children(), &mut inner, list_depth);
+                        render_children_d(node.children(), &mut inner, list_depth, depth + 1);
                         let t = inner.trim();
                         if !t.is_empty() {
                             out.push_str("**");
@@ -156,7 +180,7 @@ where
                     }
                     "em" | "i" => {
                         let mut inner = String::new();
-                        render_children(node.children(), &mut inner, list_depth);
+                        render_children_d(node.children(), &mut inner, list_depth, depth + 1);
                         let t = inner.trim();
                         if !t.is_empty() {
                             out.push('*');
@@ -167,7 +191,7 @@ where
                     "a" => {
                         let href = el.attr("href").unwrap_or("").trim();
                         let mut inner = String::new();
-                        render_children(node.children(), &mut inner, list_depth);
+                        render_children_d(node.children(), &mut inner, list_depth, depth + 1);
                         let label = if inner.trim().is_empty() {
                             href.to_string()
                         } else {
@@ -180,10 +204,10 @@ where
                         }
                     }
                     "table" => {
-                        render_table(node, out, list_depth);
+                        render_table(node, out, depth + 1);
                     }
                     // span/字体标签等：透明透传
-                    _ => render_children(node.children(), out, list_depth),
+                    _ => render_children_d(node.children(), out, list_depth, depth + 1),
                 }
             }
             _ => {}
@@ -196,7 +220,11 @@ fn render_list<'a>(
     ordered: bool,
     out: &mut String,
     depth: usize,
+    render_depth: usize,
 ) {
+    if render_depth > MAX_RENDER_DEPTH {
+        return;
+    }
     let indent = "  ".repeat(depth);
     let mut idx = 1usize;
     let mut wrote = false;
@@ -221,7 +249,7 @@ fn render_list<'a>(
         for child in li.children() {
             match child.value() {
                 Node::Element(el) if el.name() == "ul" || el.name() == "ol" => sublists.push(child),
-                _ => render_children(std::iter::once(child), &mut line, depth),
+                _ => render_children_d(std::iter::once(child), &mut line, depth, render_depth),
             }
         }
         out.push_str(&indent);
@@ -234,13 +262,14 @@ fn render_list<'a>(
                 matches!(sub.value(), Node::Element(e) if e.name() == "ol"),
                 out,
                 depth + 1,
+                render_depth + 1,
             );
         }
     }
 }
 
-fn render_table(table: ego_tree::NodeRef<'_, Node>, out: &mut String, depth: usize) {
-    let _ = depth;
+fn render_table(table: ego_tree::NodeRef<'_, Node>, out: &mut String, render_depth: usize) {
+    let _ = render_depth;
     // html5ever 会自动插入 tbody/thead/tfoot：展开一层再取 tr
     let trs: Vec<_> = table
         .children()
@@ -268,7 +297,7 @@ fn render_table(table: ego_tree::NodeRef<'_, Node>, out: &mut String, depth: usi
                 })
                 .map(|cell| {
                     let mut inner = String::new();
-                    render_children(cell.children(), &mut inner, 0);
+                    render_children_d(cell.children(), &mut inner, 0, render_depth);
                     inner.trim().replace('|', "\\|")
                 })
                 .collect()
@@ -402,5 +431,106 @@ mod tests {
         assert!(md.contains("**SO-20261018-001**"), "{md}");
         assert!(md.contains("- 承运：顺丰速运"), "{md}");
         assert!(md.contains("[物流跟踪]("), "{md}");
+    }
+}
+
+/// 对抗性样本（野邮件是对抗性输入）：XSS/追踪像素/markdown 注入/崩溃鲁棒性
+#[cfg(test)]
+mod adversarial_tests {
+    use super::*;
+
+    /// ammonia 加固面：iframe/form/meta 刷新/svg 载荷/base 注入/实体编码
+    /// javascript/data URI/内联 style 的 url()——全部不得进输出
+    #[test]
+    fn hostile_html_never_reaches_output() {
+        let samples = [
+            r#"<iframe src="https://evil.example.com"></iframe>"#,
+            r#"<form action="https://phish.example.com"><input type=submit></form>"#,
+            r#"<meta http-equiv="refresh" content="0;url=https://evil.example.com">"#,
+            r#"<svg onload="evil()"><circle r=1/></svg>"#,
+            r#"<base href="https://evil.example.com/">"#,
+            r#"<a href="&#106;avascript:evil()">实体编码 js 协议</a>"#,
+            r#"<a href="jAvAsCrIpT:evil()">大小混淆</a>"#,
+            r#"<a href="data:text/html;base64,PHNjcmlwdD4">data 协议</a>"#,
+            r#"<p style="background:url(https://track.example.com/x.gif)">样式追踪</p>"#,
+            r#"<script src="https://evil.example.com/x.js"></script>"#,
+        ];
+        for s in samples {
+            let md = html_to_markdown(s);
+            let low = md.to_lowercase();
+            assert!(!low.contains("evil.example.com"), "追踪域外泄：{s} → {md}");
+            assert!(!low.contains("javascript:"), "js 协议外泄：{s} → {md}");
+            assert!(!low.contains("onload"), "事件属性外泄：{s} → {md}");
+        }
+    }
+
+    /// 远程图提取只认 http/https：cid: 内嵌与 javascript: 伪图不进列表
+    #[test]
+    fn remote_img_urls_extraction_rules() {
+        let html = r#"<img src="https://a.example.com/1.gif">
+                      <img src="http://a.example.com/2.gif">
+                      <img src="cid:part1.abc">
+                      <img src="javascript:evil()">
+                      <img src="data:image/png;base64,xx">
+                      <img src=" HTTPS://UPPER.example.com/x.gif ">"#;
+        let urls = remote_img_urls(html);
+        assert_eq!(urls.len(), 2, "{urls:?}");
+        assert!(urls.iter().all(|u| u.starts_with("http")), "{urls:?}");
+    }
+
+    /// markdown 注入面：文本节点里的 ![img](url) 会被下游 iced markdown
+    /// 渲染成图片并自动外发网络请求——绕过「远程图不自动加载」的隐私
+    /// 默认。html_to_markdown 必须断开图片语法（![ 前加反斜杠）。
+    #[test]
+    fn markdown_image_syntax_in_text_is_broken() {
+        let md = html_to_markdown(r#"<p>正文 ![pixel](https://track.example.com/p.gif) 尾</p>"#);
+        assert!(
+            !md.contains("![pixel]"),
+            "markdown 图片语法未断开（远程图自动加载绕过）：{md}"
+        );
+        // 断开后追踪 URL 仍可见于文本（供人工判断），但不构成图片语法
+        assert!(md.contains("track.example.com"), "应保留可见文本：{md}");
+    }
+
+    /// 崩溃鲁棒性：恶意邮件可嵌套上万层标签。渲染递归有 MAX_RENDER_DEPTH
+    /// 保护（栈有界 + 渲染成本 O(宽度×上限)）；html5ever/ammonia 解析成本
+    /// ~n^1.8（第三方，已知边界——在 Reader 线程一次性付出，UI 不卡）。
+    /// 用现实对抗规模钉住：不崩溃、栈不溢出。
+    #[test]
+    fn pathological_deep_nesting_does_not_crash() {
+        let n = 3_000;
+        // 浅层正文 + 万层嵌套：渲染不崩溃（栈有界），浅层内容保留，
+        // 超深内容按设计丢弃（人类邮件不会嵌 64 层以上）
+        let html = format!(
+            "<p>浅层正文</p>{}<p>最深处</p>{}",
+            "<div>".repeat(n),
+            "</div>".repeat(n)
+        );
+        let md = html_to_markdown(&html); // 栈溢出 = 测试进程 abort（红）
+        assert!(md.contains("浅层正文"), "{md}");
+        assert!(
+            !md.contains("最深处"),
+            "超深内容应被丢弃：{}…",
+            &md[..md.len().min(60)]
+        );
+
+        // 嵌套列表递归（render_list 路径）同样受保护
+        let list_html = format!("{}<li>x</li>{}", "<ul>".repeat(n), "</ul>".repeat(n));
+        let _ = html_to_markdown(&list_html);
+
+        // 不平衡标签（未闭合）同样不崩溃
+        let _ = html_to_markdown(&"<div>".repeat(n));
+    }
+
+    /// 深度上限不误伤正常邮件：64 层以内的嵌套内容完整保留
+    #[test]
+    fn normal_nesting_depth_still_rendered() {
+        let mut html = String::new();
+        for _ in 0..60 {
+            html.push_str("<div>");
+        }
+        html.push_str("<p>六十层内的正文</p>");
+        let md = html_to_markdown(&html);
+        assert!(md.contains("六十层内的正文"), "{md}");
     }
 }
