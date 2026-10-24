@@ -2,6 +2,24 @@
 
 本项目遵守语义化版本。0.x 阶段以里程碑为节奏，以下按版本累积记录用户可感知的变更。
 
+## [0.1.5] — 2026-10-24
+
+### 工程版本（产品行为与 0.1.4 一致）——仓库首次全绿 CI
+
+本版无产品功能变更，全部为 CI/工程基建（12 轮 run 排障）：
+
+- **CI 全绿**（历史上首次）：lint / test(macOS+Linux) / check-windows /
+  perf / e2e（14 个全链路）
+- Linux bind mount 权限链路修复（dovecot 容器是 distroless，chmod
+  须宿主侧且只处理自己属主的文件）——e2e 自 run #1 起看不见邮件的根因
+- m11 补 XOAUTH2 翻译代理（本地残留进程撞巧掩盖）；m5 改自播种
+- clippy 1.99 全量清零（本地安装同版工具链预检，不再 CI 打地鼠）
+- Windows 支持如实标注：被 melib 上游阻塞（fcntl），门禁仅覆盖
+  平台无关 crate
+- 代码整洁（行为中立）：sort_by_key ×4、match guard 折叠 ×6、
+  macOS 专用代码 cfg 限定（tray/keychain hex/PDF 分支）
+- config.toml（dovecot 测试配置）入库，CI 可复现
+
 ## [0.1.4] — 2026-10-24
 
 ### 修复（同步假死——e2e 偶发红排查中发现的存量 bug）

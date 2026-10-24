@@ -6474,7 +6474,7 @@ dependencies = [
 
 [[package]]
 name = "smail-ai"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -6484,7 +6484,7 @@ dependencies = [
 
 [[package]]
 name = "smail-backend"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "futures",
  "futures-timer",
@@ -6500,7 +6500,7 @@ dependencies = [
 
 [[package]]
 name = "smail-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -6523,7 +6523,7 @@ dependencies = [
 
 [[package]]
 name = "smail-store"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "rusqlite",
  "thiserror 2.0.21",
@@ -6531,7 +6531,7 @@ dependencies = [
 
 [[package]]
 name = "smail-ui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "iced",
  "mac-notification-sys",
@@ -6686,28 +6686,28 @@ dependencies = [
 
 [[package]]
 name = "spike-fts"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "rusqlite",
 ]
 
 [[package]]
 name = "spike-ime"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "iced",
 ]
 
 [[package]]
 name = "spike-list"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "iced",
 ]
 
 [[package]]
 name = "spike-melib"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "env_logger",
  "futures",
