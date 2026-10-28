@@ -98,9 +98,10 @@ impl ServiceInner {
                         }
                     }
                 }
-                // 正文管线（网络 FETCH + PGP + 解析 + PDF 缩略图）分流到 Reader 线程：
-                // 大附件取拉期间命令循环照常处理同步/写命令，不再整循环停摆
-                let _ = self.read_tx.send(hash);
+                // 正文管线（网络 FETCH + PGP + 解析 + PDF 缩略图）在 Reader 线程执行，
+                // 正文请求已由 UI 直通该线程的 read_tx 发送（绕过本命令队列，长同步
+                // 期间也能秒出缓存正文）。本命令只承担 seen 上推职责——在这里
+                // 再转发一次会让同一封正文解析两遍（第二次回包被 UI 丢弃，纯浪费）
             }
             Cmd::SendMail {
                 to,

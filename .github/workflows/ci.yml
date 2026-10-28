@@ -22,6 +22,12 @@ jobs:
       - name: clippy（零警告门禁；排除 spikes——原型代码不进门禁，
           且 spike-melib 的 maildir/imap-trace 特性会与主构建合并拉长编译）
         run: cargo clippy --workspace --exclude spike-fts --exclude spike-ime --exclude spike-list --exclude spike-melib --all-targets -- -D warnings
+      - name: vendor 补丁完整性（升级 melib 被覆盖即红）
+        run: |
+          imap=$(grep -c "s-mail patch" vendor/melib/src/imap/mod.rs || true)
+          net=$(grep -c "s-mail patch" vendor/melib/src/utils/connections/std_net.rs || true)
+          echo "imap/mod.rs 标记 $imap 处（需 4：expunge_mailbox + 三处映射缺失改 Err）；std_net.rs $net 处（需 1）"
+          [ "$imap" -eq 4 ] && [ "$net" -eq 1 ]
 
   test:
     strategy:
@@ -200,3 +206,13 @@ jobs:
           python3 spikes/spike-melib/imap-test/mock_xoauth2_proxy.py 11143 1143 /tmp/xoauth2-sasl.log &
           sleep 2
           timeout 90 ./target/debug/examples/m11 60
+      - name: m19 废纸篓清空 e2e（整箱 EXPUNGE；m11 已重置容器含种子）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m19
+        run: timeout 120 ./target/debug/examples/m19 80
+      - name: m20 归档/标垃圾/移废纸篓/整箱清空 e2e（各文件夹写链路）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m20
+        run: timeout 120 ./target/debug/examples/m20 80

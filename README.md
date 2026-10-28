@@ -9,7 +9,7 @@
 
 | 能力 | 状态 |
 |---|---|
-| 多账号 IMAP 收信（IDLE 实时推送、断线指数退避重连、CONDSTORE/QRESYNC 增量同步） | ✅ |
+| 多账号 IMAP 收信（IDLE 实时推送、断线指数退避重连、全量信封同步 + 本地索引缓存兜底显示） | ✅ |
 | 统一收件箱（多账号 INBOX 聚合 + 未读总数 + 快速过滤 未读/星标 + 排序切换） | ✅ |
 | SMTP 发信（outbox 队列、Sent 归档、flags 双向同步、密送 Bcc、签名、一键退订） | ✅ |
 | XOAUTH2 现代认证（Gmail / Outlook 设备流，token 自动刷新） | ✅ |

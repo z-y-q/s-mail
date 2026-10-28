@@ -54,12 +54,15 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
                 }
             } else if let Screen::Setup(f) = &mut state.screen {
                 // 表单有内容时 Esc 不直接关屏（清输入框的习惯性 Esc 会丢整张表单）；
-                // 首次提示，再按一次才退出，任意编辑动作重置
+                // 首次提示，再按一次才退出，任意编辑动作重置。
+                // OAuth 字段（client_id/secret）同样计入——丢了要去云控制台翻
                 let dirty = !f.email.is_empty()
                     || !f.name.is_empty()
                     || !f.password.is_empty()
                     || !f.imap_host.is_empty()
-                    || !f.smtp_host.is_empty();
+                    || !f.smtp_host.is_empty()
+                    || !f.client_id.is_empty()
+                    || !f.client_secret.is_empty();
                 if dirty && !f.esc_guard {
                     f.esc_guard = true;
                 } else {

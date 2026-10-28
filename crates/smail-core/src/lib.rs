@@ -172,7 +172,6 @@ impl AccountService {
                 zh: zh_flag,
                 backend_slot,
                 backend_ready,
-                read_tx,
                 events: event_tx,
                 stop: stop_flag,
                 folders_ready: std::cell::Cell::new(false),
@@ -228,8 +227,6 @@ struct ServiceInner {
     backend_slot: Arc<std::sync::RwLock<Option<Arc<dyn MailBackend>>>>,
     /// backend 就绪通知：连接成功时 notify Reader 线程（P2 优化：Condvar 替代轮询）
     backend_ready: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-    /// Reader 线程请求端：OpenMessage 分流（hash）
-    read_tx: Sender<i64>,
     events: tokio::sync::mpsc::UnboundedSender<Event>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// 文件夹映射已就绪（apply_rules 首次需要；之后避免冗余 LIST 往返）。

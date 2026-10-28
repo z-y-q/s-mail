@@ -2,14 +2,25 @@ name: vendor-watch
 
 # vendored melib 补丁的上游监控（每周一 03:00 UTC + 手动）。
 #
-# 背景：vendor/melib 基于 0.8.13 打了 macOS Happy-Eyeballs EISCONN 竞态补丁
-# （非阻塞 connect 完成后 SO_ERROR 残留 EISCONN，二次 connect 返回 EISCONN
-# 被误判失败 → macOS 进入 EINPROGRESS 路径的连接必挂，OS error 56）。
-# 详见根 Cargo.toml [patch.crates-io] 注释。
+# vendor/melib 基于 0.8.13 打了两类补丁，升级 melib 时逐项对照
+# （vendor/melib/src/imap/mod.rs 与 utils/connections/std_net.rs 搜
+# 's-mail patch'，CI lint 作业校验标记数量，缺一即红）：
 #
-# 探测启发式：上游修复该问题时 std_net.rs 必然出现 EISCONN 字样
-# （当前上游 master 的 poll_once 对二次 connect 的 Err 一律 set_error，未修）。
-# 修了 → 本 workflow 变红提醒撤销 vendor；forge 不可达 → 黄色警告不误报。
+# 1. macOS Happy-Eyeballs EISCONN 竞态（std_net.rs）：非阻塞 connect
+#    完成后 SO_ERROR 残留 EISCONN，二次 connect 返回 EISCONN 被误判
+#    失败 → macOS 进入 EINPROGRESS 路径的连接必挂（OS error 56）。
+#    详见根 Cargo.toml [patch.crates-io] 注释。
+#    探测启发式：上游修复该问题时 std_net.rs 必然出现 EISCONN 字样
+#    （当前上游 master 的 poll_once 对二次 connect 的 Err 一律 set_error，未修）。
+#    修了 → 本 workflow 变红提醒撤销 vendor；forge 不可达 → 黄色警告不误报。
+#
+# 2. 写操作静默假成功（imap/mod.rs，4 处标记）：
+#    a) ImapType::expunge_mailbox——整箱物理清空（清空废纸篓用），
+#       上游 MailBackend 只有依赖 hash→UID 映射的 delete_messages；
+#    b/c/d) set_flags / copy_messages / delete_messages 的 uids 为空
+#       分支由「静默返回 Ok」改为「返回 Err」——上游行为会让标记/移动/
+#       删除的空转变成功，上层回放队列与错误横幅全部失效。
+#    上游不会自己改成 Err（属行为变更），升级 melib 时手工重打这四处。
 
 on:
   schedule:

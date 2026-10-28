@@ -138,7 +138,10 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 关键点：
 1. **首屏快**：初始同步只拉 ENVELOPE + UID + FLAGS（一条邮件几百字节），正文懒加载（打开时 `fetch_full`）
 2. **推送**：IMAP IDLE 长连接（每账号 1 条到 INBOX，其余文件夹轮询或 QQ/Gmail 支持的特殊通知）
-3. **增量**：优先 `QRESYNC`/`CONDSTORE`（modseq），服务器不支持时降级 `UID SEARCH UNSEEN` + UIDVALIDITY 处理
+3. **同步粒度**：全量信封 FETCH（melib 的 sqlite 离线缓存已关闭——其缓存回放
+   不填充 hash→UID 映射，会让删除/标记/移动静默空转假成功，见 CHANGELOG；
+   个人邮箱量级下全量代价可接受，大邮箱的增量方向是 store 侧记录各文件夹
+   uidnext 做区间拉取）
 4. **离线写**：删信/标记星标先写本地 + 操作队列，联网后回放；冲突以服务器为准（tombstone 记录本端删除意图）
 5. **全文索引**：后台线程逐条解析 maildir 并喂 FTS5，空闲时进行，避免抢占 UI
 
