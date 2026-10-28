@@ -25,9 +25,14 @@ publish = false
 
 [workspace.dependencies]
 # melib 钉子链（round-3 风险表 R8：pre-release 漂移会编译崩，升级 melib 时同步重估）
-# sqlite3：启用 melib IMAP 离线缓存 → fetch 走 CONDSTORE/QRESYNC 增量（对上层仍全量返回）。
-# rusqlite 统一 0.37 与 melib 共用单份 bundled SQLite（lock 中仅一个 libsqlite3-sys）
-melib = { version = "0.8", default-features = false, features = ["imap", "sqlite3"] }
+# sqlite3 已关：melib 的 IMAP sqlite 缓存回放（InitialCache）不填充 hash→UID
+# 映射（uid_store.hash_index 只由真实 FETCH 响应填充），而 melib 的删除/标记/
+# 移动全部依赖该映射，映射缺失时 uids 为空**静默返回成功**——表现为清空废纸篓、
+# 删除、已读上推全部假成功，下次同步邮件/未读「复活」。关掉缓存后每次 fetch
+# 走真实 FETCH（全量），映射永远齐全，写操作不再有静默空转；列表显示由
+# UI 本地索引缓存兜底，网络延迟不拖累界面。
+# rusqlite 统一 0.37（smail-store 自用 bundled SQLite）
+melib = { version = "0.8", default-features = false, features = ["imap"] }
 imap-codec = "=2.0.0-alpha.4"
 imap-types = "=2.0.0-alpha.3"
 rusqlite = { version = "0.37", features = ["bundled"] }

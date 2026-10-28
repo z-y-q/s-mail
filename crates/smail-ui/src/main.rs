@@ -144,6 +144,8 @@ pub(crate) enum Message {
     NotificationClicked(notify::NotifyClick),
     SendClicked,
     SaveDraftClicked,
+    /// 写信屏快捷键（⌘↩ 发送 / ⌘S 存草稿；订阅层从修饰键组合里分拣）
+    ComposeShortcut(ComposeKey),
     DraftRowClicked(usize, i64),
     /// 发件箱：重发 / 删除
     OutboxRetry(i64),
@@ -300,6 +302,11 @@ pub(crate) enum Message {
     // ---- B6：账号密码入系统钥匙串 ----
     /// 把该账号的明文 IMAP/SMTP 密码迁入钥匙串，config 改存标记
     KeychainMove(usize),
+    // ---- 同步间隔（账号级 sync_config；内联编辑两态模式） ----
+    SyncEditOpen(usize),
+    SyncEditInput(String),
+    SyncEditSave,
+    SyncEditCancel,
     // ---- 第 1 批标配：退订 / 归档 / 导出 ----
     /// List-Unsubscribe 退订（http URL 开浏览器；mailto 预填写信）
     Unsubscribe(String),
@@ -335,6 +342,13 @@ pub(crate) enum Field {
     Cc,
     Bcc,
     Subject,
+}
+
+/// 写信屏快捷键动作（⌘↩ / ⌘S）
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ComposeKey {
+    Send,
+    SaveDraft,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -418,10 +432,25 @@ fn cli_auth(args: &[String]) -> Result<(), String> {
 }
 
 fn subscription(state: &State) -> Subscription<Message> {
-    // 系统主题变化（跟随模式）+ 键盘（无修饰键才处理，避免劫持快捷键）
+    // 系统主题变化（跟随模式）+ 键盘（无修饰键才处理，避免劫持快捷键；
+    // ⌘/Ctrl 组合单独分拣出写信屏的发送/存草稿）
     let keyboard = iced::keyboard::listen().filter_map(|e| match e {
-        iced::keyboard::Event::KeyPressed { key, modifiers, .. } if modifiers.is_empty() => {
-            Some(Message::KeyPressed(key))
+        iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+            if modifiers.is_empty() {
+                Some(Message::KeyPressed(key))
+            } else if modifiers.command() {
+                match &key {
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                        Some(Message::ComposeShortcut(crate::ComposeKey::Send))
+                    }
+                    iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
+                        Some(Message::ComposeShortcut(crate::ComposeKey::SaveDraft))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
         }
         _ => None,
     });
@@ -659,6 +688,22 @@ pub(crate) fn unix_to_local(ts: i64) -> String {
     let mth = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if mth <= 2 { y + 1 } else { y };
     format!("{y:04}-{mth:02}-{d:02} {h:02}:{m:02}:{s:02}")
+}
+
+/// 列表行短日期：同年显示「MM-DD HH:MM」，往年只显示「YYYY-MM-DD」。
+/// 列宽有限，完整秒级时间在阅读页头部（两处都走同一本地时钟，年份可直接比）
+pub(crate) fn unix_to_local_short(ts: i64) -> String {
+    let full = unix_to_local(ts);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let now_full = unix_to_local(now);
+    if now_full.as_bytes().get(..4) == full.as_bytes().get(..4) {
+        full.get(5..16).unwrap_or(&full).to_string()
+    } else {
+        full.get(..10).unwrap_or(&full).to_string()
+    }
 }
 
 #[cfg(test)]

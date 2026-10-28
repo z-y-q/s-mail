@@ -110,7 +110,7 @@ pub(crate) struct SetupForm {
 
 impl SetupForm {
     pub(crate) fn new() -> Self {
-        Self {
+        let mut f = Self {
             preset: Preset::QQ,
             name: String::new(),
             email: String::new(),
@@ -127,7 +127,10 @@ impl SetupForm {
             save_pending: false,
             force_save: false,
             esc_guard: false,
-        }
+        };
+        // 默认 QQ 预设：进页面即预填服务器与端口（以前要点一次页签才填）
+        f.apply_preset();
+        f
     }
     pub(crate) fn apply_preset(&mut self) {
         let (ih, ip, sh, sp) = match self.preset {
@@ -183,7 +186,8 @@ fn setup_field<'a>(
     fld: SetupField,
     secure: bool,
 ) -> Element<'a, Message> {
-    labeled_field(label, 72.0, placeholder, value, secure, move |v| {
+    // 96px：最长标签「密码/授权码」「SMTP 服务器」单行放下，不再折行错位
+    labeled_field(label, 96.0, placeholder, value, secure, move |v| {
         Message::SetupField(fld, v)
     })
 }
@@ -361,7 +365,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
             Some(Message::SetupTest)
         })
         .padding([5, 12])
-        .style(theme::ghost_button),
+        .style(theme::outline_button),
         button(text(save_label).size(13))
             .on_press_maybe(if f.save_pending {
                 None
@@ -383,7 +387,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         )
         .on_press(Message::SetupClose)
         .padding([5, 12])
-        .style(theme::ghost_button),
+        .style(theme::outline_button),
     );
 
     let mut list_col = column![text(state.l().have_accounts)
@@ -407,22 +411,26 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         list_col = list_col.push(
             row![
                 text(format!(
-                    "{} · {}{}{}",
+                    "{} · {}{}",
                     a.name,
                     a.imap.username,
                     if pgp_on { " · PGP✓" } else { "" },
-                    if kc_on { " · 🔑✓" } else { "" },
                 ))
                 .size(12),
                 Space::new().width(Length::Fill),
-                button(text(if kc_on { "🔑✓" } else { "🔑" }).size(12))
+                button(text(if kc_on {
+                    state.l().keychain_on
+                } else {
+                    state.l().keychain_off
+                })
+                .size(12))
                     .on_press(Message::KeychainMove(i))
                     .padding([2, 8])
                     .style(move |t, st| {
                         if kc_on {
                             theme::accent_button(t, st)
                         } else {
-                            theme::ghost_button(t, st)
+                            theme::outline_button(t, st)
                         }
                     }),
                 button(text("PGP").size(12))
@@ -439,6 +447,10 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                     .on_press(Message::SignatureEditOpen(i))
                     .padding([2, 8])
                     .style(theme::ghost_button),
+                button(text(state.l().sync_interval_btn).size(12))
+                    .on_press(Message::SyncEditOpen(i))
+                    .padding([2, 8])
+                    .style(theme::ghost_button),
                 button(text(state.l().delete_short).size(12))
                     .on_press(Message::SetupDelete(i))
                     .padding([2, 8])
@@ -446,6 +458,42 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
             ]
             .spacing(8),
         );
+        // 同步间隔内联编辑（同 PGP/签名的两态模式）
+        if let Some((sa, raw)) = &state.sync_edit {
+            if *sa == i {
+                list_col = list_col.push(
+                    container(
+                        column![
+                            text(state.l().sync_interval_label).size(11),
+                            row![
+                                text_input(state.l().sync_interval_ph, raw)
+                                    .on_input(Message::SyncEditInput)
+                                    .on_submit(Message::SyncEditSave)
+                                    .size(12)
+                                    .width(120)
+                                    .padding(4),
+                                button(text(state.l().save).size(12))
+                                    .on_press(Message::SyncEditSave)
+                                    .padding([3, 10])
+                                    .style(theme::accent_button),
+                                button(text(state.l().cancel).size(12))
+                                    .on_press(Message::SyncEditCancel)
+                                    .padding([3, 8])
+                                    .style(theme::ghost_button),
+                            ]
+                            .spacing(6),
+                            text(state.l().sync_interval_hint)
+                                .size(10)
+                                .style(theme::secondary_text),
+                        ]
+                        .spacing(4),
+                    )
+                    .padding(8)
+                    .width(Length::Fill)
+                    .style(theme::reader_meta),
+                );
+            }
+        }
         // PGP 内联编辑（同文件夹新建/改名的两态模式）
         if let Some((ea, f)) = &state.pgp_edit {
             if *ea == i {
@@ -503,15 +551,22 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
             .get(*acct)
             .cloned()
             .unwrap_or_else(|| crate::lang::f(state.l().acct_n, &[&acct]));
+        // 展示层按归一化邮箱合并：老库里大小写/空白变体的重复行收敛为一行
+        //（新写入已在 upsert 时归一化，这里兜底历史数据）
+        let mut seen: std::collections::HashSet<String> = Default::default();
+        let deduped: Vec<&smail_store::ContactRow> = rows
+            .iter()
+            .filter(|c| seen.insert(c.email.trim().to_lowercase()))
+            .collect();
         contacts_col = contacts_col.push(
             text(crate::lang::f(
                 state.l().contacts_n,
-                &[&acct_name, &rows.len()],
+                &[&acct_name, &deduped.len()],
             ))
             .size(11)
             .style(theme::secondary_text),
         );
-        for c in rows.iter().take(50) {
+        for c in deduped.iter().take(50) {
             let display = if c.name.is_empty() {
                 c.email.clone()
             } else {
@@ -529,9 +584,9 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                 .spacing(4),
             );
         }
-        if rows.len() > 50 {
+        if deduped.len() > 50 {
             contacts_col = contacts_col.push(
-                text(crate::lang::f(state.l().contacts_more, &[&rows.len()]))
+                text(crate::lang::f(state.l().contacts_more, &[&deduped.len()]))
                     .size(10)
                     .style(theme::secondary_text),
             );

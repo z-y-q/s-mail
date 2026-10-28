@@ -687,3 +687,54 @@ mod recipient_tests {
         assert_eq!(cc, "cc1@x");
     }
 }
+
+/// 正文直通的核心保证：本地已缓存的正文（bodies/<hash>.eml）服务时
+/// 绝不触碰网络——backend 槽故意留 None，若管线走到网络路径只会回
+/// 「未连接」状态而不是正文。这是「主循环堵在长同步里正文照样秒出」的根
+#[test]
+fn reader_serves_cached_body_without_backend() {
+    use crate::reader::ReaderCtx;
+    use smail_store::MessageRow;
+    use std::sync::Arc;
+
+    let dir = std::env::temp_dir().join(format!("smail-reader-cache-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("bodies")).unwrap();
+    let store = smail_store::Store::open(&dir.join("index.db")).unwrap();
+    let row = MessageRow {
+        envelope_hash: 42,
+        folder: "INBOX".into(),
+        message_id: "<m@x>".into(),
+        subject: "s".into(),
+        from_addr: "a@b".into(),
+        date_unix: 0,
+        seen: false,
+        flagged: false,
+        has_body: true,
+        in_reply_to: String::new(),
+    };
+    store.upsert(&row).unwrap();
+    let eml = b"From: a@b\r\nSubject: s\r\n\r\ncached body text\r\n";
+    std::fs::write(dir.join("bodies").join("42.eml"), eml).unwrap();
+
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let reader = ReaderCtx::new(
+        // backend 槽留 None：缓存命中路径必须完全不碰它
+        Arc::new(std::sync::RwLock::new(None)),
+        event_tx,
+        dir.clone(),
+        None,
+        Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        std::time::Duration::ZERO,
+        Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
+    );
+    reader.serve(&store, 42);
+    // blocking_recv 只依赖 sync feature（本 crate 未开 rt）
+    let ev = event_rx.blocking_recv();
+    match ev {
+        Some(crate::Event::BodyLoaded { body, .. }) => {
+            assert!(body.contains("cached body text"), "{body}");
+        }
+        other => panic!("缓存正文应回 BodyLoaded，实际 {other:?}"),
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -143,6 +143,19 @@ impl Store {
         }
     }
 
+    /// 只读连接（UI 切文件夹时直读本地索引，不等服务线程从长同步里回头）。
+    /// 不建表不迁移：库不存在即报错——调用方据此判定「无缓存」。
+    /// busy_timeout 照设：服务线程写事务期间 UI 读等锁而不是报错；
+    /// 写方法在只读连接上直接 SQLITE_READONLY，快速失败不静默
+    pub fn open_readonly(path: &Path) -> rusqlite::Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.pragma_update(None, "busy_timeout", 5000)?;
+        Ok(Self { conn })
+    }
+
     /// 初始化序列（WAL + 建表 + v1~v7 迁移）：全部幂等，可重入
     fn init(conn: &Connection) -> rusqlite::Result<()> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -575,5 +588,25 @@ mod tests {
         assert_eq!(got[1].0, "张三 <zhang@x.com>");
         assert_eq!(got[1].1, 100, "同发件人取最近一封的时间");
         assert_eq!(s.recent_senders(1).unwrap().len(), 1, "limit 生效");
+    }
+
+    /// 通讯录写入归一化：大小写/空白变体的同一地址只留一行（UNIQUE(email) 收敛）
+    #[test]
+    fn contacts_upsert_normalizes_email_case() {
+        let s = mem("contacts-norm");
+        s.upsert_contacts_batch(&[
+            ("announce@m.parallels.com".into(), "Parallels".into()),
+            ("  ANNOUNCE@m.parallels.com ".into(), "Parallels".into()),
+            ("1299675389@qq.com".into(), "我".into()),
+            ("1299675389@QQ.com".into(), "我".into()),
+        ])
+        .unwrap();
+        let full = s.list_contacts_full().unwrap();
+        assert_eq!(full.len(), 2, "变体合并为一行：{full:?}");
+        let emails: Vec<&str> = full.iter().map(|c| c.email.as_str()).collect();
+        assert!(emails.contains(&"announce@m.parallels.com"), "{emails:?}");
+        assert!(emails.contains(&"1299675389@qq.com"), "{emails:?}");
+        // 名字非空才覆盖：后到的同名变体不把已有名字洗掉
+        assert!(full.iter().all(|c| !c.name.is_empty()), "{full:?}");
     }
 }

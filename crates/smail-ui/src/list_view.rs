@@ -11,7 +11,7 @@
 use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{Element, Length};
 
-use crate::{list, theme, unix_to_local, DispKind, ListFilter, Message, State};
+use crate::{list, theme, unix_to_local_short, DispKind, ListFilter, Message, State};
 
 const ROW_H: f32 = list::ROW_H;
 const BUFFER: usize = 12;
@@ -54,10 +54,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 .style(theme::accent_button),
             text("s-mail").size(16),
             button(
+                // 显示当前模式（点击切换）：「会话视图 ⇄ 平铺视图」一眼自明
                 text(if state.nav.threaded {
-                    state.l().view_flat
-                } else {
                     state.l().view_threads
+                } else {
+                    state.l().view_flat
                 })
                 .size(12)
             )
@@ -75,9 +76,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             Space::new().width(Length::Fill),
             button(
                 text(if matches!(state.prefs.ui_theme, iced::Theme::Dark) {
-                    "☀️"
+                    "☀"
                 } else {
-                    "🌙"
+                    "☾"
                 })
                 .size(13),
             )
@@ -247,12 +248,13 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     text(format!(
                         "{}{}{} {}",
                         "  ".repeat(depth),
+                        // 单色字形（彩色 emoji 与暗色主题混排突兀）
                         match f.kind {
-                            smail_core::FolderKind::Inbox => "📥",
-                            smail_core::FolderKind::Sent => "📤",
-                            smail_core::FolderKind::Junk => "🚫",
-                            smail_core::FolderKind::Archive => "🗄",
-                            smail_core::FolderKind::Trash => "🗑",
+                            smail_core::FolderKind::Inbox => "⇩",
+                            smail_core::FolderKind::Sent => "⇧",
+                            smail_core::FolderKind::Junk => "⊘",
+                            smail_core::FolderKind::Archive => "▤",
+                            smail_core::FolderKind::Trash => "⌫",
                             _ => " ",
                         },
                         if is_cur { "▸" } else { " " },
@@ -268,29 +270,29 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .padding([3, 6])
             .width(Length::Fill)
             .style(move |t, st| theme::sidebar_item(t, st, is_cur));
-            // M7：非 INBOX 行尾加改名/删除小按钮（与主按钮并列，避免嵌套按钮吞事件）
-            let ren: Option<Element<Message>> = if f.path.eq_ignore_ascii_case("INBOX") {
-                None
-            } else {
-                Some(
-                    button(text("✎").size(10))
-                        .on_press(Message::RenameFolderOpen(i, f.path.clone()))
-                        .padding([2, 4])
-                        .style(theme::ghost_button)
-                        .into(),
-                )
-            };
-            let del: Option<Element<Message>> = if f.path.eq_ignore_ascii_case("INBOX") {
-                None
-            } else {
-                Some(
-                    button(text("✕").size(10))
-                        .on_press(Message::AskFolderDelete(i, f.path.clone()))
-                        .padding([2, 4])
-                        .style(button::danger)
-                        .into(),
-                )
-            };
+            // 改名/删除只给自建文件夹（Plain）。标准文件夹（收发/垃圾/废纸篓/
+            // 归档）是服务器结构，行尾常驻红 ✕ 既危险又不可用——一律不显示
+            let (ren, del): (Option<Element<Message>>, Option<Element<Message>>) =
+                if f.kind == smail_core::FolderKind::Plain {
+                    (
+                        Some(
+                            button(text("✎").size(10))
+                                .on_press(Message::RenameFolderOpen(i, f.path.clone()))
+                                .padding([2, 4])
+                                .style(theme::ghost_button)
+                                .into(),
+                        ),
+                        Some(
+                            button(text("✕").size(10))
+                                .on_press(Message::AskFolderDelete(i, f.path.clone()))
+                                .padding([2, 4])
+                                .style(theme::ghost_button)
+                                .into(),
+                        ),
+                    )
+                } else {
+                    (None, None)
+                };
             let mut folder_row = row![].spacing(2).width(Length::Fill);
             folder_row = folder_row.push(folder_btn);
             if let Some(r) = ren {
@@ -770,9 +772,18 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                 column![
                                     row![
                                         star_txt,
+                                        // 展开箭头只给多封会话（单封画箭头纯属噪音）
                                         text(format!(
                                             "{} {}{badge}",
-                                            if expanded_now { "▾" } else { "▸" },
+                                            if *count > 1 {
+                                                if expanded_now {
+                                                    "▾"
+                                                } else {
+                                                    "▸"
+                                                }
+                                            } else {
+                                                " "
+                                            },
                                             if *unseen { "●" } else { "" },
                                         ))
                                         .size(13),
@@ -784,7 +795,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                             })
                                         ),
                                         Space::new().width(Length::Fill),
-                                        text(unix_to_local(*last_date))
+                                        text(unix_to_local_short(*last_date))
                                             .size(11)
                                             .style(theme::secondary_text),
                                     ],
@@ -823,7 +834,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                         star_txt,
                                         text(format!("↳ {}", r.subject)).size(12),
                                         Space::new().width(Length::Fill),
-                                        text(unix_to_local(r.date_unix))
+                                        text(unix_to_local_short(r.date_unix))
                                             .size(10)
                                             .style(theme::secondary_text),
                                     ],
@@ -870,7 +881,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                             .size(13)
                                             .font(theme::ui_font(subj_weight)),
                                         Space::new().width(Length::Fill),
-                                        text(unix_to_local(r.date_unix))
+                                        text(unix_to_local_short(r.date_unix))
                                             .size(11)
                                             .style(theme::secondary_text),
                                     ],
@@ -906,8 +917,23 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         }
     }
     if !is_drafts && mail_display.is_empty() && !state.nav.in_search {
+        // 空态三分：账号缺失 / 同步在途 / 数据被过滤；
+        // 列表真空了但服务器报着未读 → 给「重新同步」出口（否则徽标和
+        // 空列表互相打脸，用户不知道信在哪）
+        let cur_unseen: u32 = match &state.nav.cur {
+            Some((a, f)) => state
+                .nav
+                .folders
+                .iter()
+                .filter(|(fa, fi)| fa == a && &fi.path == f)
+                .map(|(_, fi)| fi.unseen)
+                .sum(),
+            None => 0,
+        };
         let (icon, msg): (&str, String) = if state.account_names.is_empty() {
-            ("📬", state.l().empty_add_account.into())
+            ("✉", state.l().empty_add_account.into())
+        } else if state.nav.folder_loading {
+            ("⟳", state.l().empty_syncing.into())
         } else if !state.rows.is_empty() {
             // 底层有数据但显示为空 = 被过滤掉了，提示切回而非误导“没有邮件”
             let f = match state.nav.list_filter {
@@ -915,22 +941,40 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 ListFilter::Unread => state.l().filter_unread,
                 ListFilter::Flagged => state.l().filter_starred,
             };
-            ("🔍", crate::lang::f(state.l().empty_no_match, &[&f]))
-        } else {
-            ("📭", state.l().empty_no_mail.into())
-        };
-        list = list.push(
-            container(
-                column![
-                    text(icon).size(28),
-                    text(msg).size(13).style(theme::secondary_text),
-                ]
-                .spacing(6)
-                .align_x(iced::alignment::Alignment::Center),
+            ("∅", crate::lang::f(state.l().empty_no_match, &[&f]))
+        } else if cur_unseen > 0 {
+            (
+                "∅",
+                crate::lang::f(state.l().empty_stale, &[&cur_unseen]),
             )
-            .width(Length::Fill)
-            .padding([24, 0])
-            .center(Length::Fill),
+        } else {
+            ("✉", state.l().empty_no_mail.into())
+        };
+        let stale = !state.account_names.is_empty()
+            && !state.nav.folder_loading
+            && state.rows.is_empty()
+            && cur_unseen > 0;
+        let mut empty_col = column![
+            text(icon)
+                .size(28)
+                .style(theme::secondary_text),
+            text(msg).size(13).style(theme::secondary_text),
+        ]
+        .spacing(6)
+        .align_x(iced::alignment::Alignment::Center);
+        if stale {
+            empty_col = empty_col.push(
+                button(text(state.l().resync).size(12))
+                    .on_press(Message::ManualRefresh)
+                    .padding([3, 10])
+                    .style(theme::outline_button),
+            );
+        }
+        list = list.push(
+            container(empty_col)
+                .width(Length::Fill)
+                .padding([24, 0])
+                .center(Length::Fill),
         );
     }
     // 满页提示：未到底提示可继续滚动加载；到底后给出总数确认

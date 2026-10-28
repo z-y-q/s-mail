@@ -225,44 +225,21 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         );
     }
     header = header.push(Space::new().width(Length::Fill));
-    let sign_on = c.pgp_sign;
-    let sign_btn = button(
-        text(if sign_on {
-            state.l().sign_on
-        } else {
-            state.l().sign_off
-        })
-        .size(13),
-    )
-    .on_press(Message::TogglePgpSign)
-    .padding([4, 8])
-    .style(move |t, st| {
-        if sign_on {
-            theme::accent_button(t, st)
-        } else {
-            theme::ghost_button(t, st)
-        }
-    });
-    let enc_on = c.pgp_encrypt;
-    let enc_btn = button(
-        text(if enc_on {
-            state.l().enc_on
-        } else {
-            state.l().enc_off
-        })
-        .size(13),
-    )
-    .on_press(Message::TogglePgpEncrypt)
-    .padding([4, 8])
-    .style(move |t, st| {
-        if enc_on {
-            theme::accent_button(t, st)
-        } else {
-            theme::ghost_button(t, st)
-        }
-    });
-    header = header.push(sign_btn);
-    header = header.push(enc_btn);
+    // 签名/加密：真正的开关控件（以前用 ○● 字符拼按钮，看着像没渲染完）
+    let sign_toggler = iced::widget::Toggler::new(c.pgp_sign)
+        .label(state.l().sign_toggle.to_string())
+        .on_toggle(|_| Message::TogglePgpSign)
+        .size(16.0)
+        .text_size(13)
+        .spacing(6);
+    let enc_toggler = iced::widget::Toggler::new(c.pgp_encrypt)
+        .label(state.l().enc_toggle.to_string())
+        .on_toggle(|_| Message::TogglePgpEncrypt)
+        .size(16.0)
+        .text_size(13)
+        .spacing(6);
+    header = header.push(sign_toggler);
+    header = header.push(enc_toggler);
     header = header.push(
         button(text(state.l().send).size(14))
             .on_press(Message::SendClicked)
@@ -457,9 +434,21 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
             ai_block,
             attach_row,
             container(
-                text_editor(&c.body)
-                    .on_action(Message::ComposeBodyEdit)
-                    .height(400),
+                column![
+                    // 占位提示：text_editor 没有占位符 API，空正文时在上方给一行引导
+                    (c.body.text().is_empty()).then(|| {
+                        text(state.l().body_ph.to_string())
+                            .size(13)
+                            .style(theme::secondary_text)
+                    }),
+                    text_editor(&c.body)
+                        .on_action(Message::ComposeBodyEdit)
+                        .height(400),
+                    text(state.l().compose_hints.to_string())
+                        .size(11)
+                        .style(theme::secondary_text),
+                ]
+                .spacing(2),
             )
             .padding(8)
             .width(Length::Fill),

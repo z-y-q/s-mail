@@ -164,6 +164,7 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
             let view_h = state.nav.list_view_h;
             state.nav.list_offset = ((next as f32) * ROW_H - view_h / 2.0).max(0.0);
             state.body_req = Some((acct, hash));
+            state.request_body(acct, hash);
             state.send(acct, Cmd::OpenMessage(hash));
             Task::none()
         }

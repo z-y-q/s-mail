@@ -183,6 +183,30 @@ pub fn ghost_button(t: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// 描边按钮（表单区次要动作，如「测试连接」「返回」）：细边框 + hover 轻染。
+/// 幽灵按钮无边框，放在表单里看着像纯文本标签——这里保证「可点」一眼可辨
+pub fn outline_button(t: &Theme, status: button::Status) -> button::Style {
+    let (bg, border_color) = match status {
+        button::Status::Hovered => (
+            Some(hover_tint(t).into()),
+            Color::from_rgba(0.5, 0.5, 0.55, 0.9),
+        ),
+        _ => (
+            None,
+            match t {
+                Theme::Dark => Color::from_rgba(1.0, 1.0, 1.0, 0.22),
+                _ => Color::from_rgba(0.0, 0.0, 0.0, 0.18),
+            },
+        ),
+    };
+    button::Style {
+        background: bg,
+        text_color: t.palette().text,
+        border: iced::border::rounded(7).width(1).color(border_color),
+        ..Default::default()
+    }
+}
+
 /// 侧栏文件夹按钮：选中=强调 15% 圆角；未选中透明
 /// （text_color 同理由 default 的 BLACK 改为主题色）
 pub fn sidebar_item(t: &Theme, status: button::Status, selected: bool) -> button::Style {

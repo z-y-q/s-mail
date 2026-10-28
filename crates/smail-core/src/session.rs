@@ -61,6 +61,9 @@ pub struct TaggedEvent {
 /// 多账号会话：每账号一个服务线程，事件统一打标签回流
 pub struct Session {
     pub cmd_tx: std::sync::mpsc::Sender<SessionCmd>,
+    /// 每账号正文请求直通通道（下标=账号索引）：UI 打开邮件直接发给
+    /// Reader 线程，不经主循环——主循环堵在长同步里时正文照常秒出
+    pub read_txs: Vec<std::sync::mpsc::Sender<i64>>,
     mux: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -93,6 +96,9 @@ impl Session {
         // 在 UI 冻结期间事件无限累积）
         let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TaggedEvent>(1000);
         let zh_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        // 直通通道在 services 被 move 进 mux 线程前收集
+        let read_txs: Vec<std::sync::mpsc::Sender<i64>> =
+            services.iter().map(|(svc, _)| svc.read_tx.clone()).collect();
 
         // 终报必须在 mux 线程内、循环退出后发——此前误放主线程（每次启动
         // 立即误报"会话已结束"，m5 e2e 苔出）；loop 内用 break 退出。
@@ -167,6 +173,7 @@ impl Session {
         Ok((
             Self {
                 cmd_tx,
+                read_txs,
                 mux: Some(mux),
             },
             event_rx,

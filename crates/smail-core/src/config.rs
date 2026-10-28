@@ -45,7 +45,7 @@ use std::path::Path;
 use std::time::Duration;
 
 /// 同步行为配置（可由用户调整）
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct SyncConfig {
     /// 文件夹重同步间隔（秒），IDLE 推送期间不主动重拉，避免冗余往返
     #[serde(default = "default_folder_resync_ttl")]
@@ -115,6 +115,9 @@ struct AccountEntry {
     pgp: Option<PgpCfg>,
     #[serde(default)]
     signature: Option<String>,
+    /// 账号级同步行为（缺省回落文件级 [sync] 段；设置页可改）
+    #[serde(default)]
+    sync: Option<SyncConfig>,
 }
 
 /// M5-b：过滤规则（同步时对新见到的邮件应用，天然幂等）。
@@ -356,6 +359,8 @@ pub fn load_accounts(cfg_path: &Path) -> Result<Vec<AccountConfig>, StartError> 
             .unwrap_or_else(|| entry.imap.username.clone());
         let name = entry.name.unwrap_or_else(|| entry.imap.username.clone());
         let idx = out.len() + 1;
+        // 账号级 [sync] 缺省回落文件级（旧配置只有文件级时行为不变）
+        let sync_config = entry.sync.unwrap_or_else(|| file.sync.clone());
         out.push(AccountConfig {
             slug: slugify(&name, &entry.imap.username, idx),
             name,
@@ -366,7 +371,7 @@ pub fn load_accounts(cfg_path: &Path) -> Result<Vec<AccountConfig>, StartError> 
             rules: entry.rules,
             pgp: entry.pgp,
             signature: entry.signature,
-            sync_config: file.sync.clone(),
+            sync_config,
         });
     }
     if out.is_empty() {
@@ -411,6 +416,10 @@ pub fn load_accounts(cfg_path: &Path) -> Result<Vec<AccountConfig>, StartError> 
 
 /// M6：写回配置（[[accounts]] 格式，原子替换）。GUI 里添加/删除账号后调用。
 pub fn save_accounts(cfg_path: &Path, accounts: &[AccountConfig]) -> Result<(), StartError> {
+    /// 默认值不写盘（配置文件保持干净），改过才落 [sync] 段
+    fn is_default_sync(c: &SyncConfig) -> bool {
+        *c == SyncConfig::default()
+    }
     #[derive(serde::Serialize)]
     struct FileOut<'a> {
         name: &'a str,
@@ -425,6 +434,9 @@ pub fn save_accounts(cfg_path: &Path, accounts: &[AccountConfig]) -> Result<(), 
         signature: Option<&'a str>,
         #[serde(skip_serializing_if = "<[Rule]>::is_empty")]
         rules: &'a [Rule],
+        /// 同步行为（间隔等）；默认值省略
+        #[serde(skip_serializing_if = "is_default_sync")]
+        sync: &'a SyncConfig,
     }
     #[derive(serde::Serialize)]
     struct Wrapper<'a> {
@@ -441,6 +453,7 @@ pub fn save_accounts(cfg_path: &Path, accounts: &[AccountConfig]) -> Result<(), 
                 pgp: a.pgp.as_ref(),
                 signature: a.signature.as_deref(),
                 rules: &a.rules,
+                sync: &a.sync_config,
             })
             .collect(),
     };
@@ -662,5 +675,53 @@ continue_after = true
         )
         .unwrap();
         assert!(r2.continue_after);
+    }
+
+    /// 设置页改的同步间隔必须写进 config 并读回（此前 save_accounts 根本
+    /// 不序列化 sync_config，用户设了间隔重启即丢）
+    #[test]
+    fn sync_interval_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("smail-cfg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let imap = ImapConfig {
+            host: "imap.example.com".into(),
+            port: 993,
+            username: "u@example.com".into(),
+            password: Some("pw".into()),
+            starttls: false,
+            tls: true,
+            use_oauth2: false,
+        };
+        let mk = |ttl: u64| AccountConfig {
+            name: "测试".into(),
+            slug: "test".into(),
+            identity: "u@example.com".into(),
+            imap: imap.clone(),
+            smtp: None,
+            oauth: None,
+            rules: vec![],
+            pgp: None,
+            signature: None,
+            sync_config: SyncConfig {
+                folder_resync_ttl_secs: ttl,
+                ..SyncConfig::default()
+            },
+        };
+        save_accounts(&path, &[mk(300)]).unwrap();
+        let loaded = load_accounts(&path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(
+            loaded[0].sync_config.folder_resync_ttl_secs, 300,
+            "账号级间隔必须写盘并读回"
+        );
+        // 默认值不写盘：读回仍是默认
+        save_accounts(&path, &[mk(60)]).unwrap();
+        let loaded = load_accounts(&path).unwrap();
+        assert_eq!(
+            loaded[0].sync_config.folder_resync_ttl_secs,
+            SyncConfig::default().folder_resync_ttl_secs,
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

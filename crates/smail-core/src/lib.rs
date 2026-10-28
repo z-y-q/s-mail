@@ -81,6 +81,9 @@ pub use session::{Session, SessionCmd, TaggedEvent};
 #[derive(Debug)]
 pub struct AccountService {
     pub cmd_tx: Sender<Cmd>,
+    /// 正文请求直通通道（Reader 线程）：UI 打开邮件时直接发 hash，
+    /// 不经主循环命令队列——主循环堵在长同步里时正文照样秒出（缓存命中）
+    pub read_tx: Sender<i64>,
     handle: Option<std::thread::JoinHandle<()>>,
     /// 服务线程的中断旗：shutdown/重建会话时置位（设备流轮询、长阻塞操作按粒度退出）
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -148,6 +151,8 @@ impl AccountService {
             Some(p) => pgp::PgpRuntime::load(p).ok().map(std::sync::Arc::new),
             None => None,
         };
+        // 直通通道先克隆一份给 UI（原件随 ServiceInner 进服务线程）
+        let read_tx_ui = read_tx.clone();
         {
             let reader = ReaderCtx::new(
                 backend_slot.clone(),
@@ -181,6 +186,7 @@ impl AccountService {
         Ok((
             Self {
                 cmd_tx,
+                read_tx: read_tx_ui,
                 handle: Some(handle),
                 stop,
             },

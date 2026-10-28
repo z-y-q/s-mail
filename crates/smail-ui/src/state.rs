@@ -136,6 +136,9 @@ pub(crate) struct Nav {
     pub(crate) list_offset: f32,
     /// 列表可视高度（初始估计；首个滚动事件后用 viewport 实测校正）
     pub(crate) list_view_h: f32,
+    /// 当前文件夹首次列表在途（选中后到 FolderLoaded 前）——空列表时区分
+    /// 「正在同步」与「真的没有邮件」，不再让未读徽标和空列表互相打脸
+    pub(crate) folder_loading: bool,
 }
 
 /// M7 批量操作（选择集与确认面板）
@@ -164,6 +167,9 @@ pub(crate) struct State {
     #[allow(dead_code)]
     pub(crate) session: Option<Session>,
     pub(crate) cmd_tx: Option<Sender<SessionCmd>>,
+    /// 每账号正文直通通道（下标=账号索引）：打开邮件直接发给 Reader 线程，
+    /// 不经主循环命令队列（主循环堵在长同步里时正文照样秒出）
+    pub(crate) read_txs: Vec<Sender<i64>>,
     pub(crate) events: Option<EventTap>,
     pub(crate) account_names: Vec<String>,
     pub(crate) error: Option<String>,
@@ -217,6 +223,12 @@ pub(crate) struct State {
     pub(crate) pgp_edit: Option<(usize, setup::PgpForm)>,
     /// 签名内联编辑中：（账号索引, 编辑器内容）
     pub(crate) signature_edit: Option<(usize, text_editor::Content)>,
+    /// 同步间隔内联编辑中：（账号索引, 输入框内容，秒）
+    pub(crate) sync_edit: Option<(usize, String)>,
+    /// 本地索引只读连接（按账号懒打开）：切文件夹时 UI 直读缓存行，
+    /// 不等服务线程——它可能正堵在长同步（重连全量拉取/IDLE 变更）上，
+    /// 命令队列几十秒不被消费，等回包=「一同步就看不见邮件」
+    pub(crate) local_stores: HashMap<usize, smail_store::Store>,
     /// 导出目标：保存对话框期间用户可能切换邮件，回调不能再用 selected
     /// （文件名是请求时的主题，导出内容也必须是请求时的邮件）
     pub(crate) export_target: Option<(usize, i64)>,
@@ -267,6 +279,7 @@ impl State {
                     oauth_prompt: None,
                     session: Some(session),
                     cmd_tx: None,
+                    read_txs: vec![],
                     events: Some(EventTap::new(rx)),
                     account_names: names,
                     error: None,
@@ -285,6 +298,7 @@ impl State {
                         list_asc: false,
                         list_offset: 0.0,
                         list_view_h: list::DEFAULT_VIEW_H,
+                        folder_loading: false,
                     },
                     unified_contrib: HashMap::new(),
                     search_contrib: HashMap::new(),
@@ -318,6 +332,8 @@ impl State {
                     contacts_full: vec![],
                     pgp_edit: None,
                     signature_edit: None,
+                    sync_edit: None,
+                    local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
@@ -328,6 +344,11 @@ impl State {
                 state.prefs.win_geom = boot_win;
                 state.ai.ack = boot_ai_ack;
                 state.cmd_tx = state.session.as_ref().map(|s| s.cmd_tx.clone());
+                state.read_txs = state
+                    .session
+                    .as_ref()
+                    .map(|s| s.read_txs.clone())
+                    .unwrap_or_default();
                 // 初始语言下推（服务线程默认 zh；英文界面重启后保持英文状态文案）
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(SessionCmd::SetLang(matches!(
@@ -346,7 +367,18 @@ impl State {
                         Some(i) => crate::update(&mut state, Message::FolderSelected(i, f)),
                         None => iced::Task::none(),
                     },
-                    None => iced::Task::none(),
+                    // 首次使用/无历史视图：直接打开收件箱（以前首屏无任何选中，
+                    // 空列表像出了故障）
+                    None => {
+                        if state.account_names.is_empty() {
+                            iced::Task::none()
+                        } else {
+                            crate::update(
+                                &mut state,
+                                Message::FolderSelected(0, "INBOX".into()),
+                            )
+                        }
+                    }
                 };
                 // 启动即对齐系统深浅色
                 (
@@ -382,6 +414,7 @@ impl State {
                     oauth_prompt: None,
                     session: None,
                     cmd_tx: None,
+                    read_txs: vec![],
                     events: None,
                     account_names: vec![],
                     error: Some(error_msg), // ← 关键修复：同步到全局错误横幅
@@ -400,6 +433,7 @@ impl State {
                         list_asc: false,
                         list_offset: 0.0,
                         list_view_h: list::DEFAULT_VIEW_H,
+                        folder_loading: false,
                     },
                     unified_contrib: HashMap::new(),
                     search_contrib: HashMap::new(),
@@ -433,6 +467,8 @@ impl State {
                     contacts_full: vec![],
                     pgp_edit: None,
                     signature_edit: None,
+                    sync_edit: None,
+                    local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
@@ -462,6 +498,25 @@ impl State {
         }
     }
 
+    /// 本地索引缓存行（只读连接直读；无缓存/库未建返回空）
+    pub(crate) fn local_folder_rows(&mut self, acct: usize, folder: &str) -> Vec<RowEntry> {
+        let Some(cfg) = self.accounts.get(acct) else {
+            return vec![];
+        };
+        if !self.local_stores.contains_key(&acct) {
+            let db = self.data_root.join(&cfg.slug).join("index.db");
+            if let Ok(s) = smail_store::Store::open_readonly(&db) {
+                self.local_stores.insert(acct, s);
+            }
+        }
+        let limit = smail_core::UI_LIST_LIMIT;
+        self.local_stores
+            .get(&acct)
+            .and_then(|s| s.list_folder(folder, limit).ok())
+            .map(|rows| rows.into_iter().map(|r| (acct, r)).collect())
+            .unwrap_or_default()
+    }
+
     /// 当前文件夹是否废纸篓（删除确认文案/语义提示用）
     pub(crate) fn cur_is_trash_folder(&self) -> bool {
         self.nav
@@ -480,6 +535,15 @@ impl State {
     pub(crate) fn send(&self, account: usize, cmd: Cmd) {
         if let Some(tx) = &self.cmd_tx {
             let _ = tx.send(SessionCmd::Route { account, cmd });
+        }
+    }
+
+    /// 正文请求直通：绕过主循环命令队列（长同步期间队列几十秒不被消费，
+    /// 正文却常已在本地缓存）。仍配合 Cmd::OpenMessage 走已读上推，
+    /// 迟到的第二次正文回包由 body_req 守卫丢弃
+    pub(crate) fn request_body(&self, account: usize, hash: i64) {
+        if let Some(tx) = self.read_txs.get(account) {
+            let _ = tx.send(hash);
         }
     }
 
@@ -520,6 +584,9 @@ pub(crate) fn persist_and_reload(
     state.pending_delete = None;
     state.export_target = None;
     state.body_req = None;
+    state.sync_edit = None;
+    // 账号集变化：只读连接指向旧 slug 的库，全部作废重开
+    state.local_stores.clear();
     state.unified_contrib.clear(); // 死键残留会让已删账号的邮件混入聚合
     state.search_contrib.clear();
     state.contacts_full.clear();
@@ -544,6 +611,7 @@ pub(crate) fn persist_and_reload(
             Ok(()) => {
                 state.session = None;
                 state.cmd_tx = None;
+                state.read_txs.clear();
                 state.events = None;
                 state.accounts = vec![];
                 state.account_names = vec![];
@@ -597,6 +665,11 @@ pub(crate) fn persist_and_reload(
         Ok((session, rx)) => {
             state.session = Some(session);
             state.cmd_tx = state.session.as_ref().map(|s| s.cmd_tx.clone());
+            state.read_txs = state
+                .session
+                .as_ref()
+                .map(|s| s.read_txs.clone())
+                .unwrap_or_default();
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::SetLang(matches!(
                     state.prefs.lang,
@@ -619,14 +692,23 @@ pub(crate) fn persist_and_reload(
             state.statuses.clear();
             state.oauth_prompt = None;
             state.error = None;
+            // 账号增删后当前视图已作废（上面 cur=None）：自动打开第一个账号
+            // 的收件箱，不让用户停在无选中的空屏
+            if !state.account_names.is_empty() {
+                state.nav.cur = Some((0, "INBOX".into()));
+                state.nav.folder_loading = true;
+                state.send(0, Cmd::SelectFolder("INBOX".into()));
+            }
             true
         }
         Err(e) => {
             // 落盘已成功：账号列表以文件为准（否则界面与磁盘漂移）
             state.session = None;
             state.cmd_tx = None;
+            state.read_txs.clear();
             state.events = None;
             state.account_names = accounts.iter().map(|a| a.name.clone()).collect();
+            state.local_stores.clear();
             let msg = crate::lang::f(state.l().err_reload, &[&e]);
             if let Screen::Setup(f) = &mut state.screen {
                 f.err = Some(msg);

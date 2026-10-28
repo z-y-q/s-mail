@@ -24,7 +24,9 @@ impl Store {
         rows.collect::<rusqlite::Result<Vec<_>>>()
     }
 
-    /// 收信自动收集：批量 upsert（单事务；名字非空才覆盖旧名，时间总更新）
+    /// 收信自动收集：批量 upsert（单事务；名字非空才覆盖旧名，时间总更新）。
+    /// 邮箱先归一化（去空白 + 小写）：同一地址大小写/空白变体收敛到一行，
+    /// 否则 UNIQUE(email) 之外会积累出显示完全相同的重复行
     pub fn upsert_contacts_batch(&self, items: &[(String, String)]) -> rusqlite::Result<()> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -39,7 +41,11 @@ impl Store {
                     updated_at = excluded.updated_at",
             )?;
             for (email, name) in items {
-                stmt.execute((email, name, now))?;
+                let email = email.trim().to_lowercase();
+                if email.is_empty() {
+                    continue;
+                }
+                stmt.execute((email, name.trim(), now))?;
             }
         }
         tx.commit()

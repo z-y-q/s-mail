@@ -106,6 +106,11 @@ where
                 // iced markdown 渲染成图片并自动外发网络请求，绕过
                 // 「远程图不自动加载」的隐私默认（追踪像素注入面）
                 let collapsed = collapse_ws(t);
+                // 纯装饰文本节点（营销邮件排版用的 | \ / --- 之类分隔符）没有
+                // 信息量，留着只会在正文里连成乱纹
+                if is_decoration_only(&collapsed) {
+                    continue;
+                }
                 if collapsed.contains("![") {
                     out.push_str(&collapsed.replace("![", "!\\["));
                 } else {
@@ -298,7 +303,7 @@ fn render_table(table: ego_tree::NodeRef<'_, Node>, out: &mut String, render_dep
                 .map(|cell| {
                     let mut inner = String::new();
                     render_children_d(cell.children(), &mut inner, 0, render_depth);
-                    inner.trim().replace('|', "\\|")
+                    inner.trim().to_string()
                 })
                 .collect()
         })
@@ -306,26 +311,34 @@ fn render_table(table: ego_tree::NodeRef<'_, Node>, out: &mut String, render_dep
     if rows.is_empty() {
         return;
     }
+    // 现代营销邮件整封都套在 <table> 里做排版。iced 的 markdown 部件不支持
+    // 表格语法，输出竖线表格只会把 | \| --- 全部原样漏进正文（乱纹）。
+    // 这里改输出普通段落：一行一行，非空单元格用间隔号连接。
     block(out);
-    let mut header_done = false;
-    for (i, cells) in rows.iter().enumerate() {
-        if cells.is_empty() {
+    for cells in &rows {
+        let line = cells
+            .iter()
+            .filter(|c| !c.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if line.is_empty() {
             continue;
         }
-        out.push_str("| ");
-        out.push_str(&cells.join(" | "));
-        out.push_str(" |\n");
-        // 第一行后补分隔行（markdown 表头）
-        if i == 0 {
-            out.push('|');
-            for _ in cells {
-                out.push_str(" --- |");
-            }
-            out.push('\n');
-            header_done = true;
-        }
+        out.push_str(&line);
+        out.push('\n');
     }
-    let _ = header_done;
+}
+
+/// 纯装饰文本：全部字符都是排版分隔符（管道/反斜杠/斜杠/横线/圆点/星号/空白），
+/// 不含任何文字或数字。营销模板用它们做竖线分隔，转 Markdown 后连成乱纹。
+fn is_decoration_only(s: &str) -> bool {
+    s.chars().all(|c| {
+        matches!(
+            c,
+            '|' | '\\' | '/' | '-' | '–' | '—' | '·' | '•' | '*' | '_' | '~' | '丨' | '　'
+        ) || c.is_whitespace()
+    })
 }
 
 /// 确保块级元素之间有空行（markdown 段落语义）
@@ -398,9 +411,38 @@ mod tests {
                <tr><td>云服务器</td><td>¥299.00</td></tr></table>"#,
         );
         assert!(md.contains("> 原邮件内容引用"), "{md}");
-        assert!(md.contains("| 项目 | 金额 |"), "{md}");
-        assert!(md.contains("| --- | --- |"), "{md}");
-        assert!(md.contains("| 云服务器 | ¥299.00 |"), "{md}");
+        // 表格输出为普通行（iced markdown 不支持表格语法，竖线会原样漏出）
+        assert!(md.contains("项目 · 金额"), "{md}");
+        assert!(md.contains("云服务器 · ¥299.00"), "{md}");
+        assert!(!md.contains("|"), "正文不得残留竖线表格语法：{md}");
+        assert!(!md.contains("---"), "正文不得残留表头分隔行：{md}");
+    }
+
+    /// 营销邮件（Adobe 到期通知类）整封套 <table> 排版，单元格与段落间还夹
+    /// "|\" 装饰文本节点。全部必须消化成干净的可读正文。
+    #[test]
+    fn table_layout_mail_and_pipe_decorations_cleaned() {
+        let md = html_to_markdown(
+            r#"<table><tr><td>|</td><td>您的 Adobe 帐户即将到期。</td><td>|</td></tr></table>
+               <p>尊敬的 Adobe 客户：</p>
+               <p>| <a href="https://example.com/login">立即登录</a> | --- | <a href="https://example.com/mgmt">管理帐户</a> |</p>"#,
+        );
+        assert!(md.contains("您的 Adobe 帐户即将到期。"), "{md}");
+        assert!(md.contains("尊敬的 Adobe 客户："), "{md}");
+        assert!(md.contains("[立即登录](https://example.com/login)"), "{md}");
+        assert!(!md.contains("\\|"), "转义竖线残留：{md}");
+        assert!(!md.contains(" ---"), "表头分隔残留：{md}");
+    }
+
+    /// 纯装饰文本节点（只有管道/横线/空白）直接丢弃；含文字数字的保留
+    #[test]
+    fn decoration_only_text_nodes_dropped() {
+        let md = html_to_markdown(
+            r#"<p>| \ / ---</p><p>客服电话 400-123-4567</p><p>——</p>"#,
+        );
+        assert!(md.contains("客服电话 400-123-4567"), "{md}");
+        assert!(!md.contains("|"), "{md}");
+        assert!(!md.contains("---"), "{md}");
     }
 
     #[test]

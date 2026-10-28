@@ -209,6 +209,11 @@ pub trait MailBackend: Send + Sync {
     // --- M2 ---
     fn set_flags(&self, folder: &str, hashes: &[u64], change: FlagChange) -> Result<()>;
     fn delete_messages(&self, folder: &str, hashes: &[u64]) -> Result<()>;
+    /// 整箱物理清空（SELECT + EXPUNGE）：清空废纸篓用。
+    /// 不依赖 hash→UID 映射——逐封 hash 删除在部分服务器（QQ）上可能
+    /// 静默空转（UID EXPUNGE 对不存在的 UID 返回 OK），整箱 EXPUNGE 是
+    /// 语义完全等价且最鲁棒的原语
+    fn expunge_folder(&self, folder: &str) -> Result<()>;
     /// APPEND 到服务器 Sent 文件夹（找不到类 Sent 文件夹时报错，由上层降级）
     fn append_to_sent(&self, bytes: Vec<u8>) -> Result<String>;
 
@@ -581,6 +586,21 @@ impl MailBackend for MelibBackend {
         let mb = self.mailbox_of(folder)?;
         let batch = self.batch_of(hashes)?;
         let fut = self.with_backend(|b| b.delete_messages(batch, mb));
+        block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
+        Ok(())
+    }
+
+    fn expunge_folder(&self, folder: &str) -> Result<()> {
+        let mb = self.mailbox_of(folder)?;
+        // downcast 到 ImapType：整箱 EXPUNGE 是 IMAP 后端专属原语
+        //（future 只捕获连接 Arc，锁外执行安全）
+        let fut = self
+            .with_backend(|b| {
+                b.as_any()
+                    .downcast_ref::<ImapType>()
+                    .map(|imap| imap.expunge_mailbox(mb))
+            })
+            .ok_or_else(|| BackendError::Other("backend 不是 IMAP".into()))?;
         block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(())
     }

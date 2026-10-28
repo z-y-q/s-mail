@@ -197,20 +197,47 @@ impl ServiceInner {
                 }
             }
             Cmd::EmptyTrash(folder) => {
-                // 复用批量永久删除管线（已在废纸篓内，语义=真删）
-                let hashes = store.hashes_in_folder(&folder).unwrap_or_default();
-                if hashes.is_empty() {
-                    self.emit(Event::Status(
-                        self.tr("废纸篓已是空的", "Trash is already empty"),
-                    ));
-                } else {
-                    self.emit(Event::Status(self.trf(
-                        "正在清空废纸篓（{} 封）…",
-                        "Emptying Trash ({} message(s))…",
-                        &[&hashes.len()],
-                    )));
-                    self.batch_delete(conn, store, &hashes);
+                // 清空废纸篓 = 整箱 EXPUNGE（SELECT + EXPUNGE）：
+                // 语义就是清空整个文件夹，不需要逐封 hash 定位——
+                // 逐封删除在部分服务器（QQ）上静默空转（UID EXPUNGE 对
+                // 不存在的 UID 也返回 OK），整箱原语最鲁棒
+                match &mut *conn {
+                    Conn::Up { backend, .. } => {
+                        if let Err(e) = (**backend).expunge_folder(&folder) {
+                            self.emit(Event::Status(self.trf(
+                                "清空废纸篓失败（服务器拒绝）：{}",
+                                "Failed to empty trash (server refused): {}",
+                                &[&e],
+                            )));
+                            return false;
+                        }
+                    }
+                    Conn::Down { .. } => {
+                        self.emit(Event::Status(
+                            self.tr("未连接，稍后重试", "Not connected, will retry later"),
+                        ));
+                        return false;
+                    }
                 }
+                // 服务器已清：本地行随之清掉，重同步确认（服务器真相拉回）
+                let hashes = store.hashes_in_folder(&folder).unwrap_or_default();
+                let n = hashes.len();
+                if !hashes.is_empty() {
+                    store.delete_messages_batch(&hashes).ok();
+                    for h in &hashes {
+                        let _ = std::fs::remove_file(self.body_path(*h));
+                        self.emit(Event::MessageDeleted(*h));
+                    }
+                }
+                self.emit(Event::Status(self.trf(
+                    "已清空废纸篓（{} 封）",
+                    "Emptied Trash ({} message(s))",
+                    &[&n],
+                )));
+                self.emit_folder_counts(store);
+                // 验证重同步：清 TTL 立即拉回服务器真相（EXPUNGE 后应为 0 封）
+                self.last_sync.borrow_mut().remove(&folder);
+                *pending_sync = Some(folder);
             }
             Cmd::OutboxRemove(id) => {
                 store.outbox_remove(id).ok();
@@ -301,12 +328,35 @@ impl ServiceInner {
                     return false;
                 };
                 if smail_backend::folder_kind(&row.folder) == smail_backend::FolderKind::Trash {
-                    if let Conn::Up { backend, .. } = &mut *conn {
-                        let _ = (**backend).delete_messages(&row.folder, &[hash as u64]);
+                    // 服务器失败必须可见且不删本地：旧路径 `let _ =` 吞错后
+                    // 无条件删本地行，服务器上邮件还在 → 下次同步"复活"。
+                    // melib 还有一种静默：UID 映射缺失时 EXPUNGE 空转返回 Ok
+                    // ——删完清该文件夹同步 TTL 立即重同步，真删了无感，
+                    // 没删掉当场回来（服务器真相），用户不再被假象误导
+                    match &mut *conn {
+                        Conn::Up { backend, .. } => {
+                            if let Err(e) = (**backend).delete_messages(&row.folder, &[hash as u64])
+                            {
+                                self.emit(Event::Status(self.trf(
+                                    "删除失败（邮件仍在服务器）：{}",
+                                    "Delete failed (message still on server): {}",
+                                    &[&e],
+                                )));
+                                return false;
+                            }
+                        }
+                        Conn::Down { .. } => {
+                            self.emit(Event::Status(
+                                self.tr("未连接，稍后重试", "Not connected, will retry later"),
+                            ));
+                            return false;
+                        }
                     }
                     store.delete_message(hash).ok();
                     let _ = std::fs::remove_file(self.body_path(hash));
                     self.emit(Event::MessageDeleted(hash));
+                    self.last_sync.borrow_mut().remove(&row.folder);
+                    *pending_sync = Some(row.folder);
                 } else {
                     let trash = match &mut *conn {
                         Conn::Up { backend, .. } => (**backend).ensure_trash_folder(),
@@ -377,7 +427,21 @@ impl ServiceInner {
             Cmd::BatchMove { hashes, dest } => {
                 self.move_messages_cmd(conn, store, &hashes, &dest);
             }
-            Cmd::BatchDelete { hashes } => self.batch_delete(conn, store, &hashes),
+            Cmd::BatchDelete { hashes } => {
+                // 批量删除可能涉及多个文件夹：删完统一清各自文件夹的同步 TTL，
+                // 命令队列 drain 后由各 pending 同步验证（同 DeleteMessage 语义）
+                let mut folders: Vec<String> = hashes
+                    .iter()
+                    .filter_map(|h| store.get(*h).ok().flatten().map(|r| r.folder))
+                    .collect();
+                folders.sort();
+                folders.dedup();
+                self.batch_delete(conn, store, &hashes);
+                for f in &folders {
+                    self.last_sync.borrow_mut().remove(f);
+                    *pending_sync = Some(f.clone());
+                }
+            }
             Cmd::CreateFolder(path) => {
                 if let Conn::Up { backend, .. } = &mut *conn {
                     match backend.create_folder(&path) {

@@ -115,6 +115,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                 }
                 close_reading_if_gone(state);
                 state.rebuild_display();
+                state.nav.folder_loading = false; // 本文件夹首屏列表已到
             }
         }
         Event::BodyLoaded {

@@ -255,6 +255,51 @@ pub struct ImapType {
     pub uid_store: Arc<UIDStore>,
 }
 
+impl ImapType {
+    /// s-mail patch：整箱物理清空（SELECT + STORE 1:* +FLAGS (\Deleted) + EXPUNGE）。
+    /// 不依赖 hash→UID 映射——「清空废纸篓」的语义就是清空整个文件夹，
+    /// 逐封 hash 删除在 QQ 等服务器上可能静默空转（UID EXPUNGE 对不存在的
+    /// UID 均返回 OK），这里用最简单的 IMAP 原语保证物理删除真实发生。
+    /// 注意 MOVE/COPY 进来的邮件不带 \Deleted 标记，EXPUNGE 前必须先 STORE。
+    pub fn expunge_mailbox(
+        &self,
+        mailbox_hash: MailboxHash,
+    ) -> ResultFuture<()> {
+        let connection = self.connection.clone();
+        Ok(Box::pin(async move {
+            let mut conn = connection.lock().await?;
+            let mut response = Vec::with_capacity(8 * 1024);
+            let select_response = conn
+                .select_mailbox(mailbox_hash, &mut response, false)
+                .await?;
+            // 空文件夹：1:* 序列号无处安放，直接视为已清空
+            if select_response.exists > 0 {
+                conn.send_command(CommandBody::Store {
+                    sequence_set: SequenceSet::try_from("1:*")
+                        .map_err(|e| Error::new(format!("bad sequence set: {e}")))?,
+                    kind: StoreType::Add,
+                    response: StoreResponse::Silent,
+                    flags: vec![ImapCodecFlag::Deleted],
+                    uid: false,
+                })
+                .await?;
+                conn.read_response(&mut response, RequiredResponses::empty())
+                    .await?;
+                conn.send_command(CommandBody::Expunge).await?;
+                conn.read_response(&mut response, RequiredResponses::empty())
+                    .await?;
+                imap_log!(
+                    trace,
+                    conn,
+                    "EXPUNGE response: {}",
+                    &String::from_utf8_lossy(&response)
+                );
+            }
+            Ok(())
+        }))
+    }
+}
+
 impl MailBackend for ImapType {
     fn capabilities(&self) -> MailBackendCapabilities {
         let mut extensions = self
@@ -678,7 +723,13 @@ impl MailBackend for ImapType {
         };
 
         if uids.is_empty() {
-            return Ok(Box::pin(async move { Ok(()) }));
+            // s-mail patch：映射缺失不得静默成功——UID 集合为空意味着这批
+            // 信封在本连接从未被真实 FETCH 过（如重连后），COPY/MOVE 什么
+            // 都没做却返回 Ok，上层会误删本地行。返回明确错误，让上层
+            // 的错误横幅接管（移动失败可见，本地行保留）
+            return Err(Error::new(
+                "envelope hash→UID mapping missing (folder not fetched in this session)",
+            ));
         }
         Ok(Box::pin(async move {
             let mut conn = connection.lock().await?;
@@ -736,7 +787,12 @@ impl MailBackend for ImapType {
         };
 
         if uids.is_empty() {
-            return Ok(Box::pin(async move { Ok(()) }));
+            // s-mail patch：映射缺失不得静默成功——UID 集合为空时 STORE
+            // 什么都没做却返回 Ok，已读/星标假成功会被服务器同步覆盖回去。
+            // 返回明确错误，让上层标记回放队列（queue_flag）接管，重连后重推
+            return Err(Error::new(
+                "envelope hash→UID mapping missing (folder not fetched in this session)",
+            ));
         }
 
         // Conversion from UID (usize) to UID (NonZeroU32).
@@ -952,7 +1008,12 @@ impl MailBackend for ImapType {
                 };
 
                 if uids.is_empty() {
-                    return Ok(());
+                    // s-mail patch：映射缺失不得静默成功——EXPUNGE 空转返回
+                    // Ok 会让上层误以为已删除。返回明确错误（清空废纸篓走
+                    // 整箱 expunge_mailbox，不经此路径）
+                    return Err(Error::new(
+                        "envelope hash→UID mapping missing (folder not fetched in this session)",
+                    ));
                 }
 
                 // Conversion from UID (usize) to UID (NonZeroU32).

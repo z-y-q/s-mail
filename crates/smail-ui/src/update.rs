@@ -63,6 +63,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.rebuild_display();
             state.nav.load_more_pending = false;
             state.nav.load_more_done = false;
+            state.nav.folder_loading = false; // 统一视图行来自 UnifiedRows，无 FolderLoaded
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::UnifiedInbox);
             }
@@ -120,20 +121,27 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.rows.clear();
                 state.selected = None;
                 state.reading = None;
+                state.nav.folder_loading = false;
                 state.send(acct, Cmd::ListDrafts);
             } else if folder == "__outbox__" {
                 state.nav.cur = Some((acct, folder));
                 state.rows.clear();
                 state.selected = None;
                 state.reading = None;
+                state.nav.folder_loading = false;
                 state.send(acct, Cmd::ListOutbox);
             } else {
                 state.nav.cur = Some((acct, folder.clone()));
-                state.rows.clear();
+                // 本地索引直读（离线优先的另一半）：服务线程可能正堵在长同步上
+                //（重连全量拉取/IDLE 变更，命令队列几十秒不被消费），
+                // 有缓存行就立即显示，FolderLoaded 回包再全量替换
+                state.rows = state.local_folder_rows(acct, &folder);
                 state.nav.list_offset = 0.0;
                 state.reading = None;
                 state.selected = None; // 快捷键/阅读器不再指向旧文件夹邮件
                 state.expanded.clear(); // 展开状态不跨文件夹（hash 可能同名冲突）
+                // 无缓存（首次进入/库未建）才显示「正在同步」；有缓存行列表即刻可用
+                state.nav.folder_loading = state.rows.is_empty();
                 state.send(acct, Cmd::SelectFolder(folder));
             }
             state.rebuild_display();
@@ -142,6 +150,8 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             scroll_list_to_top()
         }
         Message::RowSelected(acct, hash) => {
+            // 直通 Reader 线程：主循环堵在长同步里时正文照样秒出（缓存命中）
+            state.request_body(acct, hash);
             state.body_req = Some((acct, hash));
             state.send(acct, Cmd::OpenMessage(hash));
             Task::none()
@@ -228,6 +238,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.selected = Some((acct, latest));
             state.reading = None;
             state.body_req = Some((acct, latest));
+            state.request_body(acct, latest);
             state.send(acct, Cmd::OpenMessage(latest));
             Task::none()
         }
@@ -271,6 +282,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             let _ = update(state, Message::FolderSelected(acct, folder));
             state.selected = Some((acct, hash));
             state.body_req = Some((acct, hash));
+            state.request_body(acct, hash);
             state.send(acct, Cmd::OpenMessage(hash));
             Task::none()
         }
@@ -305,6 +317,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.batch.move_picker = None;
             state.pending_delete = None;
             state.nav.list_offset = 0.0;
+            state.nav.folder_loading = false; // 搜索结果走 SearchResults，无 FolderLoaded
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::SearchAll(q));
             }
@@ -351,6 +364,10 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::SignatureEditAction(..)
         | Message::SignatureEditSave
         | Message::SignatureEditCancel
+        | Message::SyncEditOpen(..)
+        | Message::SyncEditInput(..)
+        | Message::SyncEditSave
+        | Message::SyncEditCancel
         | Message::KeychainMove(..)) => account_setup::handle(state, m),
         m @ (Message::AiSummarize(..)
         | Message::AiSummaryReady { .. }
@@ -384,6 +401,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ComposeFromDraft(..)
         | Message::ComposeClose
         | Message::ComposeAccountNext
+        | Message::ComposeShortcut(_)
         | Message::ComposeField(..)
         | Message::ComposeBodyEdit(..)
         | Message::AutosaveTick

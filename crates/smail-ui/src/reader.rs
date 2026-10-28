@@ -43,7 +43,9 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     let Some((acct, reading)) = &state.reading else {
         return container(
             column![
-                text("✉️").size(34),
+                text("✉")
+                    .size(34)
+                    .style(theme::secondary_text),
                 text(state.l().pick_mail).size(13),
                 text(state.l().pick_mail_hint)
                     .size(11)
@@ -90,96 +92,75 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     } else {
         state.l().ai_summary_btn
     };
-    let actions = row![
-        button(text(summary_label).size(12))
-            .on_press(Message::AiSummarize(*acct, hash))
+    // 操作条两行分组（一行塞 10+ 个按钮，窄窗口必溢出）：
+    // 第一行「回复组」，第二行「AI + 整理组」。摘要按钮此前重复出现两次，只留一处
+    let mk = |label: String, msg: Message, active: bool| {
+        button(text(label).size(12))
+            .on_press(msg)
             .padding([3, 8])
-            .style(theme::ghost_button),
-        button(
-            text(if seen {
-                state.l().mark_unread_t
-            } else {
-                state.l().mark_read_t
+            .style(move |t, st| {
+                if active {
+                    theme::accent_button(t, st)
+                } else {
+                    theme::ghost_button(t, st)
+                }
             })
-            .size(12)
-        )
-        .on_press(Message::MarkUnread(*acct, hash))
-        .padding([3, 8])
-        .style(theme::ghost_button),
-        button(
-            text(if flagged {
-                state.l().unstar
+    };
+    let reply_row = row![
+        mk(state.l().reply.to_string(), Message::Reply(*acct, hash), false),
+        mk(
+            state.l().reply_all.to_string(),
+            Message::ReplyAll(*acct, hash),
+            false
+        ),
+        mk(state.l().forward.to_string(), Message::Forward(*acct, hash), false),
+        mk(state.l().delete.to_string(), Message::AskDelete(*acct, hash), false),
+    ]
+    .spacing(4);
+    let organize_row = row![
+        mk(
+            summary_label.to_string(),
+            Message::AiSummarize(*acct, hash),
+            false
+        ),
+        mk(
+            state.l().ai_smart_reply.to_string(),
+            Message::AiSmartReply(*acct, hash),
+            state.ai.busy.is_some()
+        ),
+        mk(
+            if flagged {
+                state.l().unstar.to_string()
             } else {
-                state.l().star_t
-            })
-            .size(12),
-        )
-        .on_press(Message::ToggleStar(*acct, hash, !flagged))
-        .padding([3, 8])
-        .style(theme::ghost_button),
-        button(
-            text(if move_open {
-                state.l().cancel_move
+                state.l().star_t.to_string()
+            },
+            Message::ToggleStar(*acct, hash, !flagged),
+            false
+        ),
+        mk(
+            if seen {
+                state.l().mark_unread_t.to_string()
             } else {
-                state.l().move_to
-            })
-            .size(12)
-        )
-        .on_press(Message::MoveTo(*acct, hash))
-        .padding([3, 8])
-        .style(move |t, st| {
+                state.l().mark_read_t.to_string()
+            },
+            Message::MarkUnread(*acct, hash),
+            false
+        ),
+        mk(
             if move_open {
-                theme::accent_button(t, st)
+                state.l().cancel_move.to_string()
             } else {
-                theme::ghost_button(t, st)
-            }
-        }),
-        button(text(state.l().archive).size(12))
-            .on_press(Message::ArchiveCurrent(*acct, hash))
-            .padding([3, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().spam).size(12))
-            .on_press(Message::SpamCurrent(*acct, hash))
-            .padding([3, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().ai_smart_reply).size(12))
-            .on_press_maybe(if state.ai.busy.is_some() {
-                None
-            } else {
-                Some(Message::AiSmartReply(*acct, hash))
-            })
-            .padding([3, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().reply).size(12))
-            .on_press(Message::Reply(*acct, hash))
-            .padding([3, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().reply_all).size(12))
-            .on_press(Message::ReplyAll(*acct, hash))
-            .padding([3, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().forward).size(12))
-            .on_press(Message::Forward(*acct, hash))
-            .padding([3, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().delete).size(12))
-            .on_press(Message::AskDelete(*acct, hash))
-            .padding([3, 8])
-            .style(theme::ghost_button),
-        button(
-            text(if state.ai.busy == Some(crate::ai::BusyKind::Summarize) {
-                state.l().ai_working
-            } else {
-                state.l().ai_summary_btn
-            })
-            .size(12),
-        )
-        .on_press(Message::AiSummarize(*acct, hash))
-        .padding([3, 8])
-        .style(theme::ghost_button),
+                state.l().move_to.to_string()
+            },
+            Message::MoveTo(*acct, hash),
+            move_open
+        ),
+        mk(state.l().archive.to_string(), Message::ArchiveCurrent(*acct, hash), false),
+        mk(state.l().spam.to_string(), Message::SpamCurrent(*acct, hash), false),
         Space::new().width(Length::Fill),
     ]
     .spacing(4);
+    let actions = column![reply_row, organize_row].spacing(4);
 
     // 删除确认：废纸篓语义——普通文件夹=移废纸篓（温和文案），
     // 废纸篓内=永久删除（强警示）。均为二次确认

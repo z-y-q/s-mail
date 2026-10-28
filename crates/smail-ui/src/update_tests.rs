@@ -46,6 +46,7 @@ fn ts() -> State {
         session: None,
         oauth_prompt: None,
         cmd_tx: None,
+        read_txs: vec![],
         events: None,
         account_names: vec!["a@x".into(), "b@x".into()],
         error: None,
@@ -64,6 +65,7 @@ fn ts() -> State {
             list_asc: false,
             list_offset: 0.0,
             list_view_h: crate::list::DEFAULT_VIEW_H,
+            folder_loading: false,
         },
         unified_contrib: Default::default(),
         search_snippets: Default::default(),
@@ -97,6 +99,8 @@ fn ts() -> State {
         contacts_full: vec![],
         pgp_edit: None,
         signature_edit: None,
+        sync_edit: None,
+        local_stores: Default::default(),
         export_target: None,
         accounts: vec![],
         cfg_path: std::path::PathBuf::from("/tmp/smail-test-config.toml"),
@@ -130,6 +134,74 @@ fn folder_selected_clears_transient_refs() {
     let _ = update(&mut s, Message::FolderSelected(0, "INBOX".into()));
     assert!(s.batch.selection.is_empty() && s.pending_delete.is_none() && s.body_req.is_none());
     assert!(s.selected.is_none());
+}
+
+/// 空态三态的旗标流转：选中文件夹置「同步中」，FolderLoaded 回来解除；
+/// 未读徽标与空列表的矛盾期显示「正在同步」而不是「没有邮件」
+#[test]
+fn folder_loading_set_on_select_and_cleared_on_load() {
+    let mut s = ts();
+    let _ = update(&mut s, Message::FolderSelected(0, "INBOX".into()));
+    assert!(s.nav.folder_loading, "选中后列表在途");
+    let _ = update(
+        &mut s,
+        Message::Ev(smail_core::TaggedEvent {
+            account: 0,
+            event: Event::FolderLoaded {
+                folder: "INBOX".into(),
+                rows: vec![],
+            },
+        }),
+    );
+    assert!(!s.nav.folder_loading, "列表落地后不再处于同步中");
+    // 伪文件夹（草稿/发件箱）不走 FolderLoaded，选中即解除
+    let _ = update(&mut s, Message::FolderSelected(0, "__drafts__".into()));
+    assert!(!s.nav.folder_loading, "草稿视图无服务器同步");
+}
+
+/// 切文件夹直读本地索引：服务线程堵在长同步里时（命令队列不被消费），
+/// 有缓存行的文件夹必须立即上屏，folder_loading 不亮——「一同步就看不见
+/// 邮件」的回归钉子
+#[test]
+fn folder_selected_reads_local_cache_immediately() {
+    // 建一个带两行 INBOX 缓存的真实索引库
+    let dir = std::env::temp_dir().join(format!("smail-ui-local-{}", std::process::id()));
+    std::fs::create_dir_all(&dir.join("acct")).unwrap();
+    {
+        let store = smail_store::Store::open(&dir.join("acct").join("index.db")).unwrap();
+        store.upsert(&row(1, false, false)).unwrap();
+        store.upsert(&row(2, true, false)).unwrap();
+    }
+    let mut s = ts();
+    s.accounts = vec![smail_core::AccountConfig {
+        name: "a".into(),
+        slug: "acct".into(),
+        identity: "a@x".into(),
+        imap: smail_core::ImapConfig {
+            host: "h".into(),
+            port: 993,
+            username: "a@x".into(),
+            password: None,
+            starttls: false,
+            tls: true,
+            use_oauth2: false,
+        },
+        smtp: None,
+        oauth: None,
+        rules: vec![],
+        pgp: None,
+        signature: None,
+        sync_config: Default::default(),
+    }];
+    s.account_names = vec!["a@x".into()];
+    s.data_root = dir.clone();
+    let _ = update(&mut s, Message::FolderSelected(0, "INBOX".into()));
+    assert_eq!(s.rows.len(), 2, "本地缓存行必须立即上屏");
+    assert!(!s.nav.folder_loading, "有缓存行不亮「同步中」");
+    // 切到无缓存的文件夹：回到「正在同步」态
+    let _ = update(&mut s, Message::FolderSelected(0, "Archive".into()));
+    assert!(s.rows.is_empty() && s.nav.folder_loading, "无缓存显示同步中");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

@@ -266,10 +266,16 @@ impl ServiceInner {
             folder: folder.to_string(),
             rows,
         });
+        // 状态行文件夹名本地化（顶栏不再出现「INBOX：46 封」中英混排）
+        let fname = if folder.eq_ignore_ascii_case("INBOX") {
+            self.tr("收件箱", "INBOX")
+        } else {
+            folder.to_string()
+        };
         self.emit(Event::Status(self.trf(
             "{}：{} 封（新 {}）",
             "{}: {} messages ({} new)",
-            &[&folder, &envelopes.len(), &new_count],
+            &[&fname, &envelopes.len(), &new_count],
         )));
         None
     }

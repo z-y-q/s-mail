@@ -161,6 +161,17 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::ComposeShortcut(key) => {
+            // 只在写信屏生效（其他屏的 ⌘↩/⌘S 交给系统语义）
+            if matches!(state.screen, Screen::Compose(_)) {
+                match key {
+                    crate::ComposeKey::Send => update(state, Message::SendClicked),
+                    crate::ComposeKey::SaveDraft => update(state, Message::SaveDraftClicked),
+                }
+            } else {
+                Task::none()
+            }
+        }
         Message::SendClicked => {
             if let Screen::Compose(c) = &state.screen {
                 if c.to.trim().is_empty() {

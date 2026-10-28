@@ -371,6 +371,47 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             state.signature_edit = None;
             Task::none()
         }
+        Message::SyncEditOpen(i) => {
+            // 预填当前间隔（秒）
+            let cur = state
+                .accounts
+                .get(i)
+                .map(|a| a.sync_config.folder_resync_ttl_secs.to_string())
+                .unwrap_or_default();
+            state.sync_edit = Some((i, cur));
+            Task::none()
+        }
+        Message::SyncEditInput(v) => {
+            if let Some((_, s)) = &mut state.sync_edit {
+                *s = v;
+            }
+            Task::none()
+        }
+        Message::SyncEditSave => {
+            let Some((i, raw)) = state.sync_edit.take() else {
+                return Task::none();
+            };
+            // 快速失败：非正整数就地报错不落盘
+            let Ok(secs) = raw.trim().parse::<u64>() else {
+                state.error = Some(state.l().err_sync_interval.into());
+                return Task::none();
+            };
+            if secs == 0 {
+                state.error = Some(state.l().err_sync_interval.into());
+                return Task::none();
+            }
+            let mut accounts = state.accounts.clone();
+            if let Some(a) = accounts.get_mut(i) {
+                a.sync_config.folder_resync_ttl_secs = secs;
+                // 会话重启后服务线程读新 TTL；本地索引直读不受影响
+                persist_and_reload(state, accounts, None);
+            }
+            Task::none()
+        }
+        Message::SyncEditCancel => {
+            state.sync_edit = None;
+            Task::none()
+        }
         Message::KeychainMove(i) => {
             let Some(a) = state.accounts.get(i) else {
                 return Task::none();
