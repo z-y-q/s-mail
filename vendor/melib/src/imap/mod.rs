@@ -256,6 +256,25 @@ pub struct ImapType {
 }
 
 impl ImapType {
+    /// s-mail patch：轻量探测（SELECT 一次，返回 exists/uidnext/uidvalidity）。
+    /// 供上层做「文件夹无变化则跳过整包 FETCH」的短路判断：UID 单调递增，
+    /// UIDNEXT 与 EXISTS 都与上次全量一致 ⇒ 集合未变；UIDVALIDITY 变化
+    /// （文件夹重建）时探测值必然对不上，短路自动失效走全量。
+    pub fn probe_mailbox(
+        &self,
+        mailbox_hash: MailboxHash,
+    ) -> ResultFuture<(ImapNum, UID, UIDVALIDITY)> {
+        let connection = self.connection.clone();
+        Ok(Box::pin(async move {
+            let mut conn = connection.lock().await?;
+            let mut response = Vec::with_capacity(8 * 1024);
+            let sel = conn
+                .select_mailbox(mailbox_hash, &mut response, false)
+                .await?;
+            Ok((sel.exists, sel.uidnext, sel.uidvalidity))
+        }))
+    }
+
     /// s-mail patch：整箱物理清空（SELECT + STORE 1:* +FLAGS (\Deleted) + EXPUNGE）。
     /// 不依赖 hash→UID 映射——「清空废纸篓」的语义就是清空整个文件夹，
     /// 逐封 hash 删除在 QQ 等服务器上可能静默空转（UID EXPUNGE 对不存在的

@@ -278,7 +278,8 @@ impl ServiceInner {
                             &[&sent_folder],
                         )));
                         let f = sent_folder;
-                        self.sync_folder(backend, store, &f);
+                        // 刚 APPEND 的副本必须立刻出现在列表：禁探测短路
+                        self.sync_folder(backend, store, &f, false);
                         // 侧栏 Sent 计数即时刷新（本地计数零往返）
                         self.emit_folder_counts(store);
                     }

@@ -5,6 +5,7 @@
 //! - **单邮件查询**：get(hash)
 //! - **文件夹列表**：list_folder + folder_stats
 //! - **统计查询**：count_folder/count_unseen
+//! - **同步探测记录**：folder_probe 的读写（SELECT EXISTS/UIDNEXT 短路）
 //! - **空间回收**：maybe_vacuum（大量删信后碎片整理）、vacuum_stats（UI 显示）
 
 use super::{row_from, MessageRow, Store};
@@ -22,7 +23,61 @@ pub struct VacuumStats {
     pub should_vacuum: bool,
 }
 
+/// 文件夹同步探测记录：上次全量同步后的 SELECT EXISTS/UIDNEXT/UIDVALIDITY 快照。
+/// 三值与服务器当前值一致 ⇒ 集合未变，可短路重拉（UIDVALIDITY 防文件夹
+/// 重建后数值巧合）
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FolderProbe {
+    pub uidnext: i64,
+    pub exists_n: i64,
+    pub uidvalidity: i64,
+    /// 上次全量同步完成的 unix 秒（低频校准：超过阈值强制全量重拉一次，
+    /// 兜住 EXISTS/UIDNEXT 都不变但 FLAGS 被远端改掉的场景）
+    pub synced_at: i64,
+}
+
 impl Store {
+    pub fn get_folder_probe(&self, folder: &str) -> rusqlite::Result<Option<FolderProbe>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT uidnext, exists_n, uidvalidity, synced_at FROM folder_probe WHERE folder = ?1",
+        )?;
+        let mut rows = stmt.query_map([folder], |r| {
+            Ok(FolderProbe {
+                uidnext: r.get(0)?,
+                exists_n: r.get(1)?,
+                uidvalidity: r.get(2)?,
+                synced_at: r.get(3)?,
+            })
+        })?;
+        rows.next().transpose()
+    }
+
+    pub fn set_folder_probe(&self, folder: &str, probe: &FolderProbe) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO folder_probe(folder, uidnext, exists_n, uidvalidity, synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(folder) DO UPDATE SET
+                uidnext = excluded.uidnext,
+                exists_n = excluded.exists_n,
+                uidvalidity = excluded.uidvalidity,
+                synced_at = excluded.synced_at",
+            rusqlite::params![
+                folder,
+                probe.uidnext,
+                probe.exists_n,
+                probe.uidvalidity,
+                probe.synced_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_folder_probe(&self, folder: &str) -> rusqlite::Result<()> {
+        self.conn
+            .execute("DELETE FROM folder_probe WHERE folder = ?1", [folder])?;
+        Ok(())
+    }
+
     pub fn get(&self, hash: i64) -> rusqlite::Result<Option<MessageRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT envelope_hash, folder, message_id, subject, from_addr,

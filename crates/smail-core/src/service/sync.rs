@@ -130,18 +130,67 @@ impl ServiceInner {
     }
 
     /// 同步失败分类：None=成功；Some(Timeout)=连接半死（须重连）；
-    /// Some(其他)=单次失败（Status 已报，不重试）
+    /// Some(其他)=单次失败（Status 已报，不重试）。
+    /// `allow_probe`：允许 SELECT 探测短路（EXISTS/UIDNEXT 与上次全量一致
+    /// 且在低频校准窗口内 → 跳过整包 FETCH）。**IDLE 变更与重连路径必须传
+    /// false**——远端 flags-only 变化（别的设备标已读）不改这两个值，短路
+    /// 会吞掉推送；用户切文件夹的 TTL 重拉传 true 省流量
     pub(crate) fn sync_folder(
         &self,
         backend: &dyn MailBackend,
         store: &Store,
         folder: &str,
+        allow_probe: bool,
     ) -> Option<smail_backend::BackendError> {
+        // 探测短路：记录齐全、探测一致、且距上次全量在低频校准窗口内 →
+        // 本地行即服务器真相，省一次整包 FETCH
+        let ttl_secs = self.cfg.sync_config.folder_resync_ttl_secs;
+        if allow_probe {
+            let probe_hit = (|| -> Option<bool> {
+                let p = store.get_folder_probe(folder).ok()??;
+                // 低频校准：超过 10 倍 TTL 强制一次真实全量，兜住远端
+                // flags-only 变化（EXISTS/UIDNEXT 不变但 FLAGS 被改）
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                if now - p.synced_at >= 10 * ttl_secs as i64 {
+                    return Some(false);
+                }
+                let (exists, uidnext, uidvalidity) = backend.probe_folder(folder).ok()?;
+                // 三值全等才短路：UIDVALIDITY 防 UID 空间重置后的数值巧合
+                Some(
+                    exists as i64 == p.exists_n
+                        && uidnext as i64 == p.uidnext
+                        && uidvalidity as i64 == p.uidvalidity,
+                )
+            })();
+
+            if probe_hit == Some(true) {
+                let rows = store
+                    .list_folder(folder, self.folder_limit(folder))
+                    .unwrap_or_default();
+                self.last_sync
+                    .borrow_mut()
+                    .insert(folder.to_string(), Instant::now());
+                self.emit(Event::FolderLoaded {
+                    folder: folder.to_string(),
+                    rows,
+                });
+                self.emit(Event::Status(self.trf(
+                    "{} 无新变化（跳过整包拉取）",
+                    "{} unchanged (full fetch skipped)",
+                    &[&folder],
+                )));
+                return None;
+            }
+        }
         self.emit(Event::Status(self.trf(
             "正在同步 {}…",
             "Syncing {}…",
             &[&folder],
         )));
+        let probe = backend.probe_folder(folder).ok();
         let envelopes = match backend.fetch_envelopes(folder) {
             Ok(e) => e,
             Err(e) => {
@@ -256,6 +305,25 @@ impl ServiceInner {
         self.last_sync
             .borrow_mut()
             .insert(folder.to_string(), Instant::now());
+        // 全量完成：记录探测快照（下次 TTL 重拉的短路依据）。
+        // probe 取的是 fetch 前的 SELECT——fetch 期间新到的邮件会让快照
+        // 偏旧，下次探测发现 exists/uidnext 差异自动走全量，自洽
+        if let Some((exists, uidnext, uidvalidity)) = probe {
+            store
+                .set_folder_probe(
+                    folder,
+                    &smail_store::FolderProbe {
+                        uidnext: uidnext as i64,
+                        exists_n: exists as i64,
+                        uidvalidity: uidvalidity as i64,
+                        synced_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0),
+                    },
+                )
+                .ok();
+        }
         // 进度完成：total/total
         self.emit(Event::SyncProgress {
             folder: folder.to_string(),

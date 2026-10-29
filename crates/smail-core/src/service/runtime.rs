@@ -134,11 +134,12 @@ impl ServiceInner {
                         continue;
                     }
                     // IDLE 多文件夹变更：一次同步一个（旧版串行同步全部，
-                    // 3 个文件夹变更 = 3×SELECT+FETCH 全程阻塞命令循环）
+                    // 3 个文件夹变更 = 3×SELECT+FETCH 全程阻塞命令循环）。
+                    // 禁探测短路：远端 flags-only 变化不改 EXISTS/UIDNEXT
                     if let Some(folder) = changed.iter().next() {
                         let f = folder.clone();
                         changed.remove(&f);
-                        if let Some(e) = self.sync_folder(&**backend, &store, &f) {
+                        if let Some(e) = self.sync_folder(&**backend, &store, &f, false) {
                             if self.sync_failed(&e) {
                                 conn = Conn::Down {
                                     attempts: 0,
@@ -236,7 +237,8 @@ impl ServiceInner {
                             // 重连时清空 pending_sync：避免断线前的旧文件夹残留导致
                             // 重复同步（重连已同步当前文件夹，延迟同步队列应清空）
                             pending_sync = None;
-                            if let Some(e) = self.sync_folder(&*backend, &store, &target) {
+                            // 重连路径禁短路：重建服务器真相（含 flags 校准）
+                            if let Some(e) = self.sync_folder(&*backend, &store, &target, false) {
                                 if self.sync_failed(&e) {
                                     // 半死连接：保持 Down 态立即重连（新连接后再同步）
                                     conn = Conn::Down {
@@ -300,7 +302,9 @@ impl ServiceInner {
             if pending_sync.is_some() {
                 if let Conn::Up { backend, .. } = &mut conn {
                     let folder = pending_sync.take().unwrap();
-                    if let Some(e) = self.sync_folder(&**backend, &store, &folder) {
+                    // ForceRefresh 置位的这一次禁探测短路（真实全量），其余允许
+                    let bypass = self.force_probe_bypass.replace(false);
+                    if let Some(e) = self.sync_folder(&**backend, &store, &folder, !bypass) {
                         if self.sync_failed(&e) {
                             conn = Conn::Down {
                                 attempts: 0,

@@ -199,9 +199,10 @@ impl ReaderCtx {
                 }
             };
             let Some(backend) = backend else {
-                self.emit(Event::Status(
-                    self.tr("未连接，无法拉取正文", "Not connected, cannot fetch body"),
-                ));
+                self.emit(Event::Status(self.tr(
+                    "断线中，且这封正文没有本地缓存（联网后重新打开即可）",
+                    "Offline and body not cached (reopen after reconnecting)",
+                )));
                 return;
             };
             let bytes = match backend.fetch_body(hash as u64) {

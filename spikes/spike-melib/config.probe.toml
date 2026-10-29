@@ -1,0 +1,26 @@
+# 本地 dovecot 测试配置——探测短路验证用（folder_resync_ttl_secs=2，
+# 配合 m19 的 M19_PROBE_CHECK=1：清空验证后等 TTL 过期再切文件夹，
+# 断言收到「无新变化（跳过整包拉取）」）
+[account]
+host = "127.0.0.1"
+port = 1143
+username = "test"
+password = "testpass"
+starttls = false
+tls = false
+
+[run]
+folder = "INBOX"
+limit = 100
+idle_seconds = 30
+
+[smtp]
+host = "127.0.0.1"
+port = 11525
+username = "test"
+password = "testpass"
+tls = "none"
+from = "test@local"
+
+[sync]
+folder_resync_ttl_secs = 2

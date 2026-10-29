@@ -43,7 +43,8 @@ impl ServiceInner {
                     // 失败也回 pending_sync：主循环延迟通道会重试一次
                     //（超时类由主循环转入重连路径）
                     if let Conn::Up { backend, .. } = &conn {
-                        if self.sync_folder(&**backend, store, &folder).is_some() {
+                        // 用户切文件夹：允许探测短路（无变化则省整包拉取）
+                        if self.sync_folder(&**backend, store, &folder, true).is_some() {
                             *pending_sync = Some(folder);
                         }
                     } else {
@@ -57,8 +58,10 @@ impl ServiceInner {
                     "Refreshing {}…",
                     &[&folder],
                 )));
-                // 清 TTL 再走常规同步（sync_folder 会在成功后重新计时）
+                // 清 TTL 再走常规同步（sync_folder 会在成功后重新计时）；
+                // 下一次延迟同步禁探测短路（手动刷新=真实全量，含 flags 校准）
                 self.last_sync.borrow_mut().remove(&folder);
+                self.force_probe_bypass.set(true);
                 *pending_sync = Some(folder);
             }
             Cmd::LoadMore(folder) => {

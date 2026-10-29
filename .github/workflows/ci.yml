@@ -26,8 +26,8 @@ jobs:
         run: |
           imap=$(grep -c "s-mail patch" vendor/melib/src/imap/mod.rs || true)
           net=$(grep -c "s-mail patch" vendor/melib/src/utils/connections/std_net.rs || true)
-          echo "imap/mod.rs 标记 $imap 处（需 4：expunge_mailbox + 三处映射缺失改 Err）；std_net.rs $net 处（需 1）"
-          [ "$imap" -eq 4 ] && [ "$net" -eq 1 ]
+          echo "imap/mod.rs 标记 $imap 处（需 5：expunge_mailbox + probe_mailbox + 三处映射缺失改 Err）；std_net.rs $net 处（需 1）"
+          [ "$imap" -eq 5 ] && [ "$net" -eq 1 ]
 
   test:
     strategy:

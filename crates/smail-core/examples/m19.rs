@@ -51,6 +51,11 @@ fn main() {
     let mut empty_sent = false;
     let mut trash_empty_after_sync = false;
     let mut synced_trash_after_empty = false;
+    // 探测短路观测（M19_PROBE_CHECK=1 且配 TTL=2 的 config.probe.toml）：
+    // 清空验证后等 TTL 过期再切文件夹，应收到「无新变化（跳过整包拉取）」
+    let probe_check = std::env::var("M19_PROBE_CHECK").is_ok();
+    let mut shortcircuit_seen = false;
+    let mut probe_wait_sent = false;
 
     while Instant::now() < deadline {
         while let Ok(TaggedEvent { account, event }) = rx.try_recv() {
@@ -114,6 +119,11 @@ fn main() {
                 }
                 Event::Status(s) => {
                     println!("[m19] {s}");
+                    // 探测短路命中（TTL 过期后的重拉被 SELECT 探测拦下）
+                    if s.contains("无新变化") {
+                        shortcircuit_seen = true;
+                        println!("[m19] ✅ 探测短路生效（整包 FETCH 已跳过）");
+                    }
                     // 移动完成后（废纸篓文件夹已知）→ 选中废纸篓拉列表
                     if s.contains("已移动") && !moved_to_trash {
                         if let Some(t) = trash_folder.clone() {
@@ -146,11 +156,30 @@ fn main() {
             }
         }
 
-        if trash_empty_after_sync {
+        // 探测短路段：TTL 过期后再切一次废纸篓，应走短路而非全量
+        if trash_empty_after_sync && probe_check && !shortcircuit_seen && !probe_wait_sent {
+            probe_wait_sent = true;
+            println!("[m19] 等 TTL（2s）过期后触发探测短路观测…");
+            std::thread::sleep(Duration::from_secs(3));
+            if let Some(t) = trash_folder.clone() {
+                let _ = session.cmd_tx.send(SessionCmd::Route {
+                    account: 0,
+                    cmd: Cmd::SelectFolder(t),
+                });
+            }
+        }
+
+        if trash_empty_after_sync && (!probe_check || shortcircuit_seen) {
             let _ = session.cmd_tx.send(SessionCmd::Shutdown);
-            println!(
-                "\n[m19 PASS] 移入废纸篓 ✅ 清空 ✅ 重同步后废纸篓 0 封 ✅（服务器 EXPUNGE 真实生效）"
-            );
+            if probe_check {
+                println!(
+                    "\n[m19 PASS] 移入废纸篓 ✅ 清空 ✅ 重同步后 0 封 ✅ 探测短路 ✅（全链路省流量验证）"
+                );
+            } else {
+                println!(
+                    "\n[m19 PASS] 移入废纸篓 ✅ 清空 ✅ 重同步后废纸篓 0 封 ✅（服务器 EXPUNGE 真实生效）"
+                );
+            }
             std::process::exit(0);
         }
         std::thread::sleep(Duration::from_millis(300));

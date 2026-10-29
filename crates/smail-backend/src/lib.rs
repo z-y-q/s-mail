@@ -214,6 +214,10 @@ pub trait MailBackend: Send + Sync {
     /// 静默空转（UID EXPUNGE 对不存在的 UID 返回 OK），整箱 EXPUNGE 是
     /// 语义完全等价且最鲁棒的原语
     fn expunge_folder(&self, folder: &str) -> Result<()>;
+    /// 轻量探测（一次 SELECT）：返回 (exists, uidnext, uidvalidity)。
+    /// 同步短路判断用——与 store 里的 folder_probe 记录一致即可跳过整包
+    /// FETCH；UIDVALIDITY 变化（文件夹重建）时必然对不上，短路自动失效
+    fn probe_folder(&self, folder: &str) -> Result<(u64, u64, u64)>;
     /// APPEND 到服务器 Sent 文件夹（找不到类 Sent 文件夹时报错，由上层降级）
     fn append_to_sent(&self, bytes: Vec<u8>) -> Result<String>;
 
@@ -603,6 +607,19 @@ impl MailBackend for MelibBackend {
             .ok_or_else(|| BackendError::Other("backend 不是 IMAP".into()))?;
         block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
         Ok(())
+    }
+
+    fn probe_folder(&self, folder: &str) -> Result<(u64, u64, u64)> {
+        let mb = self.mailbox_of(folder)?;
+        let fut = self
+            .with_backend(|b| {
+                b.as_any()
+                    .downcast_ref::<ImapType>()
+                    .map(|imap| imap.probe_mailbox(mb))
+            })
+            .ok_or_else(|| BackendError::Other("backend 不是 IMAP".into()))?;
+        let (exists, uidnext, uidvalidity) = block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
+        Ok((exists as u64, uidnext as u64, uidvalidity as u64))
     }
 
     fn move_messages(&self, folder: &str, hashes: &[u64], dest: &str) -> Result<()> {

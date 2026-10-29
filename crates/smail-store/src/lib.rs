@@ -59,7 +59,7 @@ mod migration_tests;
 
 pub use cache_ops::AiCache;
 pub use error::{Result, StoreError};
-pub use query_ops::VacuumStats;
+pub use query_ops::{FolderProbe, VacuumStats};
 
 use helpers::{row_from, tokenize};
 use rusqlite::Connection;
@@ -277,6 +277,22 @@ impl Store {
                  GROUP BY from_addr;",
             )?;
             conn.pragma_update(None, "user_version", 7)?;
+        }
+        // v8：文件夹同步探测记录（SELECT 的 EXISTS/UIDNEXT/UIDVALIDITY
+        // 上次全量值）。三值与服务器当前一致 ⇒ 集合未变（UIDVALIDITY 防
+        // 文件夹重建后数值巧合），重拉可短路（省整包 FETCH）
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v < 8 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS folder_probe(
+                    folder      TEXT PRIMARY KEY,
+                    uidnext     INTEGER NOT NULL,
+                    exists_n    INTEGER NOT NULL,
+                    uidvalidity INTEGER NOT NULL,
+                    synced_at   INTEGER NOT NULL
+                );",
+            )?;
+            conn.pragma_update(None, "user_version", 8)?;
         }
         Ok(())
     }
@@ -608,5 +624,43 @@ mod tests {
         assert!(emails.contains(&"1299675389@qq.com"), "{emails:?}");
         // 名字非空才覆盖：后到的同名变体不把已有名字洗掉
         assert!(full.iter().all(|c| !c.name.is_empty()), "{full:?}");
+    }
+
+    /// 同步探测记录：写入/读取/覆盖往返一致（同步短路的依据数据）
+    #[test]
+    fn folder_probe_roundtrip() {
+        let s = mem("probe-rt");
+        assert!(s.get_folder_probe("INBOX").unwrap().is_none());
+        s.set_folder_probe(
+            "INBOX",
+            &crate::FolderProbe {
+                uidnext: 42,
+                exists_n: 7,
+                uidvalidity: 12345,
+                synced_at: 1700000000,
+            },
+        )
+        .unwrap();
+        let p = s.get_folder_probe("INBOX").unwrap().unwrap();
+        assert_eq!(
+            (p.uidnext, p.exists_n, p.uidvalidity, p.synced_at),
+            (42, 7, 12345, 1700000000)
+        );
+        // 覆盖写：同文件夹更新为新快照
+        s.set_folder_probe(
+            "INBOX",
+            &crate::FolderProbe {
+                uidnext: 43,
+                exists_n: 8,
+                uidvalidity: 12345,
+                synced_at: 1700000100,
+            },
+        )
+        .unwrap();
+        let p = s.get_folder_probe("INBOX").unwrap().unwrap();
+        assert_eq!((p.uidnext, p.exists_n), (43, 8));
+        assert_eq!(s.get_folder_probe("Archive").unwrap(), None, "互不串扰");
+        s.delete_folder_probe("INBOX").unwrap();
+        assert!(s.get_folder_probe("INBOX").unwrap().is_none());
     }
 }

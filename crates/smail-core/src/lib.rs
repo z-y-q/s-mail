@@ -177,6 +177,7 @@ impl AccountService {
                 folders_ready: std::cell::Cell::new(false),
                 pgp_cache: std::sync::Mutex::new(None),
                 last_sync: std::cell::RefCell::new(std::collections::HashMap::new()),
+                force_probe_bypass: std::cell::Cell::new(false),
                 page_limit: std::cell::RefCell::new(std::collections::HashMap::new()),
             }
             .run(cmd_rx);
@@ -236,6 +237,9 @@ struct ServiceInner {
     pgp_cache: std::sync::Mutex<Option<std::sync::Arc<pgp::PgpRuntime>>>,
     /// 文件夹最近一次成功同步时刻（切换文件夹的 TTL 判据；RefCell：服务线程单线程独占）
     last_sync: std::cell::RefCell<std::collections::HashMap<String, Instant>>,
+    /// ForceRefresh 置位：下一次延迟同步禁探测短路（手动刷新语义=真实全量，
+    /// 含 flags 校准）。pending_sync 执行时消费复位
+    force_probe_bypass: std::cell::Cell<bool>,
     /// 每文件夹当前列表上限（触底翻页逐步扩大；同步/本地先行都用它，避免同步把已翻页列表缩回 500）
     page_limit: std::cell::RefCell<std::collections::HashMap<String, u32>>,
 }

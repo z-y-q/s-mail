@@ -14,13 +14,15 @@ name: vendor-watch
 #    （当前上游 master 的 poll_once 对二次 connect 的 Err 一律 set_error，未修）。
 #    修了 → 本 workflow 变红提醒撤销 vendor；forge 不可达 → 黄色警告不误报。
 #
-# 2. 写操作静默假成功（imap/mod.rs，4 处标记）：
+# 2. 写操作静默假成功 + 探测/整箱原语（imap/mod.rs，5 处标记）：
 #    a) ImapType::expunge_mailbox——整箱物理清空（清空废纸篓用），
 #       上游 MailBackend 只有依赖 hash→UID 映射的 delete_messages；
-#    b/c/d) set_flags / copy_messages / delete_messages 的 uids 为空
+#    b) ImapType::probe_mailbox——SELECT 探测（exists/uidnext/uidvalidity），
+#       供同步短路判断，上游无此接口；
+#    c/d/e) set_flags / copy_messages / delete_messages 的 uids 为空
 #       分支由「静默返回 Ok」改为「返回 Err」——上游行为会让标记/移动/
 #       删除的空转变成功，上层回放队列与错误横幅全部失效。
-#    上游不会自己改成 Err（属行为变更），升级 melib 时手工重打这四处。
+#    b 属新增接口、c/d/e 属行为变更，上游都不会有，升级 melib 时手工重打这五处。
 
 on:
   schedule:
