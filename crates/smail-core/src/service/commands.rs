@@ -45,7 +45,43 @@ impl ServiceInner {
                     if let Conn::Up { backend, .. } = &conn {
                         // 用户切文件夹：允许探测短路（无变化则省整包拉取）
                         if self.sync_folder(&**backend, store, &folder, true).is_some() {
-                            *pending_sync = Some(folder);
+                            // 失败且是标准文件夹：可能是服务器映射缺失（侧栏
+                            // 合成行点击）——ensure 建文件夹后用真实路径重试
+                            let kind = smail_backend::folder_kind(&folder);
+                            let ensured = match kind {
+                                smail_backend::FolderKind::Trash => {
+                                    (**backend).ensure_trash_folder().ok()
+                                }
+                                smail_backend::FolderKind::Junk => {
+                                    (**backend).ensure_junk_folder().ok()
+                                }
+                                smail_backend::FolderKind::Archive => {
+                                    (**backend).ensure_archive_folder().ok()
+                                }
+                                smail_backend::FolderKind::Sent => {
+                                    (**backend).ensure_sent_folder().ok()
+                                }
+                                _ => None,
+                            };
+                            if let Some(real) = ensured {
+                                self.last_sync.borrow_mut().remove(&real);
+                                if self
+                                    .sync_folder(&**backend, store, &real, false)
+                                    .is_none()
+                                {
+                                    // 真实路径与合成名不同（如 QQ 的废纸篓是
+                                    // Deleted Messages）：把导航修正到真实路径
+                                    if real != folder {
+                                        *current_folder = Some(real.clone());
+                                        self.emit(Event::Status(self.trf(
+                                            "已定位到 {}",
+                                            "Located at {}",
+                                            &[&real],
+                                        )));
+                                    }
+                                    *pending_sync = None;
+                                }
+                            }
                         }
                     } else {
                         *pending_sync = Some(folder);

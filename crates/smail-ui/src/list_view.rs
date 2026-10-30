@@ -146,30 +146,49 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     for (i, name) in state.account_names.iter().enumerate() {
         sidebar = sidebar.push(text(name.clone()).size(11).style(theme::secondary_text));
         sidebar = sidebar.push(Space::new().height(2));
-        let drafts_cur = state
+        // 文件夹按固定优先级排序（收件箱→草稿→已发送→垃圾→归档→废纸篓→其他）：
+        // 服务器 LIST 的字典序无意义；本地草稿行插在收件箱之后
+        let mut acct_folders: Vec<smail_core::FolderInfo> = state
             .nav
-            .cur
-            .as_ref()
-            .map(|(a, c)| *a == i && c == "__drafts__")
-            == Some(true);
-        let draft_count = state.drafts.iter().filter(|(a, _)| *a == i).count();
-        sidebar = sidebar.push(
-            button(
-                text(format!(
-                    "  {} {}",
-                    if drafts_cur { "▸" } else { " " },
-                    if draft_count > 0 {
-                        crate::lang::f(state.l().drafts_n, &[&draft_count])
-                    } else {
-                        state.l().drafts.to_string()
-                    }
-                ))
-                .size(13),
-            )
-            .on_press(Message::FolderSelected(i, "__drafts__".into()))
-            .padding([3, 6])
-            .style(move |t, st| theme::sidebar_item(t, st, drafts_cur)),
-        );
+            .folders
+            .iter()
+            .filter(|(a, _)| *a == i)
+            .map(|(_, f)| f.clone())
+            .collect();
+        // 标准文件夹恒定显示：清空废纸篓后本地索引无行、文件夹从列表消失，
+        // 下次广播又出现——侧栏闪烁。缺失时合成规范名行（unseen=0），
+        // 点击后服务端 ensure 命中已有文件夹或创建
+        let defaults: [(smail_core::FolderKind, &str); 5] = [
+            (smail_core::FolderKind::Inbox, "INBOX"),
+            (smail_core::FolderKind::Sent, "Sent Messages"),
+            (smail_core::FolderKind::Junk, "Junk"),
+            (smail_core::FolderKind::Archive, "Archive"),
+            (smail_core::FolderKind::Trash, "Trash"),
+        ];
+        for (kind, path) in defaults {
+            if !acct_folders.iter().any(|f| f.kind == kind) {
+                acct_folders.push(smail_core::FolderInfo {
+                    path: path.to_string(),
+                    kind,
+                    unseen: 0,
+                    total: 0,
+                });
+            }
+        }
+        acct_folders.sort_by_key(|f| {
+            let kind_w = match f.kind {
+                smail_core::FolderKind::Inbox => 0,
+                smail_core::FolderKind::Drafts => 1,
+                smail_core::FolderKind::Sent => 2,
+                smail_core::FolderKind::Junk => 3,
+                smail_core::FolderKind::Archive => 4,
+                smail_core::FolderKind::Trash => 5,
+                smail_core::FolderKind::Plain => 6,
+            };
+            (kind_w, f.path.clone())
+        });
+        // 本地草稿行插在收件箱之后（排序位次 1）；始终显示入口
+        let mut drafts_pushed = false;
         let (ob_p, ob_f) = state.outbox_counts.get(&i).copied().unwrap_or((0, 0));
         if ob_p + ob_f > 0 {
             let ob_cur = state
@@ -195,10 +214,38 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .style(move |t, st| theme::sidebar_item(t, st, ob_cur)),
             );
         }
-        for (_a, f) in state.nav.folders.iter().filter(|(a, _)| *a == i) {
+        for f in &acct_folders {
             // 服务器 Drafts 由本地草稿行代表（避免双入口双数据源）
             if f.kind == smail_core::FolderKind::Drafts {
                 continue;
+            }
+            // 本地草稿行插在收件箱之后（固定排序位次 1）
+            if f.kind == smail_core::FolderKind::Inbox && !drafts_pushed {
+                drafts_pushed = true;
+                let drafts_cur = state
+                    .nav
+                    .cur
+                    .as_ref()
+                    .map(|(a, c)| *a == i && c == "__drafts__")
+                    == Some(true);
+                let draft_count = state.drafts.iter().filter(|(a, _)| *a == i).count();
+                sidebar = sidebar.push(
+                    button(
+                        text(format!(
+                            "  {} {}",
+                            if drafts_cur { "▸" } else { " " },
+                            if draft_count > 0 {
+                                crate::lang::f(state.l().drafts_n, &[&draft_count])
+                            } else {
+                                state.l().drafts.to_string()
+                            }
+                        ))
+                        .size(13),
+                    )
+                    .on_press(Message::FolderSelected(i, "__drafts__".into()))
+                    .padding([3, 6])
+                    .style(move |t, st| theme::sidebar_item(t, st, drafts_cur)),
+                );
             }
             // 层级树：按 '/' 深度缩进；特殊文件夹显示本地化名（选中/操作仍用全路径）
             let depth = f.path.matches('/').count();

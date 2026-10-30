@@ -253,6 +253,11 @@ pub trait MailBackend: Send + Sync {
     fn ensure_junk_folder(&self) -> Result<String> {
         Err(BackendError::Other("该后端不支持垃圾标记".into()))
     }
+    /// 已发送：找到既有（sent/已发送/Sent Messages），没有则新建。
+    /// 侧栏合成行点击（服务器映射缺失时）与发信归档共用。默认不支持
+    fn ensure_sent_folder(&self) -> Result<String> {
+        Err(BackendError::Other("该后端不支持已发送".into()))
+    }
     /// 废纸篓：找到既有（trash/deleted/已删除/废纸篓），没有则新建 Trash。
     /// 「删除=进废纸篓可恢复」语义用（Foxmail/Outlook 惯例）。默认不支持
     fn ensure_trash_folder(&self) -> Result<String> {
@@ -457,6 +462,18 @@ impl MailBackend for MelibBackend {
             return Ok(existing.clone());
         }
         let name = "Trash".to_string();
+        self.create_folder(&name)?;
+        Ok(name)
+    }
+
+    fn ensure_sent_folder(&self) -> Result<String> {
+        if let Some(existing) = self.folders_lock().keys().find(|p| {
+            let l = p.to_lowercase();
+            l.contains("sent") || p.contains("已发送")
+        }) {
+            return Ok(existing.clone());
+        }
+        let name = "Sent Messages".to_string();
         self.create_folder(&name)?;
         Ok(name)
     }

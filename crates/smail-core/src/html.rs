@@ -76,7 +76,45 @@ pub fn html_to_markdown(html: &str) -> String {
             normalized.push('\n');
         }
     }
-    normalized.trim().to_string()
+    // 超长无空格串（跟踪链接、base64）插零宽断点：iced text 按词换行，
+    // 单个超长词会撑破容器把阅读窗右缘推出视口
+    break_long_tokens(normalized.trim())
+}
+
+/// 超长无空格连续串（跟踪链接、base64）插零宽断点 U+200B：
+/// iced 的 text 只按词换行，单个超长词会把容器撑破、把阅读窗右缘推出
+/// 视口（信头日期被裁切的根因）。含 markdown 链接语法的行跳过——
+/// 插入会破坏 `[文本](URL)` 的点击结构
+fn break_long_tokens(s: &str) -> String {
+    if s.contains("](") {
+        return s.to_string();
+    }
+    // 按行处理：列表/标题/段落的换行结构必须保留（否则 markdown 塌成一行）
+    s.lines()
+        .map(|line| {
+            // 行首缩进原样保留（嵌套列表的层级缩进是 markdown 语义）
+            let indent_len = line.len() - line.trim_start().len();
+            let indent = &line[..indent_len];
+            let mut out = String::from(indent);
+            for (n, word) in line[indent_len..].split_whitespace().enumerate() {
+                if n > 0 {
+                    out.push(' ');
+                }
+                if word.chars().count() > 40 {
+                    for (i, ch) in word.chars().enumerate() {
+                        out.push(ch);
+                        if (i + 1) % 24 == 0 && i + 1 < word.chars().count() {
+                            out.push('\u{200b}');
+                        }
+                    }
+                } else {
+                    out.push_str(word);
+                }
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 渲染递归深度上限：恶意邮件可嵌套上万层标签。超过后不再下钻——
@@ -574,5 +612,32 @@ mod adversarial_tests {
         html.push_str("<p>六十层内的正文</p>");
         let md = html_to_markdown(&html);
         assert!(md.contains("六十层内的正文"), "{md}");
+    }
+}
+
+#[cfg(test)]
+mod long_token_tests {
+    use super::break_long_tokens;
+
+    #[test]
+    fn inserts_zwsp_in_long_words() {
+        let url = format!("https://x.example.com/{}", "a".repeat(120));
+        let out = break_long_tokens(&url);
+        assert!(out.contains('\u{200b}'), "长词必须插入零宽断点");
+        assert!(!out.contains('\n'), "只插零宽断点不换行");
+        let no_zw = out.replace('\u{200b}', "");
+        assert_eq!(no_zw, url, "剥除断点后内容不变");
+    }
+
+    #[test]
+    fn short_words_untouched() {
+        let s = "普通 正文 保持 原样";
+        assert_eq!(break_long_tokens(s), s);
+    }
+
+    #[test]
+    fn link_lines_skipped() {
+        let s = "[限时抢购](https://links.example.com/u/click?_t=aaaa)";
+        assert_eq!(break_long_tokens(s), s, "链接行不插断点（保护点击结构）");
     }
 }
