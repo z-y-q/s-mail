@@ -394,6 +394,53 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.contact_search = s;
             Task::none()
         }
+        // ---------------- 对齐 Apple Mail 邮箱菜单 ----------------
+        Message::MailboxPrev | Message::MailboxNext => {
+            let prev = matches!(message, Message::MailboxPrev);
+            let acct = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+            let seq = state.mailbox_cycle(acct);
+            if seq.len() < 2 {
+                return Task::none();
+            }
+            let cur = state
+                .nav
+                .cur
+                .as_ref()
+                .map(|(_, f)| f.clone())
+                .unwrap_or_else(|| "INBOX".into());
+            let idx = seq.iter().position(|p| *p == cur).unwrap_or(0);
+            let next = if prev {
+                (idx + seq.len() - 1) % seq.len()
+            } else {
+                (idx + 1) % seq.len()
+            };
+            update(state, Message::FolderSelected(acct, seq[next].clone()))
+        }
+        Message::MarkAllRead => {
+            // 当前邮箱全部标为已读：批量已读管线复用（服务器批量 STORE）
+            let hashes: Vec<i64> = state
+                .rows
+                .iter()
+                .filter(|(a, _)| {
+                    Some(*a) == state.nav.cur.as_ref().map(|(x, _)| *x)
+                })
+                .map(|(_, r)| r.envelope_hash)
+                .collect();
+            if hashes.is_empty() {
+                return Task::none();
+            }
+            let acct = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
+            state.send(acct, Cmd::BatchFlags { hashes, seen: Some(true), flagged: None });
+            Task::none()
+        }
+        Message::ExpandAllThreads => {
+            state.expand_all_threads();
+            Task::none()
+        }
+        Message::CollapseAllThreads => {
+            state.collapse_all_threads();
+            Task::none()
+        }
         Message::ClipboardCopy(text) => {
             state.statuses.insert(
                 state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),

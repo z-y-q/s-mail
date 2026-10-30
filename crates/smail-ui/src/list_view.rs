@@ -42,6 +42,23 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         clip(&state.statuses.get(&0).cloned().unwrap_or_default())
     };
 
+    // 会话视图下才有意义：全部展开/折叠当前邮箱的会话（平铺视图隐藏）
+    let expand_collapse: Element<Message> = if state.nav.threaded {
+        row![
+            button(text(state.l().expand_all).size(13))
+                .on_press(Message::ExpandAllThreads)
+                .padding([4, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().collapse_all).size(13))
+                .on_press(Message::CollapseAllThreads)
+                .padding([4, 8])
+                .style(theme::ghost_button),
+        ]
+        .spacing(4)
+        .into()
+    } else {
+        Space::new().width(0).into()
+    };
     let topbar = container(
         row![
             button(text(state.l().compose_new).size(13))
@@ -65,6 +82,8 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .on_press(Message::ToggleThreading)
             .padding([4, 8])
             .style(theme::ghost_button),
+            // 会话视图下才有意义：全部展开/折叠当前邮箱的会话
+            expand_collapse,
             text_input_search(state),
             button(text("↻").size(13))
                 .on_press(Message::ManualRefresh)
@@ -468,6 +487,10 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         state.nav.list_filter == ListFilter::Flagged
                     ),
                     Space::new().width(Length::Fill),
+                    button(text(state.l().mark_all_read).size(11))
+                        .on_press(Message::MarkAllRead)
+                        .padding([2, 8])
+                        .style(theme::ghost_button),
                     button(text(sort_label).size(11))
                         .on_press(Message::ToggleListSort)
                         .padding([2, 8])
@@ -514,14 +537,24 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     if let Some(fb) = filter_bar {
         list = list.push(fb);
     }
-    // Trash 视图：清空废纸篓（含确认条——不可恢复操作）
-    if !is_drafts && !is_outbox && state.cur_is_trash_folder() && !state.rows.is_empty() {
+    // 废纸篓/垃圾视图：整箱清空入口（含确认条——不可恢复操作）
+    let cur_junk = !is_drafts && !is_outbox && state.cur_is_junk_folder();
+    if !is_drafts
+        && !is_outbox
+        && (state.cur_is_trash_folder() || cur_junk)
+        && !state.rows.is_empty()
+    {
+        let (empty_label, empty_q) = if cur_junk {
+            (state.l().empty_junk, state.l().empty_junk_q)
+        } else {
+            (state.l().empty_trash, state.l().empty_trash_q)
+        };
         if state.pending_empty_trash {
             let n = state.rows.len();
             list = list.push(
                 container(
                     row![
-                        text(crate::lang::f(state.l().empty_trash_q, &[&n])).size(13),
+                        text(crate::lang::f(empty_q, &[&n])).size(13),
                         button(text(state.l().perm_delete).size(13))
                             .on_press(Message::EmptyTrashConfirm)
                             .style(button::danger)
@@ -539,7 +572,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             );
         } else {
             list = list.push(
-                button(text(state.l().empty_trash).size(11))
+                button(text(empty_label).size(11))
                     .on_press(Message::EmptyTrashRequest)
                     .padding([2, 8])
                     .style(button::danger),

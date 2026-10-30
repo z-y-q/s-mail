@@ -318,6 +318,15 @@ pub(crate) enum Message {
     ContextMenuClose,
     /// 通讯录搜索过滤词（设置页）
     ContactSearchInput(String),
+    // ---- 对齐 Apple Mail 邮箱菜单 ----
+    /// ⌥↑/⌥↓：在邮箱序列中循环切换（与侧栏同序）
+    MailboxPrev,
+    MailboxNext,
+    /// 当前邮箱全部标为已读
+    MarkAllRead,
+    /// 会话视图全局展开/折叠
+    ExpandAllThreads,
+    CollapseAllThreads,
     // ---- 对齐 Apple Mail：地址复制 / 发件人入通讯录 / 附件转发 ----
     /// 复制任意文本到系统剪贴板（地址、邮箱链接等），状态行给反馈
     ClipboardCopy(String),
@@ -470,6 +479,17 @@ fn subscription(state: &State) -> Subscription<Message> {
                     }
                     iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
                         Some(Message::ComposeShortcut(crate::ComposeKey::SaveDraft))
+                    }
+                    _ => None,
+                }
+            } else if modifiers.alt() {
+                // ⌥↑/⌥↓：邮箱循环（Apple Mail「前往上/下一个邮箱」惯例）
+                match &key {
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => {
+                        Some(Message::MailboxPrev)
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
+                        Some(Message::MailboxNext)
                     }
                     _ => None,
                 }

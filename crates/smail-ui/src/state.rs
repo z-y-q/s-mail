@@ -602,17 +602,100 @@ impl State {
 
     /// 当前文件夹是否废纸篓（删除确认文案/语义提示用）
     pub(crate) fn cur_is_trash_folder(&self) -> bool {
-        self.nav
-            .cur
-            .as_ref()
-            .and_then(|(a, f)| {
-                self.nav
-                    .folders
-                    .iter()
-                    .find(|(fa, fi)| fa == a && &fi.path == f)
+        self.cur_folder_kind() == Some(smail_core::FolderKind::Trash)
+    }
+
+    pub(crate) fn cur_is_junk_folder(&self) -> bool {
+        self.cur_folder_kind() == Some(smail_core::FolderKind::Junk)
+    }
+
+    /// 当前文件夹的 kind（本地直读路径无 FolderInfo 时按合成名判定）
+    pub(crate) fn cur_folder_kind(&self) -> Option<smail_core::FolderKind> {
+        let (acct, folder) = self.nav.cur.as_ref()?;
+        if let Some((_, fi)) = self
+            .nav
+            .folders
+            .iter()
+            .find(|(fa, fi)| fa == acct && &fi.path == folder)
+        {
+            return Some(fi.kind);
+        }
+        // 本地直读/合成行：按名称识别（与 list_view 合成规则一致）
+        Some(match folder.as_str() {
+            "INBOX" => smail_core::FolderKind::Inbox,
+            "Sent Messages" => smail_core::FolderKind::Sent,
+            "Junk" => smail_core::FolderKind::Junk,
+            "Archive" => smail_core::FolderKind::Archive,
+            "Trash" => smail_core::FolderKind::Trash,
+            _ => smail_core::FolderKind::Plain,
+        })
+    }
+
+    /// 邮箱循环序列（上一个/下一个邮箱快捷键用）：与侧栏同序——
+    /// 草稿（恒显）→ 收件箱 → 已发送 → 垃圾 → 归档 → 废纸篓 → 其他
+    pub(crate) fn mailbox_cycle(&self, acct: usize) -> Vec<String> {
+        let mut seq = vec!["__drafts__".to_string()];
+        let mut server: Vec<smail_core::FolderInfo> = self
+            .nav
+            .folders
+            .iter()
+            .filter(|(a, _)| *a == acct)
+            .map(|(_, f)| f.clone())
+            .collect();
+        let defaults: [(smail_core::FolderKind, &str); 5] = [
+            (smail_core::FolderKind::Inbox, "INBOX"),
+            (smail_core::FolderKind::Sent, "Sent Messages"),
+            (smail_core::FolderKind::Junk, "Junk"),
+            (smail_core::FolderKind::Archive, "Archive"),
+            (smail_core::FolderKind::Trash, "Trash"),
+        ];
+        for (kind, path) in defaults {
+            if !server.iter().any(|f| f.kind == kind) {
+                server.push(smail_core::FolderInfo {
+                    path: path.to_string(),
+                    kind,
+                    unseen: 0,
+                    total: 0,
+                });
+            }
+        }
+        server.sort_by_key(|f| match f.kind {
+            smail_core::FolderKind::Inbox => 0,
+            smail_core::FolderKind::Drafts => 1,
+            smail_core::FolderKind::Sent => 2,
+            smail_core::FolderKind::Junk => 3,
+            smail_core::FolderKind::Archive => 4,
+            smail_core::FolderKind::Trash => 5,
+            smail_core::FolderKind::Plain => 6,
+        });
+        for f in server {
+            if f.kind != smail_core::FolderKind::Drafts {
+                seq.push(f.path);
+            }
+        }
+        seq
+    }
+
+    /// 会话视图全局展开：当前文件夹全部会话根置为展开
+    pub(crate) fn expand_all_threads(&mut self) {
+        let roots: Vec<i64> = self
+            .mail_display
+            .iter()
+            .filter_map(|d| match &d.kind {
+                crate::DispKind::ThreadRoot { .. } => Some(d.row.envelope_hash),
+                _ => None,
             })
-            .map(|(_, fi)| fi.kind == smail_core::FolderKind::Trash)
-            .unwrap_or(false)
+            .collect();
+        for h in roots {
+            self.expanded.insert(h, true);
+        }
+        self.rebuild_display();
+    }
+
+    /// 会话视图全局折叠
+    pub(crate) fn collapse_all_threads(&mut self) {
+        self.expanded.clear();
+        self.rebuild_display();
     }
 
     pub(crate) fn send(&self, account: usize, cmd: Cmd) {

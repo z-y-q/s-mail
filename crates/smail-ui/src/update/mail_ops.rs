@@ -647,7 +647,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
         Message::EmptyTrashConfirm => {
             state.pending_empty_trash = false;
             if let Some((a, f)) = state.nav.cur.clone() {
-                if state.cur_is_trash_folder() {
+                // 废纸篓与垃圾文件夹同一整箱 EXPUNGE 语义
+                if state.cur_is_trash_folder() || state.cur_is_junk_folder() {
                     state.send(a, Cmd::EmptyTrash(f));
                 }
             }
