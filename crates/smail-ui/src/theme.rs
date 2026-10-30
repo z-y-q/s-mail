@@ -309,6 +309,28 @@ pub fn unread_pill(t: &Theme) -> container::Style {
     }
 }
 
+/// 右键菜单浮层：不透明底 + 细边框 + 圆角（压在列表行上必须自遮底色）
+pub fn context_menu(t: &Theme) -> container::Style {
+    container::Style {
+        background: Some(
+            match t {
+                Theme::Dark => Color::from_rgb(0.17, 0.17, 0.19),
+                _ => Color::from_rgb(0.98, 0.98, 0.99),
+            }
+            .into(),
+        ),
+        border: iced::Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: match t {
+                Theme::Dark => Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+                _ => Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+            },
+        },
+        ..Default::default()
+    }
+}
+
 /// 星标色
 pub fn star_color() -> Color {
     gold()

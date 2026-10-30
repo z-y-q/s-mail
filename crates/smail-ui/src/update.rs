@@ -343,6 +343,57 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.send(acct, Cmd::DeleteContact(id));
             Task::none()
         }
+        // ---------------- 三栏分割条拖拽 ----------------
+        Message::SplitPress(kind) => {
+            // 起始宽度取当前值（否则二次拖拽会从默认宽跳变）
+            let start_w = match kind {
+                crate::SplitKind::Sidebar => state.sidebar_w,
+                crate::SplitKind::List => state.list_w,
+            };
+            state.split_drag = Some((kind, None, start_w));
+            Task::none()
+        }
+        Message::SplitMoved(x) => {
+            if let Some((kind, start_x, start_w)) = &mut state.split_drag {
+                // 起点 x 由拖拽后的第一条 CursorMoved 填充
+                let sx = match start_x {
+                    Some(v) => *v,
+                    None => {
+                        *start_x = Some(x);
+                        x
+                    }
+                };
+                let new_w = kind.clamp_width(*start_w + (x - sx));
+                match kind {
+                    crate::SplitKind::Sidebar => state.sidebar_w = new_w,
+                    crate::SplitKind::List => state.list_w = new_w,
+                }
+            }
+            Task::none()
+        }
+        Message::SplitReleased => {
+            state.split_drag = None;
+            // 松手即持久化列宽（一次写盘，拖拽过程不写）
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
+        // ---------------- 行右键菜单 ----------------
+        Message::ContextMenuOpen(acct, hash) => {
+            state.context_menu = Some((acct, hash));
+            Task::none()
+        }
+        Message::ContextMenuClose => {
+            state.context_menu = None;
+            Task::none()
+        }
+        Message::ContextMenuPick(inner) => {
+            state.context_menu = None;
+            update(state, *inner)
+        }
+        Message::ContactSearchInput(s) => {
+            state.contact_search = s;
+            Task::none()
+        }
         m @ (Message::SetupOpen
         | Message::SetupClose
         | Message::SetupPreset(..)

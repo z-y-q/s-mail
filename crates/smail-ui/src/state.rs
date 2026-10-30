@@ -229,6 +229,15 @@ pub(crate) struct State {
     ///（all_of[1] + actions[1] 的常用形态可完整编辑；多条件/多动作的
     /// 高级规则只读摘要 + 删除，不提供破坏性编辑）
     pub(crate) rule_edit: Option<(usize, Vec<crate::setup::RuleDraft>)>,
+    /// 三栏列宽（拖拽分割条调整，prefs 记忆）
+    pub(crate) sidebar_w: f32,
+    pub(crate) list_w: f32,
+    /// 拖拽中的分割条 + 起始光标 x（首个 CursorMoved 填充）+ 起始宽度
+    pub(crate) split_drag: Option<(SplitKind, Option<f32>, f32)>,
+    /// 右键菜单打开中：（账号, hash）；菜单行渲染在该邮件行后
+    pub(crate) context_menu: Option<(usize, i64)>,
+    /// 通讯录搜索过滤词（设置页，前端过滤）
+    pub(crate) contact_search: String,
     /// 本地索引只读连接（按账号懒打开）：切文件夹时 UI 直读缓存行，
     /// 不等服务线程——它可能正堵在长同步（重连全量拉取/IDLE 变更）上，
     /// 命令队列几十秒不被消费，等回包=「一同步就看不见邮件」
@@ -248,6 +257,22 @@ pub(crate) enum ListFilter {
     Flagged,
 }
 
+/// 可拖拽的分割条：侧栏↔列表、列表↔阅读
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplitKind {
+    Sidebar,
+    List,
+}
+
+impl SplitKind {
+    pub(crate) fn clamp_width(&self, w: f32) -> f32 {
+        match self {
+            SplitKind::Sidebar => w.clamp(150.0, 320.0),
+            SplitKind::List => w.clamp(300.0, 560.0),
+        }
+    }
+}
+
 impl State {
     /// 当前语言字符串表
     pub(crate) fn l(&self) -> &'static crate::lang::Lex {
@@ -261,6 +286,7 @@ impl State {
         let (cfg_path, data_root) = paths();
         let (boot_theme, boot_follow, boot_lang, boot_ai_ack, boot_win) = boot_prefs(&data_root);
         let boot_last_view = crate::lang::load_prefs(&data_root).last_view;
+        let boot_cols = crate::lang::load_prefs(&data_root).columns;
         match Session::start(&cfg_path, &data_root) {
             Ok((session, rx)) => {
                 let accounts = smail_core::load_accounts(&cfg_path).unwrap_or_default();
@@ -338,6 +364,11 @@ impl State {
                     signature_edit: None,
                     sync_edit: None,
                     rule_edit: None,
+                    sidebar_w: boot_cols.as_ref().map(|c| c.0).unwrap_or(200.0),
+                    list_w: boot_cols.as_ref().map(|c| c.1).unwrap_or(380.0),
+                    split_drag: None,
+                    context_menu: None,
+                    contact_search: String::new(),
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
@@ -474,6 +505,11 @@ impl State {
                     signature_edit: None,
                     sync_edit: None,
                     rule_edit: None,
+                    sidebar_w: 200.0,
+                    list_w: 380.0,
+                    split_drag: None,
+                    context_menu: None,
+                    contact_search: String::new(),
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
@@ -501,6 +537,7 @@ impl State {
             ai_ack: self.ai.ack,
             win: self.prefs.win_geom,
             last_view: self.prefs.last_view.clone(),
+            columns: Some((self.sidebar_w, self.list_w)),
         }
     }
 
@@ -592,6 +629,8 @@ pub(crate) fn persist_and_reload(
     state.body_req = None;
     state.sync_edit = None;
     state.rule_edit = None;
+    state.context_menu = None;
+    state.contact_search.clear();
     // 账号集变化：只读连接指向旧 slug 的库，全部作废重开
     state.local_stores.clear();
     state.unified_contrib.clear(); // 死键残留会让已删账号的邮件混入聚合

@@ -318,6 +318,20 @@ pub(crate) enum Message {
     RuleEditDelete(usize),
     RuleEditSave,
     RuleEditCancel,
+    // ---- 三栏分割条拖拽 + 行右键菜单 + 通讯录搜索 ----
+    /// 按下分割条（无坐标；起点 x 由首条 CursorMoved 填充）
+    SplitPress(crate::SplitKind),
+    /// 拖拽移动（全局鼠标流；仅拖拽态订阅）
+    SplitMoved(f32),
+    /// 松开：结束拖拽并持久化列宽
+    SplitReleased,
+    /// 右键行打开菜单（acct, hash）
+    ContextMenuOpen(usize, i64),
+    /// 菜单项点击：关菜单后转发原动作
+    ContextMenuPick(Box<Message>),
+    ContextMenuClose,
+    /// 通讯录搜索过滤词（设置页）
+    ContactSearchInput(String),
     // ---- 第 1 批标配：退订 / 归档 / 导出 ----
     /// List-Unsubscribe 退订（http URL 开浏览器；mailto 预填写信）
     Unsubscribe(String),
@@ -474,6 +488,21 @@ fn subscription(state: &State) -> Subscription<Message> {
     };
     // 窗口几何记忆：Resized/Moved 更新内存，节流写盘
     let window_sub = iced::window::events().map(|(_id, ev)| Message::WindowGeometry(ev));
+    // 分割条拖拽：仅拖拽态订阅全局鼠标流（CursorMoved 更新列宽，
+    // ButtonReleased 结束；平时零订阅零开销）
+    let split_sub = if state.split_drag.is_some() {
+        iced::event::listen_with(|event, _status, _id| match event {
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                Some(Message::SplitMoved(position.x))
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                Some(Message::SplitReleased)
+            }
+            _ => None,
+        })
+    } else {
+        Subscription::none()
+    };
     // 托盘事件（std mpsc → 轮询转 Message；100ms 足够托盘交互）
     let tray_sub = match crate::tray::take_receiver() {
         Some(rx) => {
@@ -507,7 +536,14 @@ fn subscription(state: &State) -> Subscription<Message> {
         None => Subscription::none(),
     };
     let Some(events) = state.events.clone() else {
-        return Subscription::batch([keyboard, theme_sub, window_sub, autosave_sub, tray_sub]);
+        return Subscription::batch([
+            keyboard,
+            theme_sub,
+            window_sub,
+            autosave_sub,
+            tray_sub,
+            split_sub,
+        ]);
     };
     let events_sub = Subscription::run_with(events, |events: &EventTap| {
         let events = events.rx.clone();
@@ -539,6 +575,7 @@ fn subscription(state: &State) -> Subscription<Message> {
         window_sub,
         autosave_sub,
         tray_sub,
+        split_sub,
         events_sub,
     ])
 }

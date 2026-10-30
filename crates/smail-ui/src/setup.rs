@@ -746,9 +746,16 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
     }
 
     // 通讯录（收信自动收集；按账号分组展示 + 删除）
-    let mut contacts_col = column![text(state.l().contacts_hdr)
-        .size(13)
-        .font(theme::ui_font(iced::font::Weight::Semibold))]
+    let mut contacts_col = column![
+        text(state.l().contacts_hdr)
+            .size(13)
+            .font(theme::ui_font(iced::font::Weight::Semibold)),
+        iced::widget::text_input("搜索通讯录", &state.contact_search)
+            .on_input(Message::ContactSearchInput)
+            .size(12)
+            .width(200)
+            .padding(4),
+    ]
     .spacing(4);
     if state.contacts_full.is_empty() {
         contacts_col = contacts_col.push(
@@ -764,11 +771,18 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
             .cloned()
             .unwrap_or_else(|| crate::lang::f(state.l().acct_n, &[&acct]));
         // 展示层按归一化邮箱合并：老库里大小写/空白变体的重复行收敛为一行
-        //（新写入已在 upsert 时归一化，这里兜底历史数据）
+        //（新写入已在 upsert 时归一化，这里兜底历史数据）；
+        // 搜索词在前端过滤（名字或地址包含，不区分大小写）
+        let needle = state.contact_search.trim().to_lowercase();
         let mut seen: std::collections::HashSet<String> = Default::default();
         let deduped: Vec<&smail_store::ContactRow> = rows
             .iter()
             .filter(|c| seen.insert(c.email.trim().to_lowercase()))
+            .filter(|c| {
+                needle.is_empty()
+                    || c.email.to_lowercase().contains(&needle)
+                    || c.name.to_lowercase().contains(&needle)
+            })
             .collect();
         contacts_col = contacts_col.push(
             text(crate::lang::f(

@@ -8,7 +8,7 @@
 //! - **批量操作栏**：选择复选框 + 操作按钮
 //! - **小组件**：搜索输入框、新建文件夹输入框
 
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, text, Space};
 use iced::{Element, Length};
 
 use crate::{list, theme, unix_to_local_short, DispKind, ListFilter, Message, State};
@@ -331,9 +331,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         sidebar = sidebar.push(Space::new().height(8));
     }
     let sidebar = container(scrollable(sidebar))
-        .width(200)
+        .width(state.sidebar_w)
         .height(Length::Fill)
         .style(theme::sidebar_bg);
+    // 拖拽分割条：按住左右拖调列宽（全局鼠标流跟踪，松开持久化）
+    let split_sidebar = split_handle(crate::SplitKind::Sidebar);
+    let split_list = split_handle(crate::SplitKind::List);
 
     // 列表
     let cur_name = if state.nav.viewing_unified {
@@ -765,53 +768,52 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     };
                     // 会话根的选择框挂在最新一封（批量操作对象直觉是所见最新信）
                     let cb = select_checkbox(state, acct, *latest);
-                    list = list.push(
-                        row![
-                            cb,
-                            button(
-                                column![
-                                    row![
-                                        star_txt,
-                                        // 展开箭头只给多封会话（单封画箭头纯属噪音）
-                                        text(format!(
-                                            "{} {}{badge}",
-                                            if *count > 1 {
-                                                if expanded_now {
-                                                    "▾"
-                                                } else {
-                                                    "▸"
-                                                }
-                                            } else {
-                                                " "
-                                            },
-                                            if *unseen { "●" } else { "" },
-                                        ))
-                                        .size(13),
-                                        text(clean_subject(&r.subject)).size(13).font(
-                                            theme::ui_font(if *unseen {
-                                                iced::font::Weight::Semibold
-                                            } else {
-                                                iced::font::Weight::Normal
-                                            })
-                                        ),
-                                        Space::new().width(Length::Fill),
-                                        text(unix_to_local_short(*last_date))
-                                            .size(11)
-                                            .style(theme::secondary_text),
-                                    ],
-                                    text(format!("{last_from}{tag}"))
+                    let row_el: Element<Message> = row![
+                        cb,
+                        button(
+                            column![
+                                row![
+                                    star_txt,
+                                    // 展开箭头只给多封会话（单封画箭头纯属噪音）
+                                    text(format!(
+                                        "{} {}{badge}",
+                                        if *count > 1 {
+                                            if expanded_now { "▾" } else { "▸" }
+                                        } else {
+                                            " "
+                                        },
+                                        if *unseen { "●" } else { "" },
+                                    ))
+                                    .size(13),
+                                    text(clean_subject(&r.subject)).size(13).font(
+                                        theme::ui_font(if *unseen {
+                                            iced::font::Weight::Semibold
+                                        } else {
+                                            iced::font::Weight::Normal
+                                        })
+                                    ),
+                                    Space::new().width(Length::Fill),
+                                    text(unix_to_local_short(*last_date))
                                         .size(11)
                                         .style(theme::secondary_text),
-                                ]
-                                .spacing(2),
-                            )
-                            .on_press(Message::ThreadRootClicked(acct, r.envelope_hash, *latest))
-                            .padding([6, 8])
-                            .width(Length::Fill)
-                            .style(move |t, st| theme::list_row(t, st, is_sel)),
-                        ]
-                        .spacing(2),
-                    );
+                                ],
+                                text(format!("{last_from}{tag}"))
+                                    .size(11)
+                                    .style(theme::secondary_text),
+                            ]
+                            .spacing(2),
+                        )
+                        .on_press(Message::ThreadRootClicked(acct, r.envelope_hash, *latest))
+                        .padding([6, 8])
+                        .width(Length::Fill)
+                        .style(move |t, st| theme::list_row(t, st, is_sel)),
+                    ]
+                    .spacing(2)
+                    .into();
+                    list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
+                    if state.context_menu == Some((acct, r.envelope_hash)) {
+                        list = list.push(context_menu_row(acct, r.envelope_hash, r.flagged));
+                    }
                 }
                 DispKind::ThreadChild => {
                     let star_txt: Element<Message> = if r.flagged {
@@ -825,32 +827,35 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         text("").size(11).into()
                     };
                     let cb = select_checkbox(state, acct, r.envelope_hash);
-                    list = list.push(
-                        row![
-                            cb,
-                            button(
-                                column![
-                                    row![
-                                        star_txt,
-                                        text(format!("↳ {}", r.subject)).size(13),
-                                        Space::new().width(Length::Fill),
-                                        text(unix_to_local_short(r.date_unix))
-                                            .size(11)
-                                            .style(theme::secondary_text),
-                                    ],
-                                    text(format!("   {}", r.from_addr))
+                    let row_el: Element<Message> = row![
+                        cb,
+                        button(
+                            column![
+                                row![
+                                    star_txt,
+                                    text(format!("↳ {}", r.subject)).size(13),
+                                    Space::new().width(Length::Fill),
+                                    text(unix_to_local_short(r.date_unix))
                                         .size(11)
                                         .style(theme::secondary_text),
-                                ]
-                                .spacing(1),
-                            )
-                            .on_press(Message::RowSelected(acct, r.envelope_hash))
-                            .padding([4, 10])
-                            .width(Length::Fill)
-                            .style(move |t, st| theme::list_row(t, st, is_sel)),
-                        ]
-                        .spacing(2),
-                    );
+                                ],
+                                text(format!("   {}", r.from_addr))
+                                    .size(11)
+                                    .style(theme::secondary_text),
+                            ]
+                            .spacing(1),
+                        )
+                        .on_press(Message::RowSelected(acct, r.envelope_hash))
+                        .padding([4, 10])
+                        .width(Length::Fill)
+                        .style(move |t, st| theme::list_row(t, st, is_sel)),
+                    ]
+                    .spacing(2)
+                    .into();
+                    list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
+                    if state.context_menu == Some((acct, r.envelope_hash)) {
+                        list = list.push(context_menu_row(acct, r.envelope_hash, r.flagged));
+                    }
                 }
                 DispKind::Flat => {
                     let dot = if r.seen { "" } else { "●" };
@@ -870,48 +875,57 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         iced::font::Weight::Semibold
                     };
                     let cb = select_checkbox(state, acct, r.envelope_hash);
-                    list = list.push(
-                        row![
-                            cb,
-                            button(
-                                column![
-                                    row![
-                                        star_txt,
-                                        text(format!("{dot} {}", r.subject))
-                                            .size(13)
-                                            .font(theme::ui_font(subj_weight)),
-                                        Space::new().width(Length::Fill),
-                                        text(unix_to_local_short(r.date_unix))
-                                            .size(11)
-                                            .style(theme::secondary_text),
-                                    ],
-                                    if state.nav.in_search {
-                                        if let Some(snip) =
-                                            state.search_snippets.get(&r.envelope_hash)
-                                        {
+                    let row_el: Element<Message> = row![
+                        cb,
+                        button(
+                            column![
+                                row![
+                                    star_txt,
+                                    text(format!("{dot} {}", r.subject))
+                                        .size(13)
+                                        .font(theme::ui_font(subj_weight)),
+                                    Space::new().width(Length::Fill),
+                                    text(unix_to_local_short(r.date_unix))
+                                        .size(11)
+                                        .style(theme::secondary_text),
+                                ],
+                                if state.nav.in_search {
+                                    if let Some(snip) =
+                                        state.search_snippets.get(&r.envelope_hash)
+                                    {
+                                        Element::from(
                                             text(format!("  「{snip}」"))
                                                 .size(11)
-                                                .style(theme::secondary_text)
-                                        } else {
+                                                .style(theme::secondary_text),
+                                        )
+                                    } else {
+                                        Element::from(
                                             text(format!("{}{tag}", r.from_addr))
                                                 .size(11)
-                                                .style(theme::secondary_text)
-                                        }
-                                    } else {
+                                                .style(theme::secondary_text),
+                                        )
+                                    }
+                                } else {
+                                    Element::from(
                                         text(format!("{}{tag}", r.from_addr))
                                             .size(11)
-                                            .style(theme::secondary_text)
-                                    }
-                                ]
-                                .spacing(2),
-                            )
-                            .on_press(Message::RowSelected(acct, r.envelope_hash))
-                            .padding([6, 8])
-                            .width(Length::Fill)
-                            .style(move |t, st| theme::list_row(t, st, is_sel)),
-                        ]
-                        .spacing(2),
-                    );
+                                            .style(theme::secondary_text),
+                                    )
+                                }
+                            ]
+                            .spacing(2),
+                        )
+                        .on_press(Message::RowSelected(acct, r.envelope_hash))
+                        .padding([6, 8])
+                        .width(Length::Fill)
+                        .style(move |t, st| theme::list_row(t, st, is_sel)),
+                    ]
+                    .spacing(2)
+                    .into();
+                    list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
+                    if state.context_menu == Some((acct, r.envelope_hash)) {
+                        list = list.push(context_menu_row(acct, r.envelope_hash, r.flagged));
+                    }
                 }
             }
         }
@@ -1007,7 +1021,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 Message::ListScrolled(vp.absolute_offset().y, vp.bounds().height)
             }),
     )
-    .width(380);
+    .width(state.list_w);
 
     let reader: Element<Message> = crate::reader::reader_view(state);
 
@@ -1089,10 +1103,76 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     }
     column![
         root,
-        row![sidebar, mail_list, reader]
+        row![sidebar, split_sidebar, mail_list, split_list, reader]
             .spacing(1)
             .height(Length::Fill),
     ]
+    .into()
+}
+
+/// 拖拽分割条：5px 窄条，按下启动全局拖拽（列宽实时跟随光标）
+fn split_handle(kind: crate::SplitKind) -> Element<'static, Message> {
+    mouse_area(
+        container(Space::new().width(Length::Fill))
+            .width(5)
+            .height(Length::Fill)
+            .style(|t| container::Style {
+                background: Some(theme::hover_tint(t).into()),
+                ..Default::default()
+            }),
+    )
+    .on_press(Message::SplitPress(kind))
+    .into()
+}
+
+/// 行右键包裹：右键打开该行的上下文菜单（左键行为不受影响）
+fn wrap_row_menu<'a>(
+    row_el: impl Into<Element<'a, Message>>,
+    acct: usize,
+    hash: i64,
+) -> Element<'a, Message> {
+    mouse_area(row_el.into())
+        .on_right_press(Message::ContextMenuOpen(acct, hash))
+        .into()
+}
+
+/// 右键菜单行：动作与阅读页操作条同源（点击后关菜单再转发）
+fn context_menu_row(
+    acct: usize,
+    hash: i64,
+    flagged: bool,
+) -> Element<'static, Message> {
+    let item = |label: String, msg: Message| -> Element<'static, Message> {
+        button(container(text(label).size(13)).width(Length::Fill))
+            .on_press(Message::ContextMenuPick(Box::new(msg)))
+            .padding([5, 12])
+            .width(Length::Fill)
+            .style(theme::ghost_button)
+            .into()
+    };
+    let star_label = if flagged {
+        "★ 取消星标".to_string()
+    } else {
+        "☆ 星标".to_string()
+    };
+    container(
+        column![
+            item("↩ 回复".into(), Message::Reply(acct, hash)),
+            item("↩↩ 全部回复".into(), Message::ReplyAll(acct, hash)),
+            item("➦ 转发".into(), Message::Forward(acct, hash)),
+            item(star_label, Message::ToggleStar(acct, hash, !flagged)),
+            item("标为未读".into(), Message::MarkUnread(acct, hash)),
+            item("移动到…".into(), Message::MoveTo(acct, hash)),
+            item("归档".into(), Message::ArchiveCurrent(acct, hash)),
+            item("标为垃圾".into(), Message::SpamCurrent(acct, hash)),
+            item("删除".into(), Message::AskDelete(acct, hash)),
+            item("关闭菜单".into(), Message::ContextMenuClose),
+        ]
+        .spacing(1)
+        .padding(4),
+    )
+    .width(170)
+    .style(theme::context_menu)
     .into()
 }
 
