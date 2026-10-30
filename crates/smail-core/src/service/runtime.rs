@@ -54,17 +54,21 @@ impl ServiceInner {
         // 离线优先：先广播本地文件夹（连接失败/无网时侧栏与缓存邮件照常可用）
         self.emit_folders_local(&store);
         // 存量邮件预览回填（v9 迁移前的老邮件 preview 为空）：后台线程读
-        // 本地 bodies 缓存解析生成，不占网络，不阻塞首屏
+        // 本地 bodies 缓存解析生成，不占网络，不阻塞首屏；完成后发事件
+        // 让 UI 重读当前文件夹（列表内存快照不会自己更新）
         {
             let data_dir = self.data_dir.clone();
+            let events = self.events.clone();
             std::thread::spawn(move || {
                 let Ok(backfill) = smail_store::Store::open(&data_dir.join("index.db")) else {
                     return;
                 };
-                for hash in backfill
-                    .hashes_missing_preview(2000)
-                    .unwrap_or_default()
-                {
+                let hashes = backfill.hashes_missing_preview(2000).unwrap_or_default();
+                let total = hashes.len();
+                if total == 0 {
+                    return;
+                }
+                for hash in hashes {
                     let path = data_dir.join("bodies").join(format!("{hash}.eml"));
                     let Ok(bytes) = std::fs::read(&path) else {
                         continue;
@@ -83,6 +87,7 @@ impl ServiceInner {
                     }
                     let _ = backfill.set_preview(hash, &smail_store::preview_from_body(&body));
                 }
+                let _ = events.send(crate::Event::PreviewsBackfilled { count: total });
             });
         }
         // 空间回收：空闲页 > 64MB 才 VACUUM（首屏已出，代价一次性且罕见）

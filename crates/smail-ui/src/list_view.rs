@@ -1242,6 +1242,10 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
                 .on_press(Message::BatchStar)
                 .padding([2, 8])
                 .style(theme::ghost_button),
+            Space::new().width(Length::Fill),
+        ]
+        .spacing(4),
+        row![
             button(text(state.l().batch_move).size(13))
                 .on_press(Message::BatchMoveOpen)
                 .padding([2, 8])

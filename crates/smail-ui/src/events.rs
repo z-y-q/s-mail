@@ -211,6 +211,26 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             }
             state.statuses.insert(acct, format!("草稿已保存（#{id}）"));
         }
+        Event::PreviewsBackfilled { count } => {
+            // 预览回填完成：当前文件夹是真实文件夹且非搜索态时重读本地库，
+            // 列表第三行预览立即出现（内存快照不会自己更新）
+            if count > 0 {
+                if let Some((acct, folder)) = state
+                    .nav
+                    .cur
+                    .clone()
+                    .filter(|(_, f)| f != "__drafts__" && f != "__outbox__" && f != "__all_inbox__")
+                    .filter(|_| !state.nav.in_search)
+                {
+                    state.rows = state.local_folder_rows(acct, &folder);
+                    state.rebuild_display();
+                }
+                state.statuses.insert(
+                    acct,
+                    format!("正文预览已生成（{count} 封）"),
+                );
+            }
+        }
         Event::DraftDeleted(_) | Event::MessageDeleted(_) => {}
         Event::FlagsChanged {
             hash,

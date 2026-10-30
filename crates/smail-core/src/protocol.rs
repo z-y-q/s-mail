@@ -237,4 +237,10 @@ pub enum Event {
         /// 已处理数
         processed: usize,
     },
+    /// 存量邮件预览回填完成（后台线程从本地 bodies 缓存生成）：
+    /// UI 收到后重读当前文件夹，列表第三行预览立即出现
+    PreviewsBackfilled {
+        /// 本次回填的邮件数
+        count: usize,
+    },
 }
