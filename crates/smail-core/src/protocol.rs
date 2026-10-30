@@ -76,6 +76,8 @@ pub enum Cmd {
     ListContactsFull,
     /// 通讯录删除条目
     DeleteContact(i64),
+    /// 通讯录添加/更新（将发件人加入联系人；名字空则只存地址）
+    AddContact { email: String, name: String },
     /// 导出原始 .eml 到指定路径（UI 先弹保存对话框拿路径）
     ExportEml {
         hash: i64,

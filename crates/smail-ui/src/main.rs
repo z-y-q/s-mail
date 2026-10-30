@@ -318,6 +318,13 @@ pub(crate) enum Message {
     ContextMenuClose,
     /// 通讯录搜索过滤词（设置页）
     ContactSearchInput(String),
+    // ---- 对齐 Apple Mail：地址复制 / 发件人入通讯录 / 附件转发 ----
+    /// 复制任意文本到系统剪贴板（地址、邮箱链接等），状态行给反馈
+    ClipboardCopy(String),
+    /// 将某封邮件的发件人加入通讯录（addr, name）
+    ContactAddFromSender(usize, i64),
+    /// 作为附件转发：新建写信窗，附件挂原邮件 .eml
+    ForwardAsAttachment(usize, i64),
     // ---- 多窗口：主窗/写信窗生命周期 ----
     /// boot 后主窗打开完成（回填 id）
     MainWindowOpened(iced::window::Id),
@@ -801,6 +808,14 @@ pub(crate) fn from_display_name(from_addr: &str) -> String {
         from_addr.to_string()
     } else {
         name
+    }
+}
+
+/// "名字 <a@b>" → "a@b"；无尖括号原样（复制地址/入通讯录用）
+pub(crate) fn addr_of(from_addr: &str) -> String {
+    match (from_addr.find('<'), from_addr.rfind('>')) {
+        (Some(a), Some(b)) if b > a => from_addr[a + 1..b].trim().to_string(),
+        _ => from_addr.trim().to_string(),
     }
 }
 

@@ -352,17 +352,42 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 &r.folder,
             );
             let recipients = reading.to_addrs.trim().to_string();
-            let left = column![
-                text(name.clone())
-                    .size(14)
-                    .font(theme::ui_font(iced::font::Weight::Semibold)),
-                (!recipients.is_empty()).then(|| {
-                    text(format!("收件人：{recipients}"))
-                        .size(11)
-                        .style(theme::secondary_text)
-                }),
-            ]
-            .spacing(2);
+            let sender_addr = crate::addr_of(&r.from_addr);
+            // 发件人名与收件人行：点击即复制地址（悬停变强调色提示可点）
+            let sender_btn = button(
+                container(
+                    row![
+                        text(name.clone())
+                            .size(14)
+                            .font(theme::ui_font(iced::font::Weight::Semibold)),
+                        text(format!(" ⧉ {sender_addr}"))
+                            .size(11)
+                            .style(theme::secondary_text),
+                    ]
+                    .spacing(4)
+                    .align_y(iced::alignment::Vertical::Center),
+                )
+                .width(Length::Fill),
+            )
+            .on_press(Message::ClipboardCopy(sender_addr.clone()))
+            .padding([2, 4])
+            .style(theme::ghost_button);
+            let mut left = column![sender_btn].spacing(2);
+            if !recipients.is_empty() {
+                left = left.push(
+                    button(
+                        container(
+                            text(format!("收件人：{recipients} ⧉"))
+                                .size(11)
+                                .style(theme::secondary_text),
+                        )
+                        .width(Length::Fill),
+                    )
+                    .on_press(Message::ClipboardCopy(recipients.clone()))
+                    .padding([2, 4])
+                    .style(theme::ghost_button),
+                );
+            }
             let right = column![
                 text(folder_label)
                     .size(11)

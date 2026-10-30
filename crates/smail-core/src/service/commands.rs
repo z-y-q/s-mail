@@ -635,6 +635,19 @@ impl ServiceInner {
                 let rows = store.list_contacts_full().unwrap_or_default();
                 self.emit(Event::ContactsFull(rows));
             }
+            Cmd::AddContact { email, name } => {
+                // 与收信自动收集同一 upsert 通道（同名非空才覆盖旧名）
+                store
+                    .upsert_contacts_batch(&[(email.clone(), name.clone())])
+                    .ok();
+                let rows = store.list_contacts_full().unwrap_or_default();
+                self.emit(Event::ContactsFull(rows));
+                self.emit(Event::Status(self.trf(
+                    "已将 {email} 加入通讯录",
+                    "Added {email} to contacts",
+                    &[&email],
+                )));
+            }
             Cmd::ListContacts => {
                 let addrs = store.list_contacts_display(30).unwrap_or_default();
                 self.emit(Event::ContactsListed(addrs));

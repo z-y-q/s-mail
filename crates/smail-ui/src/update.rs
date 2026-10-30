@@ -394,6 +394,13 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.contact_search = s;
             Task::none()
         }
+        Message::ClipboardCopy(text) => {
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                format!("已复制：{text}"),
+            );
+            iced::clipboard::write(text)
+        }
         // ---------------- 多窗口：主窗/写信窗生命周期 ----------------
         Message::MainWindowOpened(id) => {
             state.main_window = Some(id);
@@ -528,6 +535,8 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         m @ (Message::Reply(..)
         | Message::ReplyAll(..)
         | Message::Forward(..)
+        | Message::ForwardAsAttachment(..)
+        | Message::ContactAddFromSender(..)
         | Message::ForwardAttachmentsReady(..)
         | Message::AskDelete(..)
         | Message::CancelDelete

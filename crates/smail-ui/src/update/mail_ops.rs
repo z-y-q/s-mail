@@ -50,8 +50,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             open_task
         }
         Message::ForwardAttachmentsReady(paths) => {
-            if let Some(c) = &mut state.compose {
-                for p in paths {
+            if let Some(c) = &mut state.compose {                for p in paths {
                     if let Some(ps) = p.to_str() {
                         if !c.attachments.contains(&ps.to_string()) {
                             c.attachments.push(ps.to_string());
@@ -385,6 +384,77 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             }
             state.rebuild_display();
             close_reading_if_gone(state);
+            Task::none()
+        }
+        Message::ContactAddFromSender(acct, hash) => {
+            // 将发件人加入通讯录：地址与显示名从列表行取（库里有原始全形态）
+            if let Some((_, r)) = state
+                .rows
+                .iter()
+                .find(|(a, r)| *a == acct && r.envelope_hash == hash)
+            {
+                let email = crate::addr_of(&r.from_addr);
+                let name = crate::from_display_name(&r.from_addr);
+                let name = if name == email { String::new() } else { name };
+                if email.contains('@') {
+                    state.send(acct, Cmd::AddContact { email, name });
+                } else {
+                    state.error = Some("无法识别发件人地址".into());
+                }
+            }
+            Task::none()
+        }
+        Message::ForwardAsAttachment(acct, hash) => {
+            // 作为附件转发：新建写信窗，附件挂原邮件本地 .eml（发送管线按路径读）
+            let subject = state
+                .rows
+                .iter()
+                .find(|(a, r)| *a == acct && r.envelope_hash == hash)
+                .map(|(_, r)| format!("Fwd: {}", r.subject))
+                .unwrap_or_else(|| "Fwd:".into());
+            let slug = state
+                .accounts
+                .get(acct)
+                .map(|a| a.slug.clone())
+                .unwrap_or_default();
+            let eml_path = state
+                .data_root
+                .join(&slug)
+                .join("bodies")
+                .join(format!("{hash}.eml"));
+            if !eml_path.exists() {
+                state.error = Some("原邮件正文未缓存，无法作为附件转发".into());
+                return Task::none();
+            }
+            state.compose = Some(Compose {
+                ai_instruction: String::new(),
+                ai_busy: false,
+                ai_overwrite_ask: false,
+                ai_pending: None,
+                ai_rewrite_mode: false,
+                ai_prev: None,
+                autosave_at: None,
+                draft_id: None,
+                account: acct,
+                pgp_sign: false,
+                pgp_encrypt: false,
+                confirm_discard: false,
+                to: String::new(),
+                cc: String::new(),
+                bcc: String::new(),
+                subject,
+                body: text_editor::Content::new(),
+                attachments: vec![eml_path.display().to_string()],
+            });
+            if state.compose_window.is_none() {
+                let (win_id, task) = iced::window::open(iced::window::Settings {
+                    size: iced::Size::new(900.0, 640.0),
+                    min_size: Some(iced::Size::new(720.0, 480.0)),
+                    ..Default::default()
+                });
+                state.compose_window = Some(win_id);
+                return task.map(move |_| Message::ComposeWindowOpened(win_id));
+            }
             Task::none()
         }
         Message::Unsubscribe(url) => {
