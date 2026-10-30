@@ -64,6 +64,7 @@ fn ts() -> State {
             load_more_pending: false,
             load_more_done: false,
             list_filter: ListFilter::All,
+            sort_key: crate::SortKey::Date,
             list_asc: false,
             list_offset: 0.0,
             list_view_h: crate::list::DEFAULT_VIEW_H,

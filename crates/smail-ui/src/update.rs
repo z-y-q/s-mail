@@ -100,6 +100,11 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.rebuild_display();
             Task::none()
         }
+        Message::CycleSortKey => {
+            state.nav.sort_key = state.nav.sort_key.next();
+            state.rebuild_display();
+            Task::none()
+        }
         Message::FolderSelected(acct, folder) => {
             // 记忆上次视图（按账号名存，账号增删/改名后索引漂移不影响）
             if let Some(name) = state.account_names.get(acct).cloned() {

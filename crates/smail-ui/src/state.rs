@@ -133,6 +133,8 @@ pub(crate) struct Nav {
     pub(crate) load_more_done: bool,
     /// 列表快速过滤（文件夹视图；作用于显示模型）
     pub(crate) list_filter: ListFilter,
+    /// 列表排序维度（文件夹视图；平铺模式生效）
+    pub(crate) sort_key: SortKey,
     /// 列表排序方向（true = 升序；文件夹视图）
     pub(crate) list_asc: bool,
     pub(crate) list_offset: f32,
@@ -269,6 +271,34 @@ pub(crate) enum ListFilter {
     Flagged,
 }
 
+/// 平铺列表排序维度（Mail.app「排序方式」对齐）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SortKey {
+    Date,
+    Sender,
+    Subject,
+}
+
+impl SortKey {
+    pub(crate) fn next(&self) -> Self {
+        match self {
+            SortKey::Date => SortKey::Sender,
+            SortKey::Sender => SortKey::Subject,
+            SortKey::Subject => SortKey::Date,
+        }
+    }
+    pub(crate) fn label(&self, zh: bool) -> &'static str {
+        match (self, zh) {
+            (SortKey::Date, true) => "按日期",
+            (SortKey::Sender, true) => "按发件人",
+            (SortKey::Subject, true) => "按主题",
+            (SortKey::Date, false) => "By date",
+            (SortKey::Sender, false) => "By sender",
+            (SortKey::Subject, false) => "By subject",
+        }
+    }
+}
+
 /// 可拖拽的分割条：侧栏↔列表、列表↔阅读
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SplitKind {
@@ -358,6 +388,7 @@ impl State {
                         load_more_pending: false,
                         load_more_done: false,
                         list_filter: ListFilter::All,
+                        sort_key: crate::SortKey::Date,
                         list_asc: false,
                         list_offset: 0.0,
                         list_view_h: list::DEFAULT_VIEW_H,
@@ -514,6 +545,7 @@ impl State {
                         load_more_pending: false,
                         load_more_done: false,
                         list_filter: ListFilter::All,
+                        sort_key: crate::SortKey::Date,
                         list_asc: false,
                         list_offset: 0.0,
                         list_view_h: list::DEFAULT_VIEW_H,

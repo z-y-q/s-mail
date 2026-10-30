@@ -469,6 +469,8 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             } else {
                 state.l().sort_desc
             };
+            // 维度标签：日期/发件人/主题（点击循环切换维度）
+            let key_label = state.nav.sort_key.label(state.prefs.lang == crate::lang::Lang::Zh);
             Some(
                 row![
                     mk(
@@ -491,7 +493,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         .on_press(Message::MarkAllRead)
                         .padding([2, 8])
                         .style(theme::ghost_button),
-                    button(text(sort_label).size(11))
+                    button(text(format!("{key_label} {sort_label}")).size(11))
+                        .on_press(Message::CycleSortKey)
+                        .padding([2, 8])
+                        .style(theme::ghost_button),
+                    button(text(if state.nav.list_asc { "↓" } else { "↑" }).size(11))
                         .on_press(Message::ToggleListSort)
                         .padding([2, 8])
                         .style(theme::ghost_button),

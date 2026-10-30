@@ -324,6 +324,8 @@ pub(crate) enum Message {
     MailboxNext,
     /// 当前邮箱全部标为已读
     MarkAllRead,
+    /// 排序维度循环：日期→发件人→主题
+    CycleSortKey,
     /// 会话视图全局展开/折叠
     ExpandAllThreads,
     CollapseAllThreads,

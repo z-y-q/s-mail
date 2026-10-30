@@ -113,7 +113,24 @@ pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
             })
             .collect();
         if apply_filter && state.nav.list_asc {
-            v.sort_by_key(|r| r.row.date_unix);
+            match state.nav.sort_key {
+                crate::SortKey::Date => v.sort_by_key(|r| r.row.date_unix),
+                crate::SortKey::Sender => v.sort_by_key(|r| {
+                    crate::from_display_name(&r.row.from_addr).to_lowercase()
+                }),
+                crate::SortKey::Subject => v.sort_by_key(|r| r.row.subject.to_lowercase()),
+            };
+        } else if apply_filter {
+            // 降序：按维度倒排（Date 用反向数值，字符串维度反转）
+            match state.nav.sort_key {
+                crate::SortKey::Date => v.sort_by_key(|r| std::cmp::Reverse(r.row.date_unix)),
+                crate::SortKey::Sender => v.sort_by_key(|r| {
+                    std::cmp::Reverse(crate::from_display_name(&r.row.from_addr).to_lowercase())
+                }),
+                crate::SortKey::Subject => {
+                    v.sort_by_key(|r| std::cmp::Reverse(r.row.subject.to_lowercase()))
+                }
+            };
         }
         v
     }
