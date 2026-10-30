@@ -112,6 +112,7 @@ fn ts() -> State {
         context_menu: None,
         contact_search: String::new(),
         export_folder: None,
+        reminders: vec![],
         local_stores: Default::default(),
         export_target: None,
         accounts: vec![],

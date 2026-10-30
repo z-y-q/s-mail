@@ -340,6 +340,14 @@ pub(crate) enum Message {
     Resend(usize, i64),
     /// 导出当前文件夹全部邮件为 .eml（先弹目录选择）
     ExportFolderRequest(usize, String),
+    /// 提醒我：到期后发系统通知并支持点击跳转（1 小时后）
+    RemindMe(usize, i64, u64),
+    /// 提醒检查节拍（每 30s 扫一次到期提醒）
+    CheckReminders,
+    /// 导出账号全部邮件（设置页账号行；先弹目录选择）
+    ExportAccountRequest(usize),
+    /// 账号导出目录已选：后台按文件夹批量写出
+    ExportAccountPicked(usize, Option<std::path::PathBuf>, Vec<(String, i64)>),
     /// 目录已选：后台批量写出
     ExportFolderPicked(
         usize,
@@ -523,6 +531,12 @@ fn subscription(state: &State) -> Subscription<Message> {
     };
     // 窗口几何记忆：Resized/Moved 更新内存，节流写盘
     let window_sub = iced::window::events().map(|(_id, ev)| Message::WindowGeometry(ev));
+    // 提醒检查节拍（有提醒才订阅；每 30s 扫一次到期）
+    let reminders_sub = if !state.reminders.is_empty() {
+        iced::time::every(std::time::Duration::from_secs(30)).map(|_| Message::CheckReminders)
+    } else {
+        Subscription::none()
+    };
     // 分割条拖拽：仅拖拽态订阅全局鼠标流（CursorMoved 更新列宽，
     // ButtonReleased 结束；平时零订阅零开销）
     let split_sub = if state.split_drag.is_some() {
@@ -615,6 +629,7 @@ fn subscription(state: &State) -> Subscription<Message> {
         tray_sub,
         split_sub,
         close_req_sub,
+        reminders_sub,
         events_sub,
     ])
 }

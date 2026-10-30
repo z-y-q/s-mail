@@ -1321,6 +1321,10 @@ fn context_menu_row(
                 mute_label,
                 Message::ToggleMuteSender(sender_addr.clone()),
             ),
+            item(
+                "提醒我（1 小时后）".into(),
+                Message::RemindMe(acct, hash, 1),
+            ),
             (cur_folder.as_deref() == Some(folder_path))
                 .then(|| {
                     item(

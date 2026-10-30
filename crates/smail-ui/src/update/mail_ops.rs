@@ -528,14 +528,6 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             )
         }
         Message::ExportFolderPicked(_, _, _, None) => Task::none(),
-        Message::ExportFolderDone { done, total } => {
-            state.export_folder = None;
-            state.statuses.insert(
-                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
-                format!("已导出 {done}/{total} 封到所选目录"),
-            );
-            Task::none()
-        }
         Message::ForwardAsAttachment(acct, hash) => {
             // 作为附件转发：新建写信窗，附件挂原邮件本地 .eml（发送管线按路径读）
             let subject = state

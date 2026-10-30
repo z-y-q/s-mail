@@ -390,10 +390,124 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.context_menu = None;
             update(state, *inner)
         }
-        Message::ContactSearchInput(s) => {
-            state.contact_search = s;
+        Message::ClipboardCopy(text) => {
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                format!("已复制：{text}"),
+            );
+            iced::clipboard::write(text)
+        }
+        Message::RemindMe(acct, hash, hours) => {
+            // 到期时间 = now + hours；点击通知跳回该邮件
+            let due = std::time::Instant::now() + std::time::Duration::from_secs(hours * 3600);
+            let (folder, subject) = state
+                .rows
+                .iter()
+                .find(|(a, r)| *a == acct && r.envelope_hash == hash)
+                .map(|(_, r)| (r.folder.clone(), r.subject.clone()))
+                .unwrap_or_default();
+            state.reminders.push(crate::state::MailReminder {
+                due,
+                click: crate::notify::NotifyClick { acct, folder, hash },
+                subject,
+            });
+            state.statuses.insert(
+                acct,
+                format!("已设置提醒（{hours} 小时后）"),
+            );
             Task::none()
         }
+        Message::CheckReminders => {
+            // 到期的提醒发系统通知（点击跳转），从队列移除
+            let now = std::time::Instant::now();
+            let due: Vec<_> = state
+                .reminders
+                .iter()
+                .filter(|r| r.due <= now)
+                .cloned()
+                .collect();
+            for r in due {
+                crate::notify::notify_mail("提醒", &r.subject, r.click.clone());
+                state.reminders.retain(|x| x.click != r.click);
+            }
+            Task::none()
+        }
+        Message::ExportAccountRequest(acct) => {
+            // 收集该账号全部文件夹的全部邮件（本地缓存为准）
+            let folders: Vec<(usize, String)> = state
+                .nav
+                .folders
+                .iter()
+                .filter(|(a, _)| *a == acct)
+                .map(|(a, f)| (*a, f.path.clone()))
+                .collect();
+            let mut all: Vec<(String, i64)> = vec![];
+            for (fa, fp) in &folders {
+                for (a, r) in state.local_folder_rows(*fa, fp) {
+                    let _ = a;
+                    all.push((fp.clone(), r.envelope_hash));
+                }
+            }
+            if all.is_empty() {
+                state.error = Some("本地没有可导出的邮件".into());
+                return Task::none();
+            }
+            let _n = all.len();
+            Task::perform(
+                async move {
+                    rfd::AsyncFileDialog::new()
+                        .set_title("选择导出目录（将按文件夹建子目录）")
+                        .pick_folder()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                move |dir: Option<std::path::PathBuf>| {
+                    Message::ExportAccountPicked(acct, dir, all.clone())
+                },
+            )
+        }
+        Message::ExportAccountPicked(acct, Some(dir), all) => {
+            let slug = state
+                .accounts
+                .get(acct)
+                .map(|a| a.slug.clone())
+                .unwrap_or_default();
+            let bodies = state.data_root.join(&slug).join("bodies");
+            let dir2 = dir.clone();
+            let n_total = all.len();
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let mut done = 0usize;
+                        for (folder, h) in &all {
+                            let Ok(bytes) = std::fs::read(bodies.join(format!("{h}.eml"))) else {
+                                continue;
+                            };
+                            let sub = dir2.join(folder.replace('/', "_"));
+                            let _ = std::fs::create_dir_all(&sub);
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            let name = format!("{ts}_{h}.eml");
+                            if std::fs::write(sub.join(name), &bytes).is_ok() {
+                                done += 1;
+                            }
+                        }
+                        (done, n_total)
+                    })
+                    .await
+                    .unwrap_or((0, n_total))
+                },
+                move |(done, total)| {
+                    Message::ExportFolderDone {
+                        done,
+                        total,
+                    }
+                },
+            )
+        }
+        Message::ExportAccountPicked(_, None, _) => Task::none(),
         Message::ToggleMuteSender(addr) => {
             // 切换静音并立即持久化（通知过滤在 NewMail 事件处）
             let now_muted = state.prefs.muted.contains(&addr);
@@ -460,12 +574,17 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.collapse_all_threads();
             Task::none()
         }
-        Message::ClipboardCopy(text) => {
+        Message::ExportFolderDone { done, total } => {
+            state.export_folder = None;
             state.statuses.insert(
                 state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
-                format!("已复制：{text}"),
+                format!("已导出 {done}/{total} 封到所选目录"),
             );
-            iced::clipboard::write(text)
+            Task::none()
+        }
+        Message::ContactSearchInput(s) => {
+            state.contact_search = s;
+            Task::none()
         }
         // ---------------- 多窗口：主窗/写信窗生命周期 ----------------
         Message::MainWindowOpened(id) => {
@@ -606,7 +725,6 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::Resend(..)
         | Message::ExportFolderRequest(..)
         | Message::ExportFolderPicked(..)
-        | Message::ExportFolderDone { .. }
         | Message::ForwardAttachmentsReady(..)
         | Message::AskDelete(..)
         | Message::CancelDelete

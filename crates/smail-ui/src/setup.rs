@@ -661,7 +661,10 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                             theme::ghost_button(t, st)
                         }
                     }),
-            ]
+                button(text(state.l().export_btn).size(13))
+                    .on_press(Message::ExportAccountRequest(i))
+                    .padding([2, 8])
+                    .style(theme::ghost_button),            ]
             .spacing(6),
         );
         // 同步间隔内联编辑（同 PGP/签名的两态模式）

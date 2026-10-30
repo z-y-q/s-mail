@@ -248,6 +248,8 @@ pub(crate) struct State {
     pub(crate) contact_search: String,
     /// 文件夹导出进行中：（账号, 文件夹, 目录）——picked 回填后后台写出
     pub(crate) export_folder: Option<(usize, String, std::path::PathBuf)>,
+    /// 邮件提醒（到期发系统通知；内存态，重启丢失）
+    pub(crate) reminders: Vec<MailReminder>,
     /// 本地索引只读连接（按账号懒打开）：切文件夹时 UI 直读缓存行，
     /// 不等服务线程——它可能正堵在长同步（重连全量拉取/IDLE 变更）上，
     /// 命令队列几十秒不被消费，等回包=「一同步就看不见邮件」
@@ -272,6 +274,14 @@ pub(crate) enum ListFilter {
 pub(crate) enum SplitKind {
     Sidebar,
     List,
+}
+
+/// 邮件提醒（右键「提醒我」设置；到期发系统通知，点击跳转该邮件）
+#[derive(Debug, Clone)]
+pub(crate) struct MailReminder {
+    pub(crate) due: std::time::Instant,
+    pub(crate) click: crate::notify::NotifyClick,
+    pub(crate) subject: String,
 }
 
 impl SplitKind {
@@ -396,6 +406,7 @@ impl State {
                     context_menu: None,
                     contact_search: String::new(),
                     export_folder: None,
+                    reminders: vec![],
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
@@ -551,6 +562,7 @@ impl State {
                     context_menu: None,
                     contact_search: String::new(),
                     export_folder: None,
+                    reminders: vec![],
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(

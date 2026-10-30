@@ -39,7 +39,7 @@ use std::sync::Mutex;
 static MAIL_QUEUE: Mutex<VecDeque<NotifyClick>> = Mutex::new(VecDeque::new());
 
 /// 通知点击载荷：(账号, 文件夹, hash)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NotifyClick {
     pub(crate) acct: usize,
     pub(crate) folder: String,
