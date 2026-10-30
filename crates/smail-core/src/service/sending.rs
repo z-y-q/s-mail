@@ -39,6 +39,7 @@ impl ServiceInner {
             bcc: split_addrs(&row.bcc),
             subject: row.subject.clone(),
             body: row.body.clone(),
+            body_html: Some(crate::html::markdown_to_html(&row.body)),
             attachments: vec![],
         };
         let bytes = match smail_backend::build_draft_bytes(&mail, &new_mid) {
@@ -183,6 +184,8 @@ impl ServiceInner {
             bcc: split_addrs(bcc),
             subject: subject.to_string(),
             body: body.to_string(),
+            // 撰写器正文按 markdown 自动生成 HTML 版（multipart/alternative）
+            body_html: Some(crate::html::markdown_to_html(body)),
             attachments,
         };
         // M5-d：PGP 发信（构造完整 MIME 后走 raw 通道；

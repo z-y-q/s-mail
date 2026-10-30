@@ -641,3 +641,150 @@ mod long_token_tests {
         assert_eq!(break_long_tokens(s), s, "链接行不插断点（保护点击结构）");
     }
 }
+
+/// 撰写器 markdown → HTML（发送侧 multipart/alternative 用）。
+/// 手写轻量转换：先转义 HTML 实体防注入，再按行处理段落/列表/引用，
+/// 行内支持 **粗**、*斜*、`code` 与裸链接自动成链。只覆盖撰写器用户
+/// 实际会产出的语法，不做完整 markdown 规范
+pub fn markdown_to_html(md: &str) -> String {
+    fn esc(s: &str) -> String {
+        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    }
+    fn inline(s: &str) -> String {
+        let e = esc(s);
+        // autolink：http(s):// 开头到空白为止
+        let mut out = String::new();
+        for (i, tok) in e.split(' ').enumerate() {
+            if i > 0 {
+                out.push(' ');
+            }
+            if tok.starts_with("http://") || tok.starts_with("https://") {
+                out.push_str(&format!("<a href=\"{tok}\">{tok}</a>"));
+            } else {
+                out.push_str(tok);
+            }
+        }
+        // 行内标记（从重到轻，避免 ** 被当 *）
+        for (pat, open, close) in [
+            ("**", "<strong>", "</strong>"),
+            ("*", "<em>", "</em>"),
+            ("`", "<code>", "</code>"),
+        ] {
+            let mut s2 = String::new();
+            let mut parts = out.split(pat);
+            if let Some(first) = parts.next() {
+                s2.push_str(first);
+            }
+            let mut odd = false;
+            for part in parts {
+                if odd {
+                    s2.push_str(close);
+                    s2.push_str(part);
+                } else {
+                    s2.push_str(open);
+                    s2.push_str(part);
+                }
+                odd = !odd;
+            }
+            out = s2;
+        }
+        out
+    }
+
+    let mut html = String::from("<html><body>\n");
+    let mut in_list = false;
+    let mut in_para = false;
+    fn close_para(html: &mut String, in_para: bool) {
+        if in_para {
+            html.push_str("</p>\n");
+        }
+    }
+    for line in md.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            close_para(&mut html, in_para);
+            in_para = false;
+            continue;
+        }
+        // 列表行（- 或 * 开头）
+        if let Some(item) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+            close_para(&mut html, in_para);
+            in_para = false;
+            if !in_list {
+                html.push_str("<ul>\n");
+                in_list = true;
+            }
+            html.push_str(&format!("<li>{}</li>\n", inline(item)));
+            continue;
+        }
+        if in_list {
+            html.push_str("</ul>\n");
+            in_list = false;
+        }
+        // 引用
+        if let Some(q) = t.strip_prefix("> ") {
+            html.push_str(&format!("<blockquote>{}</blockquote>\n", inline(q)));
+            continue;
+        }
+        // 标题（# 到 ###）
+        let hashes = t.chars().take_while(|c| *c == '#').count();
+        if (1..=3).contains(&hashes) {
+            let text = t[hashes..].trim();
+            if !text.is_empty() {
+                close_para(&mut html, in_para);
+                in_para = false;
+                html.push_str(&format!("<h{hashes}>{}</h{hashes}>\n", inline(text)));
+                continue;
+            }
+        }
+        // 普通段落：段内换行 <br>
+        if !in_para {
+            html.push_str("<p>");
+            in_para = true;
+        } else {
+            html.push_str("<br>\n");
+        }
+        html.push_str(&inline(t));
+    }
+    if in_list {
+        html.push_str("</ul>\n");
+    }
+    close_para(&mut html, in_para);
+    html.push_str("</body></html>");
+    html
+}
+
+#[cfg(test)]
+mod markdown_html_tests {
+    use super::markdown_to_html;
+
+    #[test]
+    fn paragraph_and_bold_and_link() {
+        let html = markdown_to_html("你好 **世界**\n\n访问 https://x.example.com 了解更多");
+        assert!(html.contains("<p>你好 <strong>世界</strong></p>"), "{html}");
+        assert!(html.contains("<a href=\"https://x.example.com\""), "{html}");
+        assert!(html.starts_with("<html><body>"), "{html}");
+    }
+
+    #[test]
+    fn list_and_heading_and_quote() {
+        let html = markdown_to_html("- 甲\n- 乙\n\n## 标题\n\n> 引用句");
+        assert!(html.contains("<ul>\n<li>甲</li>\n<li>乙</li>\n</ul>"), "{html}");
+        assert!(html.contains("<h2>标题</h2>"), "{html}");
+        assert!(html.contains("<blockquote>引用句</blockquote>"), "{html}");
+    }
+
+    #[test]
+    fn html_entities_escaped() {
+        let html = markdown_to_html("<script>alert(1)</script> a & b");
+        assert!(!html.contains("<script>"), "正文必须转义：{html}");
+        assert!(html.contains("&lt;script&gt;"), "{html}");
+        assert!(html.contains("a &amp; b"), "{html}");
+    }
+
+    #[test]
+    fn plain_text_stays_plain_paragraph() {
+        let html = markdown_to_html("第一行\n第二行");
+        assert!(html.contains("<p>第一行<br>\n第二行</p>"), "{html}");
+    }
+}

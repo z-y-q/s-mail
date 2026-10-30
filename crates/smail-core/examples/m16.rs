@@ -50,6 +50,7 @@ fn inject_foreign_draft(subject: &str) {
         bcc: vec![],
         subject: subject.into(),
         body: "来自其他设备的草稿内容".into(),
+        body_html: None,
         attachments: vec![],
     };
     let bytes = build_draft_bytes(&mail, "<m16-foreign-1@other-device>").expect("组草稿 MIME");

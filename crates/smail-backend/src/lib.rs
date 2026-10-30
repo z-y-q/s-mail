@@ -121,6 +121,9 @@ pub struct OutgoingMail {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
+    /// HTML 版正文（Some 时发 multipart/alternative，纯文本客户端回退 body）；
+    /// 由撰写器的 markdown 自动转换生成
+    pub body_html: Option<String>,
     /// (文件名, 字节)。M3：附件随 multipart 发送
     pub attachments: Vec<(String, Vec<u8>)>,
 }
@@ -910,6 +913,10 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
         .message_id(Some(message_id.to_string()))
         .subject(&mail.subject);
 
+    // HTML 版正文：multipart/alternative（纯文本客户端回退 plain）
+    let make_alt = |plain_body: String, html: String| {
+        MultiPart::alternative_plain_html(plain_body, html)
+    };
     let text_part = SinglePart::builder()
         .header(ContentType::TEXT_PLAIN)
         .body(mail.body.clone());
@@ -917,20 +924,36 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
         Plain(SinglePart),
         Multi(MultiPart),
     }
-    let body = if mail.attachments.is_empty() {
-        MaybeMultipart::Plain(text_part)
-    } else {
-        let mut multipart = MultiPart::mixed().singlepart(text_part);
-        for (name, bytes) in &mail.attachments {
-            let mime = mime_guess::from_path(name)
-                .first_or_octet_stream()
-                .to_string();
-            let ct = ContentType::parse(&mime).map_err(|e| {
-                BackendError::InvalidMailFormat(format!("附件 {name:?} 类型无效: {e}"))
-            })?;
-            multipart = multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
+    let body = match (&mail.body_html, mail.attachments.is_empty()) {
+        (Some(html), true) => MaybeMultipart::Multi(make_alt(mail.body.clone(), html.clone())),
+        (Some(html), false) => {
+            let alt = make_alt(mail.body.clone(), html.clone());
+            let mut multipart = MultiPart::mixed().multipart(alt);
+            for (name, bytes) in &mail.attachments {
+                let mime = mime_guess::from_path(name)
+                    .first_or_octet_stream()
+                    .to_string();
+                let ct = ContentType::parse(&mime).map_err(|e| {
+                    BackendError::InvalidMailFormat(format!("附件 {name:?} 类型无效: {e}"))
+                })?;
+                multipart = multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
+            }
+            MaybeMultipart::Multi(multipart)
         }
-        MaybeMultipart::Multi(multipart)
+        (None, true) => MaybeMultipart::Plain(text_part),
+        (None, false) => {
+            let mut multipart = MultiPart::mixed().singlepart(text_part);
+            for (name, bytes) in &mail.attachments {
+                let mime = mime_guess::from_path(name)
+                    .first_or_octet_stream()
+                    .to_string();
+                let ct = ContentType::parse(&mime).map_err(|e| {
+                    BackendError::InvalidMailFormat(format!("附件 {name:?} 类型无效: {e}"))
+                })?;
+                multipart = multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
+            }
+            MaybeMultipart::Multi(multipart)
+        }
     };
     match body {
         MaybeMultipart::Plain(p) => builder.singlepart(p),
@@ -967,6 +990,7 @@ mod tests {
             bcc: vec!["secret-bcc@x.com".into()],
             subject: "主题报告".into(),
             body: "正文内容".into(),
+            body_html: None,
             attachments: vec![],
         }
     }
