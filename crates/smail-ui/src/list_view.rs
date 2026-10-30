@@ -147,6 +147,29 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         );
         sidebar = sidebar.push(Space::new().height(6));
     }
+    // 智能邮箱分组：跨账号聚合的虚拟视图（本地索引直读，离线可用）
+    if !state.account_names.is_empty() {
+        sidebar = sidebar.push(
+            text(state.l().smart_hdr)
+                .size(11)
+                .style(theme::secondary_text),
+        );
+        sidebar = sidebar.push(Space::new().height(2));
+        for (key, label) in [
+            ("__smart_unread__", state.l().smart_unread),
+            ("__smart_flagged__", state.l().smart_flagged),
+        ] {
+            let smart_cur = state.nav.cur.as_ref().map(|(_, c)| c == key) == Some(true);
+            sidebar = sidebar.push(
+                button(text(format!("  {} {}", if smart_cur { "▸" } else { " " }, label)).size(13))
+                    .on_press(Message::FolderSelected(0, key.into()))
+                    .padding([3, 6])
+                    .width(Length::Fill)
+                    .style(move |t, st| theme::sidebar_item(t, st, smart_cur)),
+            );
+        }
+        sidebar = sidebar.push(Space::new().height(6));
+    }
     if state.account_names.is_empty() {
         sidebar = sidebar
             .push(
@@ -419,6 +442,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     &state.drafts.iter().filter(|(x, _)| x == a).count(),
                 ],
             ),
+            Some((_, f)) if f == "__smart_unread__" => {
+                format!("{} / {}", state.l().smart_hdr, state.l().smart_unread)
+            }
+            Some((_, f)) if f == "__smart_flagged__" => {
+                format!("{} / {}", state.l().smart_hdr, state.l().smart_flagged)
+            }
             Some((a, f)) => {
                 // 列表头也显示本地化文件夹名（与侧栏一致）
                 let fname = state

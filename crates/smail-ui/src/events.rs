@@ -250,6 +250,20 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                 }
             }
             // 未读圆点/加粗字体/会话聚合 unseen 徽标都依赖 flags，重建显示模型
+            // 智能视图：不再匹配谓词的行直接移出（未读视图里标已读即消失）
+            if state.cur_is_smart() {
+                let key = state
+                    .nav
+                    .cur
+                    .as_ref()
+                    .map(|(_, f)| f.as_str())
+                    .unwrap_or_default();
+                state.rows.retain(|(_, r)| match key {
+                    "__smart_unread__" => !r.seen,
+                    "__smart_flagged__" => r.flagged,
+                    _ => true,
+                });
+            }
             state.rebuild_display();
         }
         Event::ConnState(ok) => {

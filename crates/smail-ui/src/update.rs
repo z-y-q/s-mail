@@ -135,6 +135,14 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.reading = None;
                 state.nav.folder_loading = false;
                 state.send(acct, Cmd::ListOutbox);
+            } else if folder == "__smart_unread__" || folder == "__smart_flagged__" {
+                // 智能邮箱虚拟视图：跨账号聚合本地索引，无服务端往返
+                state.nav.cur = Some((acct, folder.clone()));
+                state.selected = None;
+                state.reading = None;
+                state.nav.folder_loading = false;
+                state.smart_fill(&folder);
+                state.rebuild_display();
             } else {
                 state.nav.cur = Some((acct, folder.clone()));
                 // 本地索引直读（离线优先的另一半）：服务线程可能正堵在长同步上
@@ -334,6 +342,14 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             if state.nav.viewing_unified {
                 if let Some(tx) = &state.cmd_tx {
                     let _ = tx.send(SessionCmd::UnifiedInbox);
+                }
+                return Task::none();
+            }
+            if state.cur_is_smart() {
+                // 智能视图：重跑本地聚合（把服务线程同步进库的最新状态收进来）
+                if let Some((_, f)) = state.nav.cur.clone() {
+                    state.smart_fill(&f);
+                    state.rebuild_display();
                 }
                 return Task::none();
             }

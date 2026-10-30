@@ -651,6 +651,42 @@ impl State {
             .unwrap_or_default()
     }
 
+    /// 智能邮箱聚合：跨账号跨文件夹按谓词收集行（本地索引直读，离线可用）。
+    /// key：`__smart_unread__`（全部未读）/ `__smart_flagged__`（全部星标）；
+    /// 结果按时间降序
+    pub(crate) fn smart_fill(&mut self, key: &str) {
+        let folders: Vec<(usize, String)> = self
+            .nav
+            .folders
+            .iter()
+            .map(|(a, f)| (*a, f.path.clone()))
+            .collect();
+        let mut all: Vec<RowEntry> = vec![];
+        for (a, fp) in &folders {
+            for (acct, r) in self.local_folder_rows(*a, fp) {
+                let hit = match key {
+                    "__smart_unread__" => !r.seen,
+                    "__smart_flagged__" => r.flagged,
+                    _ => false,
+                };
+                if hit {
+                    all.push((acct, r));
+                }
+            }
+        }
+        all.sort_by(|x, y| y.1.date_unix.cmp(&x.1.date_unix));
+        self.rows = all;
+    }
+
+    /// 当前是否处于智能邮箱虚拟视图
+    pub(crate) fn cur_is_smart(&self) -> bool {
+        self.nav
+            .cur
+            .as_ref()
+            .map(|(_, f)| f.starts_with("__smart_"))
+            .unwrap_or(false)
+    }
+
     /// 当前文件夹是否废纸篓（删除确认文案/语义提示用）
     pub(crate) fn cur_is_trash_folder(&self) -> bool {
         self.cur_folder_kind() == Some(smail_core::FolderKind::Trash)
