@@ -11,7 +11,7 @@
 //!   3. 废纸篓文件夹出现 → SelectFolder(废纸篓) → FolderLoaded 有靶子
 //!   4. EmptyTrash(废纸篓) → batch_delete → 服务器 EXPUNGE
 //!   5. 再次 SelectFolder(废纸篓) 强制重同步 → FolderLoaded 必须 0 封
-//!   （若服务器上没删掉，重同步会把邮件拉回来——这正是用户报障现象）
+//!      （若服务器上没删掉，重同步会把邮件拉回来——这正是用户报障现象）
 //!
 //! 新账号（干净 SMAIL_HOME）+ 新 dovecot 容器里，UidStore 无缓存，
 //! 该用例验证「同连接 FETCH 后删除」路径；用户报障是「重连/缓存回放后

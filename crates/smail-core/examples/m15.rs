@@ -43,11 +43,18 @@ fn cleanup_server_drafts() {
 /// 独立连接数服务器 Drafts 里 s-mail 草稿的封数
 fn server_draft_count() -> usize {
     let (b, _) = connect(&imap_cfg()).expect("独立 IMAP 连接");
-    b.fetch_envelopes("Drafts")
+    // 按 Message-ID 去重计数：melib 无缓存 FreshFetch 在批次边界可能返回
+    // 重复信封（同 mid 同 UID），唯一草稿的断言语义 = 唯一 mid 恰一个
+    let mut mids: Vec<String> = b
+        .fetch_envelopes("Drafts")
         .expect("fetch Drafts")
         .iter()
         .filter(|e| e.message_id.contains("s-mail-draft-"))
-        .count()
+        .map(|e| e.message_id.clone())
+        .collect();
+    mids.sort();
+    mids.dedup();
+    mids.len()
 }
 
 fn wait_server_drafts(n: usize, secs: u64) -> bool {

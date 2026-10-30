@@ -13,7 +13,7 @@
 //!   3. Cmd::Spam([B]) → Junk 文件夹出现 + 重同步后 INBOX 无 B、Junk 有 B
 //!   4. 对 Archive 里的 A 执行单封删除（非 Trash → 移废纸篓）→ 废纸篓有 A
 //!   5. 整箱清空废纸篓（expunge_folder）→ 废纸篓 0 封
-//!   （melib 静默假成功已补丁为 Err：任何一步空转都会卡住流程超时红）
+//!      （melib 静默假成功已补丁为 Err：任何一步空转都会卡住流程超时红）
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -86,13 +86,15 @@ fn main() {
                         }
                     }
                     // Junk 同步到达：B 应在里面 → 对 Archive 里的 A 删除（移废纸篓）
-                    if spammed && !spam_verified && folder.eq_ignore_ascii_case("Junk") {
-                        if rows.iter().any(|r| r.message_id == mid_b) {
-                            spam_verified = true;
-                            println!("[m20] ✅ 垃圾：B 在 Junk（{} 封）", rows.len());
-                            if let Some(h) = archive_hash {
-                                send(&session, account, Cmd::DeleteMessage(h));
-                            }
+                    if spammed
+                        && !spam_verified
+                        && folder.eq_ignore_ascii_case("Junk")
+                        && rows.iter().any(|r| r.message_id == mid_b)
+                    {
+                        spam_verified = true;
+                        println!("[m20] ✅ 垃圾：B 在 Junk（{} 封）", rows.len());
+                        if let Some(h) = archive_hash {
+                            send(&session, account, Cmd::DeleteMessage(h));
                         }
                     }
                     // 废纸篓同步：A 移入后 → 整箱清空；清空后的验证同步必须 0 封

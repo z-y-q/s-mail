@@ -180,7 +180,7 @@ fn folder_loading_set_on_select_and_cleared_on_load() {
 fn folder_selected_reads_local_cache_immediately() {
     // 建一个带两行 INBOX 缓存的真实索引库
     let dir = std::env::temp_dir().join(format!("smail-ui-local-{}", std::process::id()));
-    std::fs::create_dir_all(&dir.join("acct")).unwrap();
+    std::fs::create_dir_all(dir.join("acct")).unwrap();
     {
         let store = smail_store::Store::open(&dir.join("acct").join("index.db")).unwrap();
         store.upsert(&row(1, false, false)).unwrap();
