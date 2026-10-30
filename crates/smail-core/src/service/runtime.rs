@@ -73,14 +73,18 @@ impl ServiceInner {
                     let Ok(bytes) = std::fs::read(&path) else {
                         continue;
                     };
-                    // 用 mail-parser 提纯文本（与 Reader 管线同源），PGP 密文
-                    // 无口令不解——预览保持空
-                    let Some(msg) = mail_parser::MessageParser::default().parse(&bytes) else {
-                        continue;
-                    };
-                    let body = msg
-                        .body_text(0)
-                        .map(|t| t.into_owned())
+                    // 用 mail-parser 提正文（与 Reader 管线同源）：优先纯文本
+                    // 部件，HTML-only 邮件（营销邮件常态）转 markdown 再清洗；
+                    // PGP 密文无口令不解——预览保持空
+                    let parsed = mail_parser::MessageParser::default().parse(&bytes);
+                    let body = parsed
+                        .as_ref()
+                        .and_then(|m| m.body_text(0).map(|t| t.into_owned()))
+                        .or_else(|| {
+                            parsed.as_ref().and_then(|m| {
+                                m.body_html(0).map(|h| crate::html::html_to_markdown(h.as_ref()))
+                            })
+                        })
                         .unwrap_or_default();
                     if body.trim().is_empty() {
                         continue;

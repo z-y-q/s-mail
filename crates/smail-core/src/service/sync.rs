@@ -3,12 +3,26 @@
 use crate::protocol::{Cmd, Event};
 use crate::reader::{extract_body, extract_recipients, parse_from_addr, to_row};
 use crate::{pgp, ServiceInner};
-use smail_backend::{FlagChange, MailBackend};
+use smail_backend::{folder_kind, FlagChange, FolderKind, MailBackend};
 use smail_store::{DraftRow, MessageRow, Store};
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 impl ServiceInner {
+    /// 状态行文件夹名本地化：标准文件夹（按 folder_kind 识别，含中英常见
+    /// 命名）映射为界面语言名；自定义文件夹显示原名
+    pub(crate) fn localized_folder_name(&self, folder: &str) -> String {
+        match folder_kind(folder) {
+            FolderKind::Inbox => self.tr("收件箱", "Inbox"),
+            FolderKind::Sent => self.tr("已发送", "Sent"),
+            FolderKind::Junk => self.tr("垃圾", "Junk"),
+            FolderKind::Trash => self.tr("废纸篓", "Trash"),
+            FolderKind::Archive => self.tr("归档", "Archive"),
+            FolderKind::Drafts => self.tr("草稿", "Drafts"),
+            FolderKind::Plain => folder.to_string(),
+        }
+    }
+
     /// 离线标记回放（v4 队列）：重连/初连后先把本地改动推回服务器，成功一项清一项；
     /// 失败保留队列下轮重试（意图语义：后到覆盖，最终收敛）。
     /// 必须在 sync_folder 之前调：本地意图先落地，同步 diff 才不会把本地改动反向覆盖
@@ -177,12 +191,7 @@ impl ServiceInner {
                     folder: folder.to_string(),
                     rows,
                 });
-                // 文件夹名本地化（与全量同步的状态行一致）
-                let fname = if folder.eq_ignore_ascii_case("INBOX") {
-                    self.tr("收件箱", "INBOX")
-                } else {
-                    folder.to_string()
-                };
+                let fname = self.localized_folder_name(folder);
                 self.emit(Event::Status(self.trf(
                     "{} 无新变化（跳过整包拉取）",
                     "{} unchanged (full fetch skipped)",
@@ -341,11 +350,7 @@ impl ServiceInner {
             rows,
         });
         // 状态行文件夹名本地化（顶栏不再出现「INBOX：46 封」中英混排）
-        let fname = if folder.eq_ignore_ascii_case("INBOX") {
-            self.tr("收件箱", "INBOX")
-        } else {
-            folder.to_string()
-        };
+        let fname = self.localized_folder_name(folder);
         self.emit(Event::Status(self.trf(
             "{}：{} 封（新 {}）",
             "{}: {} messages ({} new)",
