@@ -110,6 +110,8 @@ pub(crate) struct Prefs {
     pub(crate) win_save_at: Option<std::time::Instant>,
     /// 上次视图（账号名, 文件夹/伪视图；启动恢复，离线直达缓存）
     pub(crate) last_view: Option<(String, String)>,
+    /// 静音的发件人地址（新邮件通知跳过；ui.json 持久化）
+    pub(crate) muted: Vec<String>,
 }
 
 /// 导航与视图状态（文件夹/搜索/列表显示/分页）——State 拆分第二组
@@ -244,6 +246,8 @@ pub(crate) struct State {
     pub(crate) context_menu: Option<(usize, i64)>,
     /// 通讯录搜索过滤词（设置页，前端过滤）
     pub(crate) contact_search: String,
+    /// 文件夹导出进行中：（账号, 文件夹, 目录）——picked 回填后后台写出
+    pub(crate) export_folder: Option<(usize, String, std::path::PathBuf)>,
     /// 本地索引只读连接（按账号懒打开）：切文件夹时 UI 直读缓存行，
     /// 不等服务线程——它可能正堵在长同步（重连全量拉取/IDLE 变更）上，
     /// 命令队列几十秒不被消费，等回包=「一同步就看不见邮件」
@@ -290,7 +294,8 @@ impl State {
 
     pub(crate) fn boot() -> (Self, Task<Message>) {
         let (cfg_path, data_root) = paths();
-        let (boot_theme, boot_follow, boot_lang, boot_ai_ack, boot_win) = boot_prefs(&data_root);
+        let (boot_theme, boot_follow, boot_lang, boot_ai_ack, boot_win, boot_muted) =
+            boot_prefs(&data_root);
         let boot_last_view = crate::lang::load_prefs(&data_root).last_view;
         let boot_cols = crate::lang::load_prefs(&data_root).columns;
         // 主窗几何（daemon 模式：boot 任务里显式 open 主窗）
@@ -319,6 +324,7 @@ impl State {
                         win_geom: None,
                         win_save_at: None,
                         last_view: None,
+                        muted: boot_muted,
                     },
                     accounts: accounts2,
                     cfg_path: cfg_path2,
@@ -389,6 +395,7 @@ impl State {
                     split_drag: None,
                     context_menu: None,
                     contact_search: String::new(),
+                    export_folder: None,
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
@@ -472,6 +479,7 @@ impl State {
                         win_geom: None,
                         win_save_at: None,
                         last_view: None,
+                        muted: vec![],
                     },
                     accounts: vec![],
                     cfg_path: cfg_path.clone(),
@@ -542,6 +550,7 @@ impl State {
                     split_drag: None,
                     context_menu: None,
                     contact_search: String::new(),
+                    export_folder: None,
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
@@ -578,6 +587,7 @@ impl State {
             win: self.prefs.win_geom,
             last_view: self.prefs.last_view.clone(),
             columns: Some((self.sidebar_w, self.list_w)),
+            muted: self.prefs.muted.clone(),
         }
     }
 
@@ -915,7 +925,14 @@ pub(crate) fn ui_theme_from_env() -> Theme {
 /// （选过主题后不再跟随系统——手动选择优先，与顶栏切换语义一致）
 pub(crate) fn boot_prefs(
     data_root: &std::path::Path,
-) -> (Theme, bool, crate::lang::Lang, bool, Option<[f32; 4]>) {
+) -> (
+    Theme,
+    bool,
+    crate::lang::Lang,
+    bool,
+    Option<[f32; 4]>,
+    Vec<String>,
+) {
     let prefs = crate::lang::load_prefs(data_root);
     let env_set = std::env::var_os("SMAIL_THEME").is_some();
     let theme = if env_set {
@@ -933,6 +950,7 @@ pub(crate) fn boot_prefs(
         prefs.lang,
         prefs.ai_ack,
         prefs.win,
+        prefs.muted,
     )
 }
 

@@ -41,6 +41,7 @@ mod error;
 
 pub mod config;
 pub mod html;
+pub use html::html_to_markdown;
 pub mod keychain;
 pub mod oauth;
 pub mod pgp;

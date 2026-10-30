@@ -394,6 +394,25 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.contact_search = s;
             Task::none()
         }
+        Message::ToggleMuteSender(addr) => {
+            // 切换静音并立即持久化（通知过滤在 NewMail 事件处）
+            let now_muted = state.prefs.muted.contains(&addr);
+            if now_muted {
+                state.prefs.muted.retain(|a| *a != addr);
+                state.statuses.insert(
+                    state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                    format!("已取消静音：{addr}"),
+                );
+            } else {
+                state.prefs.muted.push(addr.clone());
+                state.statuses.insert(
+                    state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                    format!("已静音：{addr}（新邮件不再通知）"),
+                );
+            }
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
         // ---------------- 对齐 Apple Mail 邮箱菜单 ----------------
         Message::MailboxPrev | Message::MailboxNext => {
             let prev = matches!(message, Message::MailboxPrev);
@@ -584,6 +603,10 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::Forward(..)
         | Message::ForwardAsAttachment(..)
         | Message::ContactAddFromSender(..)
+        | Message::Resend(..)
+        | Message::ExportFolderRequest(..)
+        | Message::ExportFolderPicked(..)
+        | Message::ExportFolderDone { .. }
         | Message::ForwardAttachmentsReady(..)
         | Message::AskDelete(..)
         | Message::CancelDelete

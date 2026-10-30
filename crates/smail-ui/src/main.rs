@@ -334,6 +334,21 @@ pub(crate) enum Message {
     ContactAddFromSender(usize, i64),
     /// 作为附件转发：新建写信窗，附件挂原邮件 .eml
     ForwardAsAttachment(usize, i64),
+    /// 静音/取消静音发件人（新邮件通知跳过）
+    ToggleMuteSender(String),
+    /// 再次发送：用原收件人/主题/正文新建写信窗（已发送文件夹）
+    Resend(usize, i64),
+    /// 导出当前文件夹全部邮件为 .eml（先弹目录选择）
+    ExportFolderRequest(usize, String),
+    /// 目录已选：后台批量写出
+    ExportFolderPicked(
+        usize,
+        String,
+        Vec<i64>,
+        Option<std::path::PathBuf>,
+    ),
+    /// 导出完成（成功数 / 总数）
+    ExportFolderDone { done: usize, total: usize },
     // ---- 多窗口：主窗/写信窗生命周期 ----
     /// boot 后主窗打开完成（回填 id）
     MainWindowOpened(iced::window::Id),

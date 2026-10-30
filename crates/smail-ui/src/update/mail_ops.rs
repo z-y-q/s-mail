@@ -2,11 +2,12 @@
 
 use crate::update::{close_reading_if_gone, selection_by_acct};
 use crate::{
-    compose::{self, open_compose_with, ReplyKind},
+    compose::{self, open_compose_with, text_editor_edit_paste, ReplyKind},
     extract_forward_attachments, open_in_browser, Compose, DispKind, Message, State,
 };
 use iced::widget::text_editor;
 use iced::Task;
+use smail_core::html_to_markdown;
 use smail_core::Cmd;
 
 /// 消息组的统一入口（分发器按 or-pattern 委托；模式与处理体自 update.rs 原样搬运）
@@ -402,6 +403,137 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     state.error = Some("无法识别发件人地址".into());
                 }
             }
+            Task::none()
+        }
+        Message::Resend(acct, hash) => {
+            // 再次发送（已发送文件夹）：从本地缓存的原始邮件恢复
+            // 收件人/主题/正文，新建写信窗（附件不恢复——重发场景以正文为主）
+            let slug = state
+                .accounts
+                .get(acct)
+                .map(|a| a.slug.clone())
+                .unwrap_or_default();
+            let eml_path = state.data_root.join(&slug).join("bodies").join(format!("{hash}.eml"));
+            let Ok(bytes) = std::fs::read(&eml_path) else {
+                state.error = Some("原邮件正文未缓存，无法再次发送".into());
+                return Task::none();
+            };
+            let Some(msg) = mail_parser::MessageParser::default().parse(&bytes) else {
+                state.error = Some("原邮件解析失败，无法再次发送".into());
+                return Task::none();
+            };
+            let to = msg
+                .to()
+                .and_then(|a| a.first())
+                .and_then(|f| f.address.as_deref().map(String::from))
+                .unwrap_or_default();
+            let subject = msg.subject().unwrap_or("").to_string();
+            let body_text = msg.body_text(0).map(|t| t.into_owned()).unwrap_or_default();
+            let body_html = msg.body_html(0).map(|h| h.into_owned());
+            let body_text = match body_html {
+                Some(html) => html_to_markdown(&html),
+                None => body_text,
+            };
+            if to.trim().is_empty() {
+                state.error = Some("原邮件没有收件人信息，无法再次发送".into());
+                return Task::none();
+            }
+            let mut content = text_editor::Content::new();
+            content.perform(text_editor_edit_paste(&body_text));
+            state.compose = Some(Compose {
+                ai_instruction: String::new(),
+                ai_busy: false,
+                ai_overwrite_ask: false,
+                ai_pending: None,
+                ai_rewrite_mode: false,
+                ai_prev: None,
+                autosave_at: None,
+                draft_id: None,
+                account: acct,
+                pgp_sign: false,
+                pgp_encrypt: false,
+                confirm_discard: false,
+                to,
+                cc: String::new(),
+                bcc: String::new(),
+                subject,
+                body: content,
+                attachments: vec![],
+            });
+            if state.compose_window.is_none() {
+                let (win_id, task) = iced::window::open(iced::window::Settings {
+                    size: iced::Size::new(900.0, 640.0),
+                    min_size: Some(iced::Size::new(720.0, 480.0)),
+                    ..Default::default()
+                });
+                state.compose_window = Some(win_id);
+                return task.map(move |_| Message::ComposeWindowOpened(win_id));
+            }
+            Task::none()
+        }
+        Message::ExportFolderRequest(acct, folder) => {
+            // 导出当前文件夹全部邮件为 .eml：先弹目录选择，回填后后台写文件
+            let hashes: Vec<i64> = state
+                .rows
+                .iter()
+                .filter(|(a, _)| *a == acct)
+                .map(|(_, r)| r.envelope_hash)
+                .collect();
+            if hashes.is_empty() {
+                state.error = Some("当前文件夹没有邮件可导出".into());
+                return Task::none();
+            }
+            Task::perform(
+                async move {
+                    rfd::AsyncFileDialog::new()
+                        .set_title("选择导出目录")
+                        .pick_folder()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                move |dir: Option<std::path::PathBuf>| {
+                    Message::ExportFolderPicked(acct, folder.clone(), hashes.clone(), dir)
+                },
+            )
+        }
+        Message::ExportFolderPicked(acct, folder, hashes, Some(dir)) => {
+            // 后台批量写出 .eml（文件名 时间戳_hash.eml；缺正文缓存的跳过并计数）
+            let bodies = state.data_root.join("bodies");
+            let dir2 = dir.clone();
+            let n_total = hashes.len();
+            state.export_folder = Some((acct, folder.clone(), dir.clone()));
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let mut done = 0usize;
+                        for h in &hashes {
+                            let Ok(bytes) = std::fs::read(bodies.join(format!("{h}.eml"))) else {
+                                continue;
+                            };
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            let name = format!("{ts}_{h}.eml");
+                            if std::fs::write(dir2.join(name), &bytes).is_ok() {
+                                done += 1;
+                            }
+                        }
+                        (done, n_total)
+                    })
+                    .await
+                    .unwrap_or((0, n_total))
+                },
+                move |(done, total)| Message::ExportFolderDone { done, total },
+            )
+        }
+        Message::ExportFolderPicked(_, _, _, None) => Task::none(),
+        Message::ExportFolderDone { done, total } => {
+            state.export_folder = None;
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                format!("已导出 {done}/{total} 封到所选目录"),
+            );
             Task::none()
         }
         Message::ForwardAsAttachment(acct, hash) => {

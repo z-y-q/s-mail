@@ -886,7 +886,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .into();
                     list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(acct, r.envelope_hash, r.flagged, &r.from_addr));
+                        list = list.push(context_menu_row(state, acct, r.envelope_hash, r.flagged, &r.from_addr, smail_core::folder_kind(&r.folder), &r.folder));
                     }
                 }
                 DispKind::ThreadChild => {
@@ -928,7 +928,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .into();
                     list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(acct, r.envelope_hash, r.flagged, &r.from_addr));
+                        list = list.push(context_menu_row(state, acct, r.envelope_hash, r.flagged, &r.from_addr, smail_core::folder_kind(&r.folder), &r.folder));
                     }
                 }
                 DispKind::Flat => {
@@ -1020,7 +1020,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .into();
                     list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(acct, r.envelope_hash, r.flagged, &r.from_addr));
+                        list = list.push(context_menu_row(state, acct, r.envelope_hash, r.flagged, &r.from_addr, smail_core::folder_kind(&r.folder), &r.folder));
                     }
                 }
             }
@@ -1233,12 +1233,16 @@ fn wrap_row_menu<'a>(
 }
 
 /// 右键菜单行：动作与阅读页操作条同源（点击后关菜单再转发）。
-/// 发件人相关（复制地址/加入通讯录/附件转发）对齐 Apple Mail 邮件菜单
+/// 发件人相关（复制地址/加入通讯录/附件转发/静音）对齐 Apple Mail 邮件菜单；
+/// 「再次发送」仅在已发送文件夹显示
 fn context_menu_row(
+    state: &State,
     acct: usize,
     hash: i64,
     flagged: bool,
     from_addr: &str,
+    folder_kind: smail_core::FolderKind,
+    folder_path: &str,
 ) -> Element<'static, Message> {
     let item = |label: String, msg: Message| -> Element<'static, Message> {
         button(container(text(label).size(13)).width(Length::Fill))
@@ -1254,6 +1258,14 @@ fn context_menu_row(
         "☆ 星标".to_string()
     };
     let sender_addr = crate::addr_of(from_addr);
+    let is_sent = folder_kind == smail_core::FolderKind::Sent;
+    let muted = state.prefs.muted.contains(&sender_addr);
+    let mute_label = if muted {
+        format!("取消静音（{sender_addr}）")
+    } else {
+        format!("静音此发件人（{sender_addr}）")
+    };
+    let cur_folder = state.nav.cur.as_ref().map(|(_, f)| f.clone());
     container(
         column![
             item("↩ 回复".into(), Message::Reply(acct, hash)),
@@ -1263,6 +1275,8 @@ fn context_menu_row(
                 "作为附件转发".into(),
                 Message::ForwardAsAttachment(acct, hash)
             ),
+            (is_sent)
+                .then(|| item("再次发送".into(), Message::Resend(acct, hash))),
             item(star_label, Message::ToggleStar(acct, hash, !flagged)),
             item("标为未读".into(), Message::MarkUnread(acct, hash)),
             item("移动到…".into(), Message::MoveTo(acct, hash)),
@@ -1277,6 +1291,17 @@ fn context_menu_row(
                 "将发件人加入通讯录".into(),
                 Message::ContactAddFromSender(acct, hash),
             ),
+            item(
+                mute_label,
+                Message::ToggleMuteSender(sender_addr.clone()),
+            ),
+            (cur_folder.as_deref() == Some(folder_path))
+                .then(|| {
+                    item(
+                        format!("导出此文件夹（{} 封）", state.rows.len()),
+                        Message::ExportFolderRequest(acct, folder_path.to_string()),
+                    )
+                }),
             item("关闭菜单".into(), Message::ContextMenuClose),
         ]
         .spacing(1)
