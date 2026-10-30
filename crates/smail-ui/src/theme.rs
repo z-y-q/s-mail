@@ -60,7 +60,19 @@ pub fn secondary_text_color(t: &Theme) -> Color {
     match t {
         // 0.60 在深底上 11px 小字对比度不足（用户反馈“看不清”），提亮到 0.68
         Theme::Dark => Color::from_rgb(0.68, 0.68, 0.71),
-        _ => Color::from_rgb(0.43, 0.43, 0.45), // #6E6E73
+        // #636366：浅色侧栏/卡片 5.0–6.0:1（旧 #6E6E73 只有 4.27，11px 未达 AA）
+        _ => Color::from_rgb(0.388, 0.388, 0.4),
+    }
+}
+
+/// 强调色作为「文字色」时的场景（未读徽标等蓝字浅底）：
+/// 浅色用更深的 #005BB8（pill 底 4.7 / 侧栏 5.5 / 卡片 6.6，全部过 AA），
+/// systemBlue 本体只有 3.3–4.0；深色模式沿用 systemBlue（4.6 达标）。
+/// 按钮底色仍用 accent()（白字蓝底是 Apple 惯例，不在此列）
+pub fn accent_text(t: &Theme) -> Color {
+    match t {
+        Theme::Dark => accent(t),
+        _ => Color::from_rgb(0.0, 0.357, 0.722), // #005BB8
     }
 }
 
@@ -290,7 +302,8 @@ pub fn ui_font(weight: iced::font::Weight) -> Font {
 pub fn unread_pill(t: &Theme) -> container::Style {
     container::Style {
         background: Some(accent_tint(t).into()),
-        text_color: Some(accent(t)),
+        // 蓝字浅底：浅色用深变体保证 AA（systemBlue 在 pill 底只有 3.3:1）
+        text_color: Some(accent_text(t)),
         border: iced::border::rounded(9),
         ..Default::default()
     }

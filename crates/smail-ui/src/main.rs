@@ -553,14 +553,14 @@ fn view(state: &State) -> Element<'_, Message> {
     if let Some(err) = &state.error {
         return container(
             column![
-                text("✉️ s-mail")
-                    .size(20)
+                text("✉ s-mail")
+                    .size(17)
                     .font(theme::ui_font(iced::font::Weight::Bold)),
                 container(
                     row![
                         text(err.clone()).size(13),
                         Space::new().width(Length::Fill),
-                        button(text(state.l().err_close).size(12))
+                        button(text(state.l().err_close).size(13))
                             .on_press(Message::ErrorDismiss)
                             .padding([2, 8]),
                     ]
@@ -581,14 +581,14 @@ fn view(state: &State) -> Element<'_, Message> {
     if let Some(hint) = &state.setup_hint {
         return container(
             column![
-                text("✉️ s-mail")
+                text("✉ s-mail")
                     .size(30)
                     .font(theme::ui_font(iced::font::Weight::Bold)),
-                text("还没有配置账号").size(14).style(theme::secondary_text),
+                text("还没有配置账号").size(13).style(theme::secondary_text),
                 container(
                     column![
-                        text(state.error.clone().unwrap_or_default()).size(12),
-                        text(hint.to_string()).size(12),
+                        text(state.error.clone().unwrap_or_default()).size(13),
+                        text(hint.to_string()).size(13),
                     ]
                     .spacing(6)
                 )

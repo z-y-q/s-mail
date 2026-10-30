@@ -34,7 +34,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     }
     if !state.nav.in_search && state.nav.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true)
     {
-        return container(text(state.l().draft_hint).size(14))
+        return container(text(state.l().draft_hint).size(13))
             .center(Length::Fill)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -95,7 +95,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     // 操作条两行分组（一行塞 10+ 个按钮，窄窗口必溢出）：
     // 第一行「回复组」，第二行「AI + 整理组」。摘要按钮此前重复出现两次，只留一处
     let mk = |label: String, msg: Message, active: bool| {
-        button(text(label).size(12))
+        button(text(label).size(13))
             .on_press(msg)
             .padding([3, 8])
             .style(move |t, st| {
@@ -176,11 +176,11 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                     state.l().del_q_move
                 })
                 .size(13),
-                button(text(state.l().perm_delete).size(12))
+                button(text(state.l().perm_delete).size(13))
                     .on_press(Message::DeleteMail(*acct, hash))
                     .style(button::danger)
                     .padding([2, 8]),
-                button(text(state.l().cancel).size(12))
+                button(text(state.l().cancel).size(13))
                     .on_press(Message::CancelDelete)
                     .padding([2, 8]),
                 Space::new().width(Length::Fill),
@@ -194,19 +194,19 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     if let Some(url) = &reading.unsubscribe {
         attachments_col = attachments_col.push(
             row![
-                button(text(state.l().unsub).size(12))
+                button(text(state.l().unsub).size(13))
                     .on_press(Message::Unsubscribe(url.clone()))
                     .padding([3, 8])
                     .style(theme::ghost_button),
                 text(state.l().unsub_note)
-                    .size(10)
+                    .size(11)
                     .style(theme::secondary_text),
             ]
             .spacing(6),
         );
     }
     attachments_col = attachments_col.push(
-        button(text(state.l().save_eml).size(12))
+        button(text(state.l().save_eml).size(13))
             .on_press(Message::ExportEmlRequest(*acct, hash))
             .padding([3, 8])
             .style(theme::ghost_button),
@@ -217,7 +217,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             column![
                 iced::widget::image(h.clone()).height(200),
                 text(format!("📄 {pname}"))
-                    .size(10)
+                    .size(11)
                     .style(theme::secondary_text),
             ]
             .spacing(2),
@@ -228,7 +228,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         attachments_col = attachments_col.push(
             column![
                 iced::widget::image(h.clone()).height(120),
-                text(iname.clone()).size(10).style(theme::secondary_text),
+                text(iname.clone()).size(11).style(theme::secondary_text),
             ]
             .spacing(2),
         );
@@ -244,8 +244,8 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         for (name, size) in &reading.attachments {
             attachments_col = attachments_col.push(
                 row![
-                    text(format!("{}（{} B）", name, size)).size(12),
-                    button(text(state.l().save).size(12))
+                    text(format!("{}（{} B）", name, size)).size(13),
+                    button(text(state.l().save).size(13))
                         .on_press(Message::SaveAttachment(*acct, hash, name.clone()))
                         .padding([2, 8]),
                 ]
@@ -275,11 +275,12 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         Some(md) => container(
             iced::widget::markdown::view(
                 md.items(),
-                iced::widget::markdown::Settings::with_text_size(14, md_theme),
+                iced::widget::markdown::Settings::with_text_size(13, md_theme),
             )
             .map(Message::LinkClicked),
         )
         .padding(12)
+        .max_width(760)
         .style(move |_theme| container::Style {
             background: Some(card_bg.into()),
             text_color: Some(card_fg),
@@ -287,8 +288,14 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             ..Default::default()
         })
         .into(),
-        None => text(reading.body.as_str()).size(13).into(),
+        // 正文行宽上限 760 居中：超宽窗口下行长过长伤可读性（设计审计 L4）
+        None => container(text(reading.body.as_str()).size(13))
+            .max_width(760)
+            .into(),
     };
+    let body_view = container(body_view)
+        .width(Length::Fill)
+        .center_x(Length::Fill);
 
     // 信头元信息行：发件人 + 右对齐日期（Apple Mail 式；数据从列表行取）
     let meta_row = state
@@ -328,7 +335,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     // M5-c：PGP 状态徽章（语义着色：绿=好 红=坏 灰=未验证；符号前缀保色弱可辨）
     if let Some(badge) = &reading.pgp {
         reader_col = reader_col.push(
-            container(text(badge.clone()).size(12))
+            container(text(badge.clone()).size(13))
                 .padding([3, 8])
                 .style(move |t| theme::status_badage(t, theme::badge_kind(badge))),
         );
@@ -340,7 +347,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 container(
                     row![
                         column![text(state.l().ai_summary_btn)
-                            .size(12)
+                            .size(13)
                             .font(theme::ui_font(iced::font::Weight::Semibold))]
                         .width(Length::Fill),
                         button(text(state.l().err_close).size(11))
@@ -355,7 +362,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 .style(theme::reader_meta),
             );
             reader_col = reader_col.push(
-                container(text(sum.to_string()).size(12).style(theme::secondary_text))
+                container(text(sum.to_string()).size(13).style(theme::secondary_text))
                     .padding([2, 10])
                     .width(Length::Fill)
                     .style(theme::reader_meta),
@@ -384,7 +391,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                         "→ {}",
                         crate::lang::folder_display(state.l(), f.kind, &f.path)
                     ))
-                    .size(12),
+                    .size(13),
                 )
                 .on_press(Message::MoveToDest(*acct, hash, f.path.clone()))
                 .padding([2, 8])
@@ -394,7 +401,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         if n == 0 {
             picks = picks.push(
                 text(state.l().no_dest)
-                    .size(12)
+                    .size(13)
                     .style(theme::secondary_text),
             );
         }
@@ -418,7 +425,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         reader_col = reader_col.push(
             container(
                 row![
-                    button(text(state.l().not_junk).size(12))
+                    button(text(state.l().not_junk).size(13))
                         .on_press(Message::MoveToDest(*acct, hash, "INBOX".into()))
                         .padding([3, 8])
                         .style(theme::accent_button),

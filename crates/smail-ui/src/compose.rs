@@ -215,7 +215,8 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
     } else {
         state.l().title_new
     })
-    .size(20),]
+    .size(17)
+    .font(theme::ui_font(iced::font::Weight::Semibold)),]
     .spacing(8);
     if multi {
         header = header.push(
@@ -241,18 +242,18 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
     header = header.push(sign_toggler);
     header = header.push(enc_toggler);
     header = header.push(
-        button(text(state.l().send).size(14))
+        button(text(state.l().send).size(13))
             .on_press(Message::SendClicked)
             .padding([6, 16])
             .style(theme::accent_button),
     );
     header = header.push(
-        button(text(state.l().save_draft).size(14))
+        button(text(state.l().save_draft).size(13))
             .on_press(Message::SaveDraftClicked)
             .padding([6, 12]),
     );
     header = header.push(
-        button(text(state.l().close).size(14))
+        button(text(state.l().close).size(13))
             .on_press(Message::ComposeClose)
             .padding([6, 12]),
     );
@@ -270,7 +271,7 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
             .and_then(|n| n.to_str())
             .unwrap_or("file");
         attach_row = attach_row.push(
-            button(text(format!("✕ {name}")).size(12))
+            button(text(format!("✕ {name}")).size(13))
                 .on_press(Message::RemoveAttachment(i))
                 .padding([2, 8]),
         );
@@ -281,11 +282,11 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         container(
             row![
                 text(state.l().discard_q).size(13),
-                button(text(state.l().discard).size(12))
+                button(text(state.l().discard).size(13))
                     .on_press(Message::ComposeDiscardConfirm)
                     .padding([3, 10])
                     .style(theme::accent_button),
-                button(text(state.l().keep_editing).size(12))
+                button(text(state.l().keep_editing).size(13))
                     .on_press(Message::ComposeDiscardCancel)
                     .padding([3, 10])
                     .style(theme::ghost_button),
@@ -304,11 +305,11 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         container(
             row![
                 text(state.l().ai_overwrite_q).size(13),
-                button(text(state.l().ai_overwrite_yes).size(12))
+                button(text(state.l().ai_overwrite_yes).size(13))
                     .on_press(Message::AiDraftApply)
                     .padding([3, 10])
                     .style(theme::accent_button),
-                button(text(state.l().cancel).size(12))
+                button(text(state.l().cancel).size(13))
                     .on_press(Message::AiDraftDiscard)
                     .padding([3, 10])
                     .style(theme::ghost_button),
@@ -497,7 +498,7 @@ fn compose_field_with_contacts<'a>(
     let mut list = column![].spacing(1);
     for h in hits {
         list = list.push(
-            button(text(h.clone()).size(12))
+            button(text(h.clone()).size(13))
                 .on_press(Message::ContactPicked(f, h.clone()))
                 .padding([2, 8])
                 .style(theme::ghost_button),

@@ -347,7 +347,7 @@ pub(crate) fn labeled_field<'a>(
     on_input: impl Fn(String) -> Message + 'a,
 ) -> Element<'a, Message> {
     row![
-        container(text(label.to_string()).size(12))
+        container(text(label.to_string()).size(13))
             .width(Length::Fixed(label_w))
             .align_y(iced::alignment::Vertical::Center)
             .style(|t| {
@@ -420,7 +420,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         } else {
             state.l().add_hdr
         })
-        .size(20)
+        .size(17)
         .font(theme::ui_font(iced::font::Weight::Semibold)),
         preset_row,
         setup_field(
@@ -444,7 +444,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         form_col = form_col
             .push(
                 text(state.l().oauth_note)
-                    .size(12)
+                    .size(13)
                     .style(theme::secondary_text),
             )
             .push(setup_field(
@@ -503,14 +503,14 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
     match &f.test_result {
         Some(Ok(n)) => {
             form_col = form_col.push(
-                container(text(crate::lang::f(state.l().test_ok, &[&n])).size(12))
+                container(text(crate::lang::f(state.l().test_ok, &[&n])).size(13))
                     .padding([3, 8])
                     .style(|t| theme::status_badage(t, theme::BadgeKind::Good)),
             );
         }
         Some(Err(e)) => {
             form_col = form_col.push(
-                container(text(format!("✗ {e}")).size(12))
+                container(text(format!("✗ {e}")).size(13))
                     .padding([3, 8])
                     .style(|t| theme::status_badage(t, theme::BadgeKind::Bad)),
             );
@@ -519,14 +519,14 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
     }
     if let Some(e) = &f.err {
         form_col = form_col.push(
-            container(text(e.clone()).size(12))
+            container(text(e.clone()).size(13))
                 .padding([3, 8])
                 .style(|t| theme::status_badage(t, theme::BadgeKind::Bad)),
         );
     }
     if f.esc_guard {
         form_col = form_col.push(
-            container(text(state.l().esc_again).size(12))
+            container(text(state.l().esc_again).size(13))
                 .padding([3, 8])
                 .style(|t| theme::status_badage(t, theme::BadgeKind::Warn)),
         );
@@ -607,9 +607,9 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                     a.imap.username,
                     if pgp_on { " · PGP✓" } else { "" },
                 ))
-                .size(12),
+                .size(13),
                 Space::new().width(Length::Fill),
-                button(text(state.l().delete_short).size(12))
+                button(text(state.l().delete_short).size(13))
                     .on_press(Message::SetupDelete(i))
                     .padding([2, 8])
                     .style(theme::ghost_button),
@@ -623,7 +623,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                 } else {
                     state.l().keychain_off
                 })
-                .size(12))
+                .size(13))
                     .on_press(Message::KeychainMove(i))
                     .padding([2, 8])
                     .style(move |t, st| {
@@ -633,7 +633,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                             theme::outline_button(t, st)
                         }
                     }),
-                button(text("PGP").size(12))
+                button(text("PGP").size(13))
                     .on_press(Message::PgpEditOpen(i))
                     .padding([2, 8])
                     .style(move |t, st| {
@@ -643,15 +643,15 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                             theme::ghost_button(t, st)
                         }
                     }),
-                button(text(state.l().signature_btn).size(12))
+                button(text(state.l().signature_btn).size(13))
                     .on_press(Message::SignatureEditOpen(i))
                     .padding([2, 8])
                     .style(theme::ghost_button),
-                button(text(state.l().sync_interval_btn).size(12))
+                button(text(state.l().sync_interval_btn).size(13))
                     .on_press(Message::SyncEditOpen(i))
                     .padding([2, 8])
                     .style(theme::ghost_button),
-                button(text(state.l().rules_btn).size(12))
+                button(text(state.l().rules_btn).size(13))
                     .on_press(Message::RuleEditOpen(i))
                     .padding([2, 8])
                     .style(move |t, st| {
@@ -675,21 +675,21 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                                 text_input(state.l().sync_interval_ph, raw)
                                     .on_input(Message::SyncEditInput)
                                     .on_submit(Message::SyncEditSave)
-                                    .size(12)
+                                    .size(13)
                                     .width(120)
                                     .padding(4),
-                                button(text(state.l().save).size(12))
+                                button(text(state.l().save).size(13))
                                     .on_press(Message::SyncEditSave)
                                     .padding([3, 10])
                                     .style(theme::accent_button),
-                                button(text(state.l().cancel).size(12))
+                                button(text(state.l().cancel).size(13))
                                     .on_press(Message::SyncEditCancel)
                                     .padding([3, 8])
                                     .style(theme::ghost_button),
                             ]
                             .spacing(6),
                             text(state.l().sync_interval_hint)
-                                .size(10)
+                                .size(11)
                                 .style(theme::secondary_text),
                         ]
                         .spacing(4),
@@ -718,11 +718,11 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                                 .height(80)
                                 .padding(6),
                             row![
-                                button(text(state.l().save).size(12))
+                                button(text(state.l().save).size(13))
                                     .on_press(Message::SignatureEditSave)
                                     .padding([3, 10])
                                     .style(theme::accent_button),
-                                button(text(state.l().cancel).size(12))
+                                button(text(state.l().cancel).size(13))
                                     .on_press(Message::SignatureEditCancel)
                                     .padding([3, 8])
                                     .style(theme::ghost_button),
@@ -786,9 +786,9 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
             };
             contacts_col = contacts_col.push(
                 row![
-                    text(display).size(12),
+                    text(display).size(13),
                     Space::new().width(Length::Fill),
-                    button(text(state.l().delete_short).size(10))
+                    button(text(state.l().delete_short).size(11))
                         .on_press(Message::ContactDelete(*acct, c.id))
                         .padding([1, 6])
                         .style(theme::ghost_button),
@@ -799,7 +799,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         if deduped.len() > 50 {
             contacts_col = contacts_col.push(
                 text(crate::lang::f(state.l().contacts_more, &[&deduped.len()]))
-                    .size(10)
+                    .size(11)
                     .style(theme::secondary_text),
             );
         }
@@ -825,7 +825,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                 } else {
                     state.l().ai_setup
                 })
-                .size(12)
+                .size(13)
             )
             .on_press(if state.ai.form.is_some() {
                 Message::AiFormClose
@@ -847,7 +847,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                 p.title()
             };
             preset_row = preset_row.push(
-                button(text(title).size(12))
+                button(text(title).size(13))
                     .on_press(Message::AiFormPreset(p))
                     .padding([3, 8])
                     .style(move |t, st| {
@@ -913,14 +913,14 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         match &f.test_result {
             Some(Ok(r)) => {
                 form = form.push(
-                    container(text(crate::lang::f(state.l().ai_test_ok, &[r])).size(12))
+                    container(text(crate::lang::f(state.l().ai_test_ok, &[r])).size(13))
                         .padding([3, 8])
                         .style(|t| theme::status_badage(t, theme::BadgeKind::Good)),
                 );
             }
             Some(Err(e)) => {
                 form = form.push(
-                    container(text(format!("✗ {e}")).size(12))
+                    container(text(format!("✗ {e}")).size(13))
                         .padding([3, 8])
                         .style(|t| theme::status_badage(t, theme::BadgeKind::Bad)),
                 );
@@ -929,7 +929,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         }
         if let Some(e) = &f.err {
             form = form.push(
-                container(text(e.clone()).size(12))
+                container(text(e.clone()).size(13))
                     .padding([3, 8])
                     .style(|t| theme::status_badage(t, theme::BadgeKind::Bad)),
             );
@@ -991,9 +991,9 @@ fn rule_edit_panel<'a>(
 ) -> Element<'a, Message> {
     let mut col = column![
         text(state.l().rules_hdr)
-            .size(12)
+            .size(13)
             .font(theme::ui_font(iced::font::Weight::Semibold)),
-        text(state.l().rules_hint).size(10).style(theme::secondary_text),
+        text(state.l().rules_hint).size(11).style(theme::secondary_text),
     ]
     .spacing(2);
 
@@ -1039,7 +1039,7 @@ fn rule_edit_panel<'a>(
                 iced::widget::text_input("", &value)
                     .on_input(move |v| Message::RuleEditValue(n, v))
                     .on_submit(Message::RuleEditValue(n, value.clone()))
-                    .size(12)
+                    .size(13)
                     .width(150)
                     .padding(4),
                 iced::widget::pick_list(
@@ -1062,7 +1062,7 @@ fn rule_edit_panel<'a>(
                     iced::widget::text_input(state.l().rule_move_ph, &dest)
                         .on_input(move |v| Message::RuleEditMoveDest(n, v))
                         .on_submit(Message::RuleEditMoveDest(n, dest.clone()))
-                        .size(12)
+                        .size(13)
                         .width(130)
                         .padding(4),
                 );
@@ -1083,7 +1083,7 @@ fn rule_edit_panel<'a>(
                         .style(theme::secondary_text),
                     Space::new().width(Length::Fill),
                     text(state.l().rules_advanced)
-                        .size(10)
+                        .size(11)
                         .style(theme::secondary_text),
                     button(text("✕").size(11))
                         .on_press(Message::RuleEditDelete(n))
@@ -1103,11 +1103,11 @@ fn rule_edit_panel<'a>(
                 .padding([2, 8])
                 .style(theme::outline_button),
             Space::new().width(Length::Fill),
-            button(text(state.l().save).size(12))
+            button(text(state.l().save).size(13))
                 .on_press(Message::RuleEditSave)
                 .padding([3, 12])
                 .style(theme::accent_button),
-            button(text(state.l().cancel).size(12))
+            button(text(state.l().cancel).size(13))
                 .on_press(Message::RuleEditCancel)
                 .padding([3, 10])
                 .style(theme::ghost_button),
@@ -1153,7 +1153,7 @@ fn pgp_edit_form<'a>(l: &crate::lang::Lex, f: &'a PgpForm) -> Element<'a, Messag
         row![iced::widget::checkbox(f.wkd)
             .label(l.wkd_label)
             .on_toggle(Message::PgpEditWkd)
-            .size(12)
+            .size(13)
             .text_size(11),],
         row![
             button(text(l.pick_file).size(11))
@@ -1161,11 +1161,11 @@ fn pgp_edit_form<'a>(l: &crate::lang::Lex, f: &'a PgpForm) -> Element<'a, Messag
                 .padding([2, 8])
                 .style(theme::ghost_button),
             Space::new().width(Length::Fill),
-            button(text(l.save).size(12))
+            button(text(l.save).size(13))
                 .on_press(Message::PgpEditSave)
                 .padding([3, 10])
                 .style(theme::accent_button),
-            button(text(l.cancel).size(12))
+            button(text(l.cancel).size(13))
                 .on_press(Message::PgpEditCancel)
                 .padding([3, 6]),
         ]

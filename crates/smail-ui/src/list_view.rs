@@ -44,7 +44,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
 
     let topbar = container(
         row![
-            button(text(state.l().compose_new).size(14))
+            button(text(state.l().compose_new).size(13))
                 .on_press_maybe(if state.account_names.is_empty() {
                     None
                 } else {
@@ -52,7 +52,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 })
                 .padding([5, 12])
                 .style(theme::accent_button),
-            text("s-mail").size(16),
+            text("s-mail").size(17),
             button(
                 // 显示当前模式（点击切换）：「会话视图 ⇄ 平铺视图」一眼自明
                 text(if state.nav.threaded {
@@ -60,13 +60,13 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 } else {
                     state.l().view_flat
                 })
-                .size(12)
+                .size(13)
             )
             .on_press(Message::ToggleThreading)
             .padding([4, 8])
             .style(theme::ghost_button),
             text_input_search(state),
-            button(text("↻").size(14))
+            button(text("↻").size(13))
                 .on_press(Message::ManualRefresh)
                 .padding([4, 8])
                 .style(theme::ghost_button),
@@ -85,11 +85,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .on_press(Message::ToggleUiTheme)
             .padding([4, 8])
             .style(theme::ghost_button),
-            button(text(state.prefs.lang.toggle_label()).size(12))
+            button(text(state.prefs.lang.toggle_label()).size(13))
                 .on_press(Message::ToggleLang)
                 .padding([4, 8])
                 .style(theme::ghost_button),
-            button(text(state.l().add_account).size(12))
+            button(text(state.l().add_account).size(13))
                 .on_press(Message::SetupOpen)
                 .padding([4, 8])
                 .style(theme::ghost_button),
@@ -132,7 +132,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         sidebar = sidebar
             .push(
                 text(state.l().no_account)
-                    .size(12)
+                    .size(13)
                     .style(theme::secondary_text),
             )
             .push(Space::new().height(4))
@@ -210,14 +210,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             iced::widget::text_input(state.l().new_folder_ph, rname)
                                 .on_input(Message::RenameFolderInput)
                                 .on_submit(Message::RenameFolderConfirm)
-                                .size(12)
+                                .size(13)
                                 .width(Length::Fill)
                                 .padding(3),
-                            button(text(state.l().do_rename).size(12))
+                            button(text(state.l().do_rename).size(13))
                                 .on_press(Message::RenameFolderConfirm)
                                 .padding([3, 8])
                                 .style(theme::accent_button),
-                            button(text(state.l().cancel).size(12))
+                            button(text(state.l().cancel).size(13))
                                 .on_press(Message::RenameFolderCancel)
                                 .padding([3, 6]),
                         ]
@@ -276,14 +276,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 if f.kind == smail_core::FolderKind::Plain {
                     (
                         Some(
-                            button(text("✎").size(10))
+                            button(text("✎").size(11))
                                 .on_press(Message::RenameFolderOpen(i, f.path.clone()))
                                 .padding([2, 4])
                                 .style(theme::ghost_button)
                                 .into(),
                         ),
                         Some(
-                            button(text("✕").size(10))
+                            button(text("✕").size(11))
                                 .on_press(Message::AskFolderDelete(i, f.path.clone()))
                                 .padding([2, 4])
                                 .style(theme::ghost_button)
@@ -309,11 +309,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 sidebar = sidebar.push(
                     row![
                         new_folder_input(state, nf_name),
-                        button(text(state.l().do_create).size(12))
+                        button(text(state.l().do_create).size(13))
                             .on_press(Message::NewFolderConfirm)
                             .padding([3, 8])
                             .style(theme::accent_button),
-                        button(text(state.l().cancel).size(12))
+                        button(text(state.l().cancel).size(13))
                             .on_press(Message::NewFolderCancel)
                             .padding([3, 6]),
                     ]
@@ -462,7 +462,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     let bottom_pad = (n_entries - last) as f32 * ROW_H;
 
     let mut list = column![
-        text(cur_name).size(12),
+        text(cur_name).size(13),
         Space::new()
             .width(Length::Fill)
             .height(Length::Fixed(top_pad)),
@@ -477,12 +477,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             list = list.push(
                 container(
                     row![
-                        text(crate::lang::f(state.l().empty_trash_q, &[&n])).size(12),
-                        button(text(state.l().perm_delete).size(12))
+                        text(crate::lang::f(state.l().empty_trash_q, &[&n])).size(13),
+                        button(text(state.l().perm_delete).size(13))
                             .on_press(Message::EmptyTrashConfirm)
                             .style(button::danger)
                             .padding([2, 8]),
-                        button(text(state.l().cancel).size(12))
+                        button(text(state.l().cancel).size(13))
                             .on_press(Message::EmptyTrashCancel)
                             .padding([2, 8]),
                         Space::new().width(Length::Fill),
@@ -509,12 +509,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         list = list.push(
             container(
                 row![
-                    text(crate::lang::f(state.l().folder_del_q, &[&fpath])).size(12),
-                    button(text(state.l().perm_delete).size(12))
+                    text(crate::lang::f(state.l().folder_del_q, &[&fpath])).size(13),
+                    button(text(state.l().perm_delete).size(13))
                         .on_press(Message::FolderDeleteConfirm)
                         .style(button::danger)
                         .padding([2, 8]),
-                    button(text("取消").size(12))
+                    button(text("取消").size(13))
                         .on_press(Message::FolderDeleteCancel)
                         .padding([2, 8]),
                     Space::new().width(Length::Fill),
@@ -535,7 +535,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     // 完全相同的命令路径——含乐观移除与后台搬运）
     if state.ai.plan_loading {
         list = list.push(
-            container(text(state.l().ai_plan_loading).size(12))
+            container(text(state.l().ai_plan_loading).size(13))
                 .padding([4, 6])
                 .style(theme::reader_meta),
         );
@@ -560,7 +560,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             crate::lang::f(state.l().ai_plan_group_n, &[&g.ids.len()]),
                             op_desc
                         ))
-                        .size(12),
+                        .size(13),
                         Space::new().width(Length::Fill),
                         button(text(if gui.expanded { "▾" } else { "▸" }).size(11))
                             .on_press(Message::AiPlanExpand(i))
@@ -608,11 +608,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         }
         panel = panel.push(
             row![
-                button(text(crate::lang::f(state.l().ai_plan_apply, &[&n_checked])).size(12))
+                button(text(crate::lang::f(state.l().ai_plan_apply, &[&n_checked])).size(13))
                     .on_press(Message::AiPlanApply)
                     .padding([3, 10])
                     .style(theme::accent_button),
-                button(text(state.l().cancel).size(12))
+                button(text(state.l().cancel).size(13))
                     .on_press(Message::AiPlanCancel)
                     .padding([3, 10])
                     .style(theme::ghost_button),
@@ -700,7 +700,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         .size(11)
                         .style(theme::secondary_text),
                     text(format!("{err}（{}/{}）", o.attempts, 5))
-                        .size(10)
+                        .size(11)
                         .style(theme::secondary_text),
                 ]
                 .spacing(2),
@@ -755,13 +755,13 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         .unwrap_or(false);
                     let star_txt: Element<Message> = if r.flagged {
                         text("★")
-                            .size(12)
+                            .size(13)
                             .style(|_t| text::Style {
                                 color: Some(theme::star_color()),
                             })
                             .into()
                     } else {
-                        text("").size(12).into()
+                        text("").size(13).into()
                     };
                     // 会话根的选择框挂在最新一封（批量操作对象直觉是所见最新信）
                     let cb = select_checkbox(state, acct, *latest);
@@ -832,14 +832,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                 column![
                                     row![
                                         star_txt,
-                                        text(format!("↳ {}", r.subject)).size(12),
+                                        text(format!("↳ {}", r.subject)).size(13),
                                         Space::new().width(Length::Fill),
                                         text(unix_to_local_short(r.date_unix))
-                                            .size(10)
+                                            .size(11)
                                             .style(theme::secondary_text),
                                     ],
                                     text(format!("   {}", r.from_addr))
-                                        .size(10)
+                                        .size(11)
                                         .style(theme::secondary_text),
                                 ]
                                 .spacing(1),
@@ -856,13 +856,13 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     let dot = if r.seen { "" } else { "●" };
                     let star_txt: Element<Message> = if r.flagged {
                         text("★")
-                            .size(12)
+                            .size(13)
                             .style(|_t| text::Style {
                                 color: Some(theme::star_color()),
                             })
                             .into()
                     } else {
-                        text("").size(12).into()
+                        text("").size(13).into()
                     };
                     let subj_weight = if r.seen {
                         iced::font::Weight::Normal
@@ -964,7 +964,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         .align_x(iced::alignment::Alignment::Center);
         if stale {
             empty_col = empty_col.push(
-                button(text(state.l().resync).size(12))
+                button(text(state.l().resync).size(13))
                     .on_press(Message::ManualRefresh)
                     .padding([3, 10])
                     .style(theme::outline_button),
@@ -1022,7 +1022,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     text(code.clone())
                         .size(13)
                         .font(theme::ui_font(iced::font::Weight::Bold)),
-                    button(text(state.l().oauth_open).size(12))
+                    button(text(state.l().oauth_open).size(13))
                         .on_press(Message::OAuthOpenUrl)
                         .padding([3, 10])
                         .style(theme::accent_button),
@@ -1044,8 +1044,8 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         root = root.push(
             container(
                 row![
-                    text(state.l().conn_lost).size(12),
-                    text(disconnected.join("、")).size(12),
+                    text(state.l().conn_lost).size(13),
+                    text(disconnected.join("、")).size(13),
                     Space::new().width(Length::Fill),
                     text(state.l().conn_retrying)
                         .size(11)
@@ -1068,14 +1068,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         state.l().ai_privacy_text,
                         &[&state.ai.cfg.base_url],
                     ))
-                    .size(12)
+                    .size(13)
                     .style(theme::secondary_text),
                     Space::new().width(Length::Fill),
-                    button(text(state.l().ai_privacy_go).size(12))
+                    button(text(state.l().ai_privacy_go).size(13))
                         .on_press(Message::AiPrivacyAck)
                         .padding([3, 10])
                         .style(theme::accent_button),
-                    button(text(state.l().cancel).size(12))
+                    button(text(state.l().cancel).size(13))
                         .on_press(Message::AiPrivacyCancel)
                         .padding([3, 10])
                         .style(theme::ghost_button),
@@ -1118,36 +1118,36 @@ fn select_checkbox(state: &State, acct: usize, hash: i64) -> Element<'_, Message
 fn batch_bar(state: &State) -> Element<'_, Message> {
     let n = state.batch.selection.len();
     let bar = row![
-        text(crate::lang::f(state.l().selected_n, &[&n])).size(12),
-        button(text(state.l().select_all).size(12))
+        text(crate::lang::f(state.l().selected_n, &[&n])).size(13),
+        button(text(state.l().select_all).size(13))
             .on_press(Message::SelectAll)
             .padding([2, 8])
             .style(theme::ghost_button),
-        button(text(state.l().mark_read).size(12))
+        button(text(state.l().mark_read).size(13))
             .on_press(Message::BatchSeen(true))
             .padding([2, 8])
             .style(theme::ghost_button),
-        button(text(state.l().mark_unread).size(12))
+        button(text(state.l().mark_unread).size(13))
             .on_press(Message::BatchSeen(false))
             .padding([2, 8])
             .style(theme::ghost_button),
-        button(text(state.l().star).size(12))
+        button(text(state.l().star).size(13))
             .on_press(Message::BatchStar)
             .padding([2, 8])
             .style(theme::ghost_button),
-        button(text(state.l().batch_move).size(12))
+        button(text(state.l().batch_move).size(13))
             .on_press(Message::BatchMoveOpen)
             .padding([2, 8])
             .style(theme::ghost_button),
-        button(text(state.l().batch_archive).size(12))
+        button(text(state.l().batch_archive).size(13))
             .on_press(Message::BatchArchive)
             .padding([2, 8])
             .style(theme::ghost_button),
-        button(text(state.l().batch_spam).size(12))
+        button(text(state.l().batch_spam).size(13))
             .on_press(Message::BatchSpam)
             .padding([2, 8])
             .style(theme::ghost_button),
-        button(text(state.l().batch_delete).size(12))
+        button(text(state.l().batch_delete).size(13))
             .on_press(Message::AskBatchDelete)
             .padding([2, 8])
             .style(theme::ghost_button),
@@ -1158,7 +1158,7 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
             } else {
                 state.l().ai_organize_btn
             })
-            .size(12),
+            .size(13),
         )
         .on_press_maybe(if state.ai.busy.is_some() {
             None
@@ -1167,7 +1167,7 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
         })
         .padding([2, 8])
         .style(theme::ghost_button),
-        button(text(state.l().clear).size(12))
+        button(text(state.l().clear).size(13))
             .on_press(Message::ClearSelection)
             .padding([2, 8])
             .style(theme::ghost_button),
@@ -1212,7 +1212,7 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
                     )
                 };
                 picks = picks.push(
-                    button(text(label).size(12))
+                    button(text(label).size(13))
                         .on_press(Message::BatchMoveDest(acct, f.path.clone()))
                         .padding([2, 8])
                         .style(theme::ghost_button),
@@ -1222,7 +1222,7 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
         if n == 0 {
             picks = picks.push(
                 text(state.l().no_dest)
-                    .size(12)
+                    .size(13)
                     .style(theme::secondary_text),
             );
         }
@@ -1246,12 +1246,12 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
                         },
                         &[&n],
                     ))
-                    .size(12),
-                    button(text(state.l().perm_delete).size(12))
+                    .size(13),
+                    button(text(state.l().perm_delete).size(13))
                         .on_press(Message::BatchDeleteConfirm)
                         .style(button::danger)
                         .padding([2, 8]),
-                    button(text(state.l().cancel).size(12))
+                    button(text(state.l().cancel).size(13))
                         .on_press(Message::BatchDeleteCancel)
                         .padding([2, 8]),
                     Space::new().width(Length::Fill),
@@ -1282,7 +1282,7 @@ fn new_folder_input<'a>(state: &'a State, name: &'a str) -> Element<'a, Message>
     iced::widget::text_input(state.l().new_folder_ph, name)
         .on_input(Message::NewFolderInput)
         .on_submit(Message::NewFolderConfirm)
-        .size(12)
+        .size(13)
         .width(Length::Fill)
         .padding(3)
         .into()

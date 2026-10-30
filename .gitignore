@@ -6,3 +6,4 @@ spikes/spike-melib/imap-test/mail/
 /dist
 # 编辑器临时备份
 *.bak
+.smoke-home/
