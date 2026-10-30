@@ -21,8 +21,8 @@ use list::clean_subject;
 pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     // 状态行过长会挤掉右侧按钮：逐段截断（字符级，不切中文字节）
     let clip = |s: &str| -> String {
-        if s.chars().count() > 28 {
-            let t: String = s.chars().take(28).collect();
+        if s.chars().count() > 48 {
+            let t: String = s.chars().take(48).collect();
             format!("{t}…")
         } else {
             s.to_string()
@@ -842,6 +842,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     };
                     // 会话根的选择框挂在最新一封（批量操作对象直觉是所见最新信）
                     let cb = select_checkbox(state, acct, *latest);
+                    // 会话根第三行：最新正文预览（与平铺行一致，Mail.app 式）
+                    let thread_preview: String = {
+                        let mut p: String = r.preview.chars().take(60).collect();
+                        if r.preview.chars().count() > 60 {
+                            p.push('…');
+                        }
+                        p
+                    };
                     let row_el: Element<Message> = row![
                         cb,
                         button(
@@ -874,6 +882,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                 text(format!("{last_from}{tag}"))
                                     .size(11)
                                     .style(theme::secondary_text),
+                                (!thread_preview.is_empty()).then(|| {
+                                    text(thread_preview)
+                                        .size(11)
+                                        .style(theme::secondary_text)
+                                }),
                             ]
                             .spacing(2),
                         )
@@ -900,6 +913,13 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     } else {
                         text("").size(11).into()
                     };
+                    // 未读子行：圆点 + 粗体（展开的会话里一眼找到未读那封）
+                    let child_unseen = !r.seen;
+                    let subject_line = format!(
+                        "{}↳ {}",
+                        if child_unseen { "●" } else { "" },
+                        r.subject
+                    );
                     let cb = select_checkbox(state, acct, r.envelope_hash);
                     let row_el: Element<Message> = row![
                         cb,
@@ -907,7 +927,13 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             column![
                                 row![
                                     star_txt,
-                                    text(format!("↳ {}", r.subject)).size(13),
+                                    text(subject_line).size(13).font(theme::ui_font(
+                                        if child_unseen {
+                                            iced::font::Weight::Semibold
+                                        } else {
+                                            iced::font::Weight::Normal
+                                        }
+                                    )),
                                     Space::new().width(Length::Fill),
                                     text(relative_date(r.date_unix))
                                         .size(11)
