@@ -43,9 +43,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     let Some((acct, reading)) = &state.reading else {
         return container(
             column![
-                text("✉")
-                    .size(34)
-                    .style(theme::secondary_text),
+                text("✉").size(34).style(theme::secondary_text),
                 text(state.l().pick_mail).size(13),
                 text(state.l().pick_mail_hint)
                     .size(11)
@@ -107,14 +105,26 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             })
     };
     let reply_row = row![
-        mk(state.l().reply.to_string(), Message::Reply(*acct, hash), false),
+        mk(
+            state.l().reply.to_string(),
+            Message::Reply(*acct, hash),
+            false
+        ),
         mk(
             state.l().reply_all.to_string(),
             Message::ReplyAll(*acct, hash),
             false
         ),
-        mk(state.l().forward.to_string(), Message::Forward(*acct, hash), false),
-        mk(state.l().delete.to_string(), Message::AskDelete(*acct, hash), false),
+        mk(
+            state.l().forward.to_string(),
+            Message::Forward(*acct, hash),
+            false
+        ),
+        mk(
+            state.l().delete.to_string(),
+            Message::AskDelete(*acct, hash),
+            false
+        ),
     ]
     .spacing(4);
     let organize_row = row![
@@ -155,8 +165,16 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             Message::MoveTo(*acct, hash),
             move_open
         ),
-        mk(state.l().archive.to_string(), Message::ArchiveCurrent(*acct, hash), false),
-        mk(state.l().spam.to_string(), Message::SpamCurrent(*acct, hash), false),
+        mk(
+            state.l().archive.to_string(),
+            Message::ArchiveCurrent(*acct, hash),
+            false
+        ),
+        mk(
+            state.l().spam.to_string(),
+            Message::SpamCurrent(*acct, hash),
+            false
+        ),
         Space::new().width(Length::Fill),
     ]
     .spacing(4);
@@ -318,7 +336,10 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 name
             };
             // 头像：首字符 + 稳定背景色（6 色 Apple 系调色板按地址哈希取）
-            let seed = r.from_addr.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64));
+            let seed = r
+                .from_addr
+                .bytes()
+                .fold(0u64, |acc, b| acc.wrapping_add(b as u64));
             let avatar_bg = [
                 (0.36, 0.54, 0.96),
                 (0.94, 0.44, 0.38),
@@ -339,7 +360,9 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Center)
             .style(move |_t| container::Style {
-                background: Some(iced::Color::from_rgb(avatar_bg.0, avatar_bg.1, avatar_bg.2).into()),
+                background: Some(
+                    iced::Color::from_rgb(avatar_bg.0, avatar_bg.1, avatar_bg.2).into(),
+                ),
                 border: iced::Border {
                     radius: iced::border::Radius::from(19.0),
                     ..Default::default()
@@ -389,9 +412,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 );
             }
             let right = column![
-                text(folder_label)
-                    .size(11)
-                    .style(theme::secondary_text),
+                text(folder_label).size(11).style(theme::secondary_text),
                 text(unix_to_local(r.date_unix))
                     .size(11)
                     .style(theme::secondary_text),

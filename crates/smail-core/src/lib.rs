@@ -65,7 +65,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use smail_backend::{test_connection, folder_kind, FolderKind, ImapConfig, SmtpConfig};
+pub use smail_backend::{folder_kind, test_connection, FolderKind, ImapConfig, SmtpConfig};
 use smail_backend::{MailBackend, ServerEvent};
 
 // Re-exports from new modules
@@ -177,6 +177,7 @@ impl AccountService {
                 stop: stop_flag,
                 folders_ready: std::cell::Cell::new(false),
                 pgp_cache: std::sync::Mutex::new(None),
+                read_tx,
                 last_sync: std::cell::RefCell::new(std::collections::HashMap::new()),
                 force_probe_bypass: std::cell::Cell::new(false),
                 page_limit: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -236,6 +237,9 @@ struct ServiceInner {
     folders_ready: std::cell::Cell<bool>,
     /// PGP 运行时缓存（密钥环解析贵：盘读+证书包解析；配置重载重建本结构即失效）
     pgp_cache: std::sync::Mutex<Option<std::sync::Arc<pgp::PgpRuntime>>>,
+    /// Reader 线程请求端：OpenMessage 分流（hash）；headless/e2e 无 UI 直通时
+    /// 这是正文拉取的唯一路径
+    read_tx: Sender<i64>,
     /// 文件夹最近一次成功同步时刻（切换文件夹的 TTL 判据；RefCell：服务线程单线程独占）
     last_sync: std::cell::RefCell<std::collections::HashMap<String, Instant>>,
     /// ForceRefresh 置位：下一次延迟同步禁探测短路（手动刷新语义=真实全量，

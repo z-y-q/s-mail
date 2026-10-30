@@ -64,8 +64,7 @@ fn main() {
         while let Ok(TaggedEvent { account, event }) = rx.try_recv() {
             match event {
                 Event::FolderLoaded { folder, rows } => {
-                    if folder.eq_ignore_ascii_case("INBOX") && rows.len() >= 2 && mid_a.is_empty()
-                    {
+                    if folder.eq_ignore_ascii_case("INBOX") && rows.len() >= 2 && mid_a.is_empty() {
                         mid_a = rows[0].message_id.clone();
                         mid_b = rows[1].message_id.clone();
                         hash_b = Some(rows[1].envelope_hash);
@@ -115,9 +114,13 @@ fn main() {
                         if (p.eq_ignore_ascii_case("Archive")
                             || p.eq_ignore_ascii_case("Junk")
                             || p.eq_ignore_ascii_case("Trash"))
-                            && ((p.eq_ignore_ascii_case("Archive") && archived && !archived_verified)
+                            && ((p.eq_ignore_ascii_case("Archive")
+                                && archived
+                                && !archived_verified)
                                 || (p.eq_ignore_ascii_case("Junk") && spammed && !spam_verified)
-                                || (p.eq_ignore_ascii_case("Trash") && trash_sent && !trash_verified))
+                                || (p.eq_ignore_ascii_case("Trash")
+                                    && trash_sent
+                                    && !trash_verified))
                         {
                             send(&session, account, Cmd::SelectFolder(p));
                         }
@@ -151,9 +154,7 @@ fn main() {
 
         if archived_verified && spam_verified && trash_verified {
             let _ = session.cmd_tx.send(SessionCmd::Shutdown);
-            println!(
-                "\n[m20 PASS] 归档 ✅ 标垃圾 ✅ 各文件夹写操作全部真实生效（无静默假成功）"
-            );
+            println!("\n[m20 PASS] 归档 ✅ 标垃圾 ✅ 各文件夹写操作全部真实生效（无静默假成功）");
             std::process::exit(0);
         }
         std::thread::sleep(Duration::from_millis(300));

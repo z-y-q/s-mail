@@ -502,8 +502,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     return Task::none();
                 }
             }
-            let rules: Vec<smail_core::Rule> =
-                normalized.iter().map(|d| d.rule.clone()).collect();
+            let rules: Vec<smail_core::Rule> = normalized.iter().map(|d| d.rule.clone()).collect();
             let mut accounts = state.accounts.clone();
             if let Some(a) = accounts.get_mut(*i) {
                 a.rules = rules;

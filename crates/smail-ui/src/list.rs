@@ -115,9 +115,9 @@ pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
         if apply_filter && state.nav.list_asc {
             match state.nav.sort_key {
                 crate::SortKey::Date => v.sort_by_key(|r| r.row.date_unix),
-                crate::SortKey::Sender => v.sort_by_key(|r| {
-                    crate::from_display_name(&r.row.from_addr).to_lowercase()
-                }),
+                crate::SortKey::Sender => {
+                    v.sort_by_key(|r| crate::from_display_name(&r.row.from_addr).to_lowercase())
+                }
                 crate::SortKey::Subject => v.sort_by_key(|r| r.row.subject.to_lowercase()),
             };
         } else if apply_filter {

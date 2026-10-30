@@ -226,7 +226,11 @@ impl RuleDraft {
                         smail_core::RuleField::From => 0,
                         smail_core::RuleField::Subject => 1,
                     }],
-                    if !rule.any_of.is_empty() { "(任一)" } else { "" },
+                    if !rule.any_of.is_empty() {
+                        "(任一)"
+                    } else {
+                        ""
+                    },
                     RULE_PREDICATES[match c.predicate {
                         smail_core::RulePredicate::Contains => 0,
                         smail_core::RulePredicate::Equals => 1,
@@ -585,7 +589,11 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
     .spacing(4);
     for (i, a) in state.accounts.iter().enumerate() {
         let pgp_on = a.pgp.is_some();
-        let rule_edit_open = state.rule_edit.as_ref().map(|(ra, _)| *ra == i).unwrap_or(false);
+        let rule_edit_open = state
+            .rule_edit
+            .as_ref()
+            .map(|(ra, _)| *ra == i)
+            .unwrap_or(false);
         // B6：任一密码已是 keychain 标记即视为已入钥匙串
         let kc_on = a
             .imap
@@ -618,21 +626,23 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         );
         list_col = list_col.push(
             row![
-                button(text(if kc_on {
-                    state.l().keychain_on
-                } else {
-                    state.l().keychain_off
-                })
-                .size(13))
-                    .on_press(Message::KeychainMove(i))
-                    .padding([2, 8])
-                    .style(move |t, st| {
-                        if kc_on {
-                            theme::accent_button(t, st)
-                        } else {
-                            theme::outline_button(t, st)
-                        }
-                    }),
+                button(
+                    text(if kc_on {
+                        state.l().keychain_on
+                    } else {
+                        state.l().keychain_off
+                    })
+                    .size(13)
+                )
+                .on_press(Message::KeychainMove(i))
+                .padding([2, 8])
+                .style(move |t, st| {
+                    if kc_on {
+                        theme::accent_button(t, st)
+                    } else {
+                        theme::outline_button(t, st)
+                    }
+                }),
                 button(text("PGP").size(13))
                     .on_press(Message::PgpEditOpen(i))
                     .padding([2, 8])
@@ -664,7 +674,8 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                 button(text(state.l().export_btn).size(13))
                     .on_press(Message::ExportAccountRequest(i))
                     .padding([2, 8])
-                    .style(theme::ghost_button),            ]
+                    .style(theme::ghost_button),
+            ]
             .spacing(6),
         );
         // 同步间隔内联编辑（同 PGP/签名的两态模式）
@@ -1002,15 +1013,14 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
 
 /// 规则编辑面板：常用形态（单条件→单动作）下拉全编辑；
 /// 高级规则（多条件/多动作/folder 守卫）只读摘要 + 删除
-fn rule_edit_panel<'a>(
-    state: &'a State,
-    drafts: &'a [RuleDraft],
-) -> Element<'a, Message> {
+fn rule_edit_panel<'a>(state: &'a State, drafts: &'a [RuleDraft]) -> Element<'a, Message> {
     let mut col = column![
         text(state.l().rules_hdr)
             .size(13)
             .font(theme::ui_font(iced::font::Weight::Semibold)),
-        text(state.l().rules_hint).size(11).style(theme::secondary_text),
+        text(state.l().rules_hint)
+            .size(11)
+            .style(theme::secondary_text),
     ]
     .spacing(2);
 

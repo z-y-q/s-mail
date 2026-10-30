@@ -351,14 +351,12 @@ pub(crate) enum Message {
     /// 账号导出目录已选：后台按文件夹批量写出
     ExportAccountPicked(usize, Option<std::path::PathBuf>, Vec<(String, i64)>),
     /// 目录已选：后台批量写出
-    ExportFolderPicked(
-        usize,
-        String,
-        Vec<i64>,
-        Option<std::path::PathBuf>,
-    ),
+    ExportFolderPicked(usize, String, Vec<i64>, Option<std::path::PathBuf>),
     /// 导出完成（成功数 / 总数）
-    ExportFolderDone { done: usize, total: usize },
+    ExportFolderDone {
+        done: usize,
+        total: usize,
+    },
     // ---- 多窗口：主窗/写信窗生命周期 ----
     /// boot 后主窗打开完成（回填 id）
     MainWindowOpened(iced::window::Id),
@@ -555,8 +553,7 @@ fn subscription(state: &State) -> Subscription<Message> {
         Subscription::none()
     };
     // 窗口关闭请求（红叉）：按 id 分派给写信窗（自动存草稿）/主窗（重开）
-    let close_req_sub = iced::window::close_requests()
-        .map(Message::WindowCloseRequested);
+    let close_req_sub = iced::window::close_requests().map(Message::WindowCloseRequested);
     // 托盘事件（std mpsc → 轮询转 Message；100ms 足够托盘交互）
     let tray_sub = match crate::tray::take_receiver() {
         Some(rx) => {
@@ -808,7 +805,14 @@ pub(crate) fn unix_to_local(ts: i64) -> String {
 fn civil_parts(ts: i64) -> (i64, i64, i64, i64, i64, i64) {
     let s = unix_to_local(ts);
     let num = |a: usize, b: usize| s.get(a..b).and_then(|x| x.parse::<i64>().ok()).unwrap_or(0);
-    (num(0, 4), num(5, 7), num(8, 10), num(11, 13), num(14, 16), num(17, 19))
+    (
+        num(0, 4),
+        num(5, 7),
+        num(8, 10),
+        num(11, 13),
+        num(14, 16),
+        num(17, 19),
+    )
 }
 
 /// 列表行相对日期（Mail.app 式）：今天显示时刻、昨天显式标注、

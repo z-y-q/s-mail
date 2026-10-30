@@ -97,8 +97,10 @@ impl Session {
         let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TaggedEvent>(1000);
         let zh_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         // 直通通道在 services 被 move 进 mux 线程前收集
-        let read_txs: Vec<std::sync::mpsc::Sender<i64>> =
-            services.iter().map(|(svc, _)| svc.read_tx.clone()).collect();
+        let read_txs: Vec<std::sync::mpsc::Sender<i64>> = services
+            .iter()
+            .map(|(svc, _)| svc.read_tx.clone())
+            .collect();
 
         // 终报必须在 mux 线程内、循环退出后发——此前误放主线程（每次启动
         // 立即误报"会话已结束"，m5 e2e 苔出）；loop 内用 break 退出。

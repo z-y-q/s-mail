@@ -145,7 +145,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.reading = None;
                 state.selected = None; // 快捷键/阅读器不再指向旧文件夹邮件
                 state.expanded.clear(); // 展开状态不跨文件夹（hash 可能同名冲突）
-                // 无缓存（首次进入/库未建）才显示「正在同步」；有缓存行列表即刻可用
+                                        // 无缓存（首次进入/库未建）才显示「正在同步」；有缓存行列表即刻可用
                 state.nav.folder_loading = state.rows.is_empty();
                 state.send(acct, Cmd::SelectFolder(folder));
             }
@@ -416,10 +416,9 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 click: crate::notify::NotifyClick { acct, folder, hash },
                 subject,
             });
-            state.statuses.insert(
-                acct,
-                format!("已设置提醒（{hours} 小时后）"),
-            );
+            state
+                .statuses
+                .insert(acct, format!("已设置提醒（{hours} 小时后）"));
             Task::none()
         }
         Message::CheckReminders => {
@@ -504,12 +503,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                     .await
                     .unwrap_or((0, n_total))
                 },
-                move |(done, total)| {
-                    Message::ExportFolderDone {
-                        done,
-                        total,
-                    }
-                },
+                move |(done, total)| Message::ExportFolderDone { done, total },
             )
         }
         Message::ExportAccountPicked(_, None, _) => Task::none(),
@@ -559,16 +553,21 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             let hashes: Vec<i64> = state
                 .rows
                 .iter()
-                .filter(|(a, _)| {
-                    Some(*a) == state.nav.cur.as_ref().map(|(x, _)| *x)
-                })
+                .filter(|(a, _)| Some(*a) == state.nav.cur.as_ref().map(|(x, _)| *x))
                 .map(|(_, r)| r.envelope_hash)
                 .collect();
             if hashes.is_empty() {
                 return Task::none();
             }
             let acct = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
-            state.send(acct, Cmd::BatchFlags { hashes, seen: Some(true), flagged: None });
+            state.send(
+                acct,
+                Cmd::BatchFlags {
+                    hashes,
+                    seen: Some(true),
+                    flagged: None,
+                },
+            );
             Task::none()
         }
         Message::ExpandAllThreads => {

@@ -225,10 +225,9 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                     state.rows = state.local_folder_rows(acct, &folder);
                     state.rebuild_display();
                 }
-                state.statuses.insert(
-                    acct,
-                    format!("正文预览已生成（{count} 封）"),
-                );
+                state
+                    .statuses
+                    .insert(acct, format!("正文预览已生成（{count} 封）"));
             }
         }
         Event::DraftDeleted(_) | Event::MessageDeleted(_) => {}

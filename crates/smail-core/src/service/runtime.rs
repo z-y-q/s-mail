@@ -82,7 +82,8 @@ impl ServiceInner {
                         .and_then(|m| m.body_text(0).map(|t| t.into_owned()))
                         .or_else(|| {
                             parsed.as_ref().and_then(|m| {
-                                m.body_html(0).map(|h| crate::html::html_to_markdown(h.as_ref()))
+                                m.body_html(0)
+                                    .map(|h| crate::html::html_to_markdown(h.as_ref()))
                             })
                         })
                         .unwrap_or_default();

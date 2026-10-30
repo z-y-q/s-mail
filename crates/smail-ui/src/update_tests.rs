@@ -214,7 +214,10 @@ fn folder_selected_reads_local_cache_immediately() {
     assert!(!s.nav.folder_loading, "有缓存行不亮「同步中」");
     // 切到无缓存的文件夹：回到「正在同步」态
     let _ = update(&mut s, Message::FolderSelected(0, "Archive".into()));
-    assert!(s.rows.is_empty() && s.nav.folder_loading, "无缓存显示同步中");
+    assert!(
+        s.rows.is_empty() && s.nav.folder_loading,
+        "无缓存显示同步中"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -470,7 +473,7 @@ fn esc_in_search_from_drafts_does_not_crash() {
 /// 规则编辑草稿：下标→结构双向转换、校验拦截、高级规则安全构造
 #[test]
 fn rule_draft_roundtrip_and_validation() {
-    use crate::setup::{RuleDraft, rule_template};
+    use crate::setup::{rule_template, RuleDraft};
     // 模板：可编辑形态，value 空 → 校验必须拦下（空值规则会匹配一切）
     let mut d = rule_template();
     assert!(RuleDraft::editable(&d.rule));
@@ -483,7 +486,10 @@ fn rule_draft_roundtrip_and_validation() {
     assert!(d.validate().is_ok());
     // 下标改动真实落进 Rule 结构
     assert_eq!(d.rule.all_of[0].field, smail_core::RuleField::Subject);
-    assert_eq!(d.rule.all_of[0].predicate, smail_core::RulePredicate::StartsWith);
+    assert_eq!(
+        d.rule.all_of[0].predicate,
+        smail_core::RulePredicate::StartsWith
+    );
     assert_eq!(
         d.rule.actions[0],
         smail_core::RuleAction::Move("推广".into())

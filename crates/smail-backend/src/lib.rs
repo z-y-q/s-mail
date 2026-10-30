@@ -914,9 +914,8 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
         .subject(&mail.subject);
 
     // HTML 版正文：multipart/alternative（纯文本客户端回退 plain）
-    let make_alt = |plain_body: String, html: String| {
-        MultiPart::alternative_plain_html(plain_body, html)
-    };
+    let make_alt =
+        |plain_body: String, html: String| MultiPart::alternative_plain_html(plain_body, html);
     let text_part = SinglePart::builder()
         .header(ContentType::TEXT_PLAIN)
         .body(mail.body.clone());
@@ -936,7 +935,8 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
                 let ct = ContentType::parse(&mime).map_err(|e| {
                     BackendError::InvalidMailFormat(format!("附件 {name:?} 类型无效: {e}"))
                 })?;
-                multipart = multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
+                multipart =
+                    multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
             }
             MaybeMultipart::Multi(multipart)
         }
@@ -950,7 +950,8 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
                 let ct = ContentType::parse(&mime).map_err(|e| {
                     BackendError::InvalidMailFormat(format!("附件 {name:?} 类型无效: {e}"))
                 })?;
-                multipart = multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
+                multipart =
+                    multipart.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
             }
             MaybeMultipart::Multi(multipart)
         }

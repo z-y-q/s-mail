@@ -13,12 +13,8 @@ use smail_core::Cmd;
 /// 消息组的统一入口（分发器按 or-pattern 委托；模式与处理体自 update.rs 原样搬运）
 pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
     match msg {
-        Message::Reply(acct, hash) => {
-            open_compose_with(state, acct, hash, ReplyKind::Reply)
-        }
-        Message::ReplyAll(acct, hash) => {
-            open_compose_with(state, acct, hash, ReplyKind::ReplyAll)
-        }
+        Message::Reply(acct, hash) => open_compose_with(state, acct, hash, ReplyKind::Reply),
+        Message::ReplyAll(acct, hash) => open_compose_with(state, acct, hash, ReplyKind::ReplyAll),
         Message::Forward(acct, hash) => {
             let open_task = open_compose_with(state, acct, hash, ReplyKind::Forward);
             // 转发带附件：从本地 .eml 提取到 staging 目录后回填（发送时
@@ -51,7 +47,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             open_task
         }
         Message::ForwardAttachmentsReady(paths) => {
-            if let Some(c) = &mut state.compose {                for p in paths {
+            if let Some(c) = &mut state.compose {
+                for p in paths {
                     if let Some(ps) = p.to_str() {
                         if !c.attachments.contains(&ps.to_string()) {
                             c.attachments.push(ps.to_string());
@@ -413,7 +410,11 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 .get(acct)
                 .map(|a| a.slug.clone())
                 .unwrap_or_default();
-            let eml_path = state.data_root.join(&slug).join("bodies").join(format!("{hash}.eml"));
+            let eml_path = state
+                .data_root
+                .join(&slug)
+                .join("bodies")
+                .join(format!("{hash}.eml"));
             let Ok(bytes) = std::fs::read(&eml_path) else {
                 state.error = Some("原邮件正文未缓存，无法再次发送".into());
                 return Task::none();

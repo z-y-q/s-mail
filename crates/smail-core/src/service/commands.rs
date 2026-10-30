@@ -65,10 +65,7 @@ impl ServiceInner {
                             };
                             if let Some(real) = ensured {
                                 self.last_sync.borrow_mut().remove(&real);
-                                if self
-                                    .sync_folder(&**backend, store, &real, false)
-                                    .is_none()
-                                {
+                                if self.sync_folder(&**backend, store, &real, false).is_none() {
                                     // 真实路径与合成名不同（如 QQ 的废纸篓是
                                     // Deleted Messages）：把导航修正到真实路径
                                     if real != folder {
@@ -137,10 +134,11 @@ impl ServiceInner {
                         }
                     }
                 }
-                // 正文管线（网络 FETCH + PGP + 解析 + PDF 缩略图）在 Reader 线程执行，
-                // 正文请求已由 UI 直通该线程的 read_tx 发送（绕过本命令队列，长同步
-                // 期间也能秒出缓存正文）。本命令只承担 seen 上推职责——在这里
-                // 再转发一次会让同一封正文解析两遍（第二次回包被 UI 丢弃，纯浪费）
+                // 正文管线（网络 FETCH + PGP + 解析 + PDF 缩略图）分流到 Reader 线程。
+                // UI 另有直通通道（绕过命令队列秒出缓存正文），这里保留转发作为
+                // headless/e2e 的兜底；同一封解析两遍的重复回包由 UI 的 body_req
+                // 守卫丢弃
+                let _ = self.read_tx.send(hash);
             }
             Cmd::SendMail {
                 to,

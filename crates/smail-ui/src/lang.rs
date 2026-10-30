@@ -189,7 +189,7 @@ pub(crate) struct Lex {
     pub(crate) mark_all_read: &'static str,
     pub(crate) expand_all: &'static str,
     pub(crate) collapse_all: &'static str,
-    pub(crate) drafts_n: &'static str,      // {n}
+    pub(crate) drafts_n: &'static str, // {n}
     pub(crate) folder_inbox: &'static str,
     pub(crate) folder_sent: &'static str,
     pub(crate) folder_junk: &'static str,
@@ -217,9 +217,9 @@ pub(crate) struct Lex {
     pub(crate) empty_syncing: &'static str,
     pub(crate) empty_stale: &'static str, // {n}
     pub(crate) resync: &'static str,
-    pub(crate) loaded_pages: &'static str,   // {n}
-    pub(crate) at_bottom: &'static str,      // {n}
-    pub(crate) unified_cap: &'static str,    // {n}
+    pub(crate) loaded_pages: &'static str, // {n}
+    pub(crate) at_bottom: &'static str,    // {n}
+    pub(crate) unified_cap: &'static str,  // {n}
 
     // ---- 批量栏 ----
     pub(crate) selected_n: &'static str, // {n}

@@ -478,10 +478,7 @@ impl State {
                         if state.account_names.is_empty() {
                             iced::Task::none()
                         } else {
-                            crate::update(
-                                &mut state,
-                                Message::FolderSelected(0, "INBOX".into()),
-                            )
+                            crate::update(&mut state, Message::FolderSelected(0, "INBOX".into()))
                         }
                     }
                 };

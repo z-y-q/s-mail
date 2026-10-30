@@ -475,9 +475,7 @@ mod tests {
     /// 纯装饰文本节点（只有管道/横线/空白）直接丢弃；含文字数字的保留
     #[test]
     fn decoration_only_text_nodes_dropped() {
-        let md = html_to_markdown(
-            r#"<p>| \ / ---</p><p>客服电话 400-123-4567</p><p>——</p>"#,
-        );
+        let md = html_to_markdown(r#"<p>| \ / ---</p><p>客服电话 400-123-4567</p><p>——</p>"#);
         assert!(md.contains("客服电话 400-123-4567"), "{md}");
         assert!(!md.contains("|"), "{md}");
         assert!(!md.contains("---"), "{md}");
@@ -648,7 +646,9 @@ mod long_token_tests {
 /// 实际会产出的语法，不做完整 markdown 规范
 pub fn markdown_to_html(md: &str) -> String {
     fn esc(s: &str) -> String {
-        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     }
     fn inline(s: &str) -> String {
         let e = esc(s);
@@ -769,7 +769,10 @@ mod markdown_html_tests {
     #[test]
     fn list_and_heading_and_quote() {
         let html = markdown_to_html("- 甲\n- 乙\n\n## 标题\n\n> 引用句");
-        assert!(html.contains("<ul>\n<li>甲</li>\n<li>乙</li>\n</ul>"), "{html}");
+        assert!(
+            html.contains("<ul>\n<li>甲</li>\n<li>乙</li>\n</ul>"),
+            "{html}"
+        );
         assert!(html.contains("<h2>标题</h2>"), "{html}");
         assert!(html.contains("<blockquote>引用句</blockquote>"), "{html}");
     }

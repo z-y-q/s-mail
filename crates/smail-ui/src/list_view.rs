@@ -470,7 +470,10 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 state.l().sort_desc
             };
             // 维度标签：日期/发件人/主题（点击循环切换维度）
-            let key_label = state.nav.sort_key.label(state.prefs.lang == crate::lang::Lang::Zh);
+            let key_label = state
+                .nav
+                .sort_key
+                .label(state.prefs.lang == crate::lang::Lang::Zh);
             Some(
                 row![
                     mk(
@@ -866,20 +869,24 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     text(format!(
                                         "{} {}{badge}",
                                         if *count > 1 {
-                                            if expanded_now { "▾" } else { "▸" }
+                                            if expanded_now {
+                                                "▾"
+                                            } else {
+                                                "▸"
+                                            }
                                         } else {
                                             " "
                                         },
                                         if *unseen { "●" } else { "" },
                                     ))
                                     .size(13),
-                                    text(clean_subject(&r.subject)).size(13).font(
-                                        theme::ui_font(if *unseen {
+                                    text(clean_subject(&r.subject))
+                                        .size(13)
+                                        .font(theme::ui_font(if *unseen {
                                             iced::font::Weight::Semibold
                                         } else {
                                             iced::font::Weight::Normal
-                                        })
-                                    ),
+                                        })),
                                     Space::new().width(Length::Fill),
                                     text(relative_date(*last_date))
                                         .size(11)
@@ -889,9 +896,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     .size(11)
                                     .style(theme::secondary_text),
                                 (!thread_preview.is_empty()).then(|| {
-                                    text(thread_preview)
-                                        .size(11)
-                                        .style(theme::secondary_text)
+                                    text(thread_preview).size(11).style(theme::secondary_text)
                                 }),
                             ]
                             .spacing(2),
@@ -905,7 +910,15 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .into();
                     list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(state, acct, r.envelope_hash, r.flagged, &r.from_addr, smail_core::folder_kind(&r.folder), &r.folder));
+                        list = list.push(context_menu_row(
+                            state,
+                            acct,
+                            r.envelope_hash,
+                            r.flagged,
+                            &r.from_addr,
+                            smail_core::folder_kind(&r.folder),
+                            &r.folder,
+                        ));
                     }
                 }
                 DispKind::ThreadChild => {
@@ -921,11 +934,8 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     };
                     // 未读子行：圆点 + 粗体（展开的会话里一眼找到未读那封）
                     let child_unseen = !r.seen;
-                    let subject_line = format!(
-                        "{}↳ {}",
-                        if child_unseen { "●" } else { "" },
-                        r.subject
-                    );
+                    let subject_line =
+                        format!("{}↳ {}", if child_unseen { "●" } else { "" }, r.subject);
                     let cb = select_checkbox(state, acct, r.envelope_hash);
                     let row_el: Element<Message> = row![
                         cb,
@@ -960,7 +970,15 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     .into();
                     list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(state, acct, r.envelope_hash, r.flagged, &r.from_addr, smail_core::folder_kind(&r.folder), &r.folder));
+                        list = list.push(context_menu_row(
+                            state,
+                            acct,
+                            r.envelope_hash,
+                            r.flagged,
+                            &r.from_addr,
+                            smail_core::folder_kind(&r.folder),
+                            &r.folder,
+                        ));
                     }
                 }
                 DispKind::Flat => {
@@ -1013,22 +1031,16 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                 .size(11)
                                 .style(theme::secondary_text),
                         ],
-                        row![
-                            text(format!("{dot}{}", r.subject))
-                                .size(13)
-                                .font(theme::ui_font(subj_weight)),
-                        ],
+                        row![text(format!("{dot}{}", r.subject))
+                            .size(13)
+                            .font(theme::ui_font(subj_weight)),],
                     ]
                     .spacing(2);
                     // 第三行优先级：搜索片段 > 正文预览 > 收件标签
                     if let Some(snip) = search_line {
                         lines = lines.push(snip);
                     } else if !preview.is_empty() {
-                        lines = lines.push(
-                            text(preview)
-                                .size(11)
-                                .style(theme::secondary_text),
-                        );
+                        lines = lines.push(text(preview).size(11).style(theme::secondary_text));
                     } else if !tag.is_empty() {
                         lines = lines.push(
                             text(tag.trim().to_string())
@@ -1038,21 +1050,25 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     }
                     let row_el: Element<Message> = row![
                         cb,
-                        button(
-                            container(lines)
-                                .width(Length::Fill)
-                                .padding([4, 0]),
-                        )
-                        .on_press(Message::RowSelected(acct, r.envelope_hash))
-                        .padding([6, 8])
-                        .width(Length::Fill)
-                        .style(move |t, st| theme::list_row(t, st, is_sel)),
+                        button(container(lines).width(Length::Fill).padding([4, 0]),)
+                            .on_press(Message::RowSelected(acct, r.envelope_hash))
+                            .padding([6, 8])
+                            .width(Length::Fill)
+                            .style(move |t, st| theme::list_row(t, st, is_sel)),
                     ]
                     .spacing(2)
                     .into();
                     list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(state, acct, r.envelope_hash, r.flagged, &r.from_addr, smail_core::folder_kind(&r.folder), &r.folder));
+                        list = list.push(context_menu_row(
+                            state,
+                            acct,
+                            r.envelope_hash,
+                            r.flagged,
+                            &r.from_addr,
+                            smail_core::folder_kind(&r.folder),
+                            &r.folder,
+                        ));
                     }
                 }
             }
@@ -1085,10 +1101,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             };
             ("∅", crate::lang::f(state.l().empty_no_match, &[&f]))
         } else if cur_unseen > 0 {
-            (
-                "∅",
-                crate::lang::f(state.l().empty_stale, &[&cur_unseen]),
-            )
+            ("∅", crate::lang::f(state.l().empty_stale, &[&cur_unseen]))
         } else {
             ("✉", state.l().empty_no_mail.into())
         };
@@ -1097,9 +1110,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             && state.rows.is_empty()
             && cur_unseen > 0;
         let mut empty_col = column![
-            text(icon)
-                .size(28)
-                .style(theme::secondary_text),
+            text(icon).size(28).style(theme::secondary_text),
             text(msg).size(13).style(theme::secondary_text),
         ]
         .spacing(6)
@@ -1307,8 +1318,7 @@ fn context_menu_row(
                 "作为附件转发".into(),
                 Message::ForwardAsAttachment(acct, hash)
             ),
-            (is_sent)
-                .then(|| item("再次发送".into(), Message::Resend(acct, hash))),
+            (is_sent).then(|| item("再次发送".into(), Message::Resend(acct, hash))),
             item(star_label, Message::ToggleStar(acct, hash, !flagged)),
             item("标为未读".into(), Message::MarkUnread(acct, hash)),
             item("移动到…".into(), Message::MoveTo(acct, hash)),
@@ -1323,21 +1333,17 @@ fn context_menu_row(
                 "将发件人加入通讯录".into(),
                 Message::ContactAddFromSender(acct, hash),
             ),
-            item(
-                mute_label,
-                Message::ToggleMuteSender(sender_addr.clone()),
-            ),
+            item(mute_label, Message::ToggleMuteSender(sender_addr.clone()),),
             item(
                 "提醒我（1 小时后）".into(),
                 Message::RemindMe(acct, hash, 1),
             ),
-            (cur_folder.as_deref() == Some(folder_path))
-                .then(|| {
-                    item(
-                        format!("导出此文件夹（{} 封）", state.rows.len()),
-                        Message::ExportFolderRequest(acct, folder_path.to_string()),
-                    )
-                }),
+            (cur_folder.as_deref() == Some(folder_path)).then(|| {
+                item(
+                    format!("导出此文件夹（{} 封）", state.rows.len()),
+                    Message::ExportFolderRequest(acct, folder_path.to_string()),
+                )
+            }),
             item("关闭菜单".into(), Message::ContextMenuClose),
         ]
         .spacing(1)

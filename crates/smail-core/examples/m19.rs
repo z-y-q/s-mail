@@ -79,7 +79,9 @@ fn main() {
                 }
                 Event::FolderLoaded { folder, rows } => {
                     let tf = trash_folder.clone().unwrap_or_default();
-                    if folder.eq_ignore_ascii_case("INBOX") && !rows.is_empty() && target_mid.is_empty()
+                    if folder.eq_ignore_ascii_case("INBOX")
+                        && !rows.is_empty()
+                        && target_mid.is_empty()
                     {
                         target_mid = rows[0].message_id.clone();
                         println!("[m19] INBOX {} 封；靶子：{}", rows.len(), rows[0].subject);
@@ -109,7 +111,11 @@ fn main() {
                                 "[m19] 清空后重同步：废纸篓 {} 封，靶子{} → {}",
                                 rows.len(),
                                 if 残留 { "还在" } else { "已不在" },
-                                if trash_empty_after_sync { "✅ 已删净" } else { "❌ 邮件回来了" }
+                                if trash_empty_after_sync {
+                                    "✅ 已删净"
+                                } else {
+                                    "❌ 邮件回来了"
+                                }
                             );
                             for r in &rows {
                                 println!("      残留：{}", r.subject);
