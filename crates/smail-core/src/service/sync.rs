@@ -177,10 +177,16 @@ impl ServiceInner {
                     folder: folder.to_string(),
                     rows,
                 });
+                // 文件夹名本地化（与全量同步的状态行一致）
+                let fname = if folder.eq_ignore_ascii_case("INBOX") {
+                    self.tr("收件箱", "INBOX")
+                } else {
+                    folder.to_string()
+                };
                 self.emit(Event::Status(self.trf(
                     "{} 无新变化（跳过整包拉取）",
                     "{} unchanged (full fetch skipped)",
-                    &[&folder],
+                    &[&fname],
                 )));
                 return None;
             }

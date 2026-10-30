@@ -60,6 +60,7 @@ mod migration_tests;
 pub use cache_ops::AiCache;
 pub use error::{Result, StoreError};
 pub use query_ops::{FolderProbe, VacuumStats};
+pub use search_ops::preview_from_body;
 
 use helpers::{row_from, tokenize};
 use rusqlite::Connection;

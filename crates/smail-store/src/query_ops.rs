@@ -72,6 +72,24 @@ impl Store {
         Ok(())
     }
 
+    /// 预览未生成的邮件（v9 迁移前已存在的存量；上限防一次性巨量）
+    pub fn hashes_missing_preview(&self, limit: i64) -> rusqlite::Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT envelope_hash FROM messages
+             WHERE has_body = 1 AND preview = '' LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], |r| r.get(0))?;
+        rows.collect()
+    }
+
+    pub fn set_preview(&self, hash: i64, preview: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET preview = ?2 WHERE envelope_hash = ?1",
+            rusqlite::params![hash, preview],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_folder_probe(&self, folder: &str) -> rusqlite::Result<()> {
         self.conn
             .execute("DELETE FROM folder_probe WHERE folder = ?1", [folder])?;

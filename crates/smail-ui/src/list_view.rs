@@ -1213,60 +1213,69 @@ fn select_checkbox(state: &State, acct: usize, hash: i64) -> Element<'_, Message
 
 fn batch_bar(state: &State) -> Element<'_, Message> {
     let n = state.batch.selection.len();
-    let bar = row![
-        text(crate::lang::f(state.l().selected_n, &[&n])).size(13),
-        button(text(state.l().select_all).size(13))
-            .on_press(Message::SelectAll)
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().mark_read).size(13))
-            .on_press(Message::BatchSeen(true))
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().mark_unread).size(13))
-            .on_press(Message::BatchSeen(false))
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().star).size(13))
-            .on_press(Message::BatchStar)
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().batch_move).size(13))
-            .on_press(Message::BatchMoveOpen)
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().batch_archive).size(13))
-            .on_press(Message::BatchArchive)
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().batch_spam).size(13))
-            .on_press(Message::BatchSpam)
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        button(text(state.l().batch_delete).size(13))
-            .on_press(Message::AskBatchDelete)
-            .padding([2, 8])
-            .style(theme::ghost_button),
-        Space::new().width(Length::Fill),
-        button(
-            text(if state.ai.busy == Some(crate::ai::BusyKind::Organize) {
-                state.l().ai_working
+    // 两行分组（单行塞 11 个按钮，窄列表必溢出竖排文字）：
+    // 第一行「计数 + 选择态」，第二行「动作」
+    let bar = column![
+        row![
+            text(crate::lang::f(state.l().selected_n, &[&n])).size(13),
+            Space::new().width(Length::Fill),
+            button(text(state.l().clear).size(13))
+                .on_press(Message::ClearSelection)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+        ]
+        .spacing(4),
+        row![
+            button(text(state.l().select_all).size(13))
+                .on_press(Message::SelectAll)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().mark_read).size(13))
+                .on_press(Message::BatchSeen(true))
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().mark_unread).size(13))
+                .on_press(Message::BatchSeen(false))
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().star).size(13))
+                .on_press(Message::BatchStar)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().batch_move).size(13))
+                .on_press(Message::BatchMoveOpen)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().batch_archive).size(13))
+                .on_press(Message::BatchArchive)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().batch_spam).size(13))
+                .on_press(Message::BatchSpam)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().batch_delete).size(13))
+                .on_press(Message::AskBatchDelete)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            Space::new().width(Length::Fill),
+            button(
+                text(if state.ai.busy == Some(crate::ai::BusyKind::Organize) {
+                    state.l().ai_working
+                } else {
+                    state.l().ai_organize_btn
+                })
+                .size(13),
+            )
+            .on_press_maybe(if state.ai.busy.is_some() {
+                None
             } else {
-                state.l().ai_organize_btn
+                Some(Message::AiOrganizeGo)
             })
-            .size(13),
-        )
-        .on_press_maybe(if state.ai.busy.is_some() {
-            None
-        } else {
-            Some(Message::AiOrganizeGo)
-        })
-        .padding([2, 8])
-        .style(theme::ghost_button),
-        button(text(state.l().clear).size(13))
-            .on_press(Message::ClearSelection)
             .padding([2, 8])
             .style(theme::ghost_button),
+        ]
+        .spacing(4),
     ]
     .spacing(4);
     let mut col = column![container(bar).padding([4, 6]).style(theme::reader_meta)].spacing(2);
