@@ -100,6 +100,7 @@ fn ts() -> State {
         pgp_edit: None,
         signature_edit: None,
         sync_edit: None,
+        rule_edit: None,
         local_stores: Default::default(),
         export_target: None,
         accounts: vec![],
@@ -451,4 +452,42 @@ fn esc_in_search_from_drafts_does_not_crash() {
     );
     assert!(!s.nav.in_search, "Esc 应退出搜索");
     assert_eq!(s.nav.cur, Some((0, "__drafts__".into())), "草稿视图保持");
+}
+
+/// 规则编辑草稿：下标→结构双向转换、校验拦截、高级规则安全构造
+#[test]
+fn rule_draft_roundtrip_and_validation() {
+    use crate::setup::{RuleDraft, rule_template};
+    // 模板：可编辑形态，value 空 → 校验必须拦下（空值规则会匹配一切）
+    let mut d = rule_template();
+    assert!(RuleDraft::editable(&d.rule));
+    assert!(d.validate().is_err(), "空匹配值必须被拦下");
+    d.set_value("parallels".into());
+    d.set_field(1); // 主题
+    d.set_predicate(2); // 开头是
+    d.set_action(2); // 移动到文件夹
+    d.set_move_dest("推广".into());
+    assert!(d.validate().is_ok());
+    // 下标改动真实落进 Rule 结构
+    assert_eq!(d.rule.all_of[0].field, smail_core::RuleField::Subject);
+    assert_eq!(d.rule.all_of[0].predicate, smail_core::RulePredicate::StartsWith);
+    assert_eq!(
+        d.rule.actions[0],
+        smail_core::RuleAction::Move("推广".into())
+    );
+    // 往返：from_rule 还原下拉下标
+    let d2 = RuleDraft::from_rule(d.rule.clone());
+    assert_eq!((d2.field_idx, d2.predicate_idx, d2.action_idx), (1, 2, 2));
+
+    // 高级规则（多条件多动作）：from_rule 安全构造不 panic，
+    // editable=false，摘要把「且」与多动作显示出来
+    let mut adv = d.rule.clone();
+    adv.all_of.push(adv.all_of[0].clone());
+    adv.actions.push(smail_core::RuleAction::Flag);
+    assert!(!RuleDraft::editable(&adv));
+    let summary = RuleDraft::summary(&adv);
+    assert!(summary.contains("且"), "{summary}");
+    assert!(summary.contains("标星标"), "{summary}");
+    let d3 = RuleDraft::from_rule(adv);
+    assert_eq!(d3.rule.all_of.len(), 2, "高级结构原样保留");
 }

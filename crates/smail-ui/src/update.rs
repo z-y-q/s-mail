@@ -368,6 +368,16 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::SyncEditInput(..)
         | Message::SyncEditSave
         | Message::SyncEditCancel
+        | Message::RuleEditOpen(..)
+        | Message::RuleEditField(..)
+        | Message::RuleEditPredicate(..)
+        | Message::RuleEditValue(..)
+        | Message::RuleEditAction(..)
+        | Message::RuleEditMoveDest(..)
+        | Message::RuleEditAdd
+        | Message::RuleEditDelete(..)
+        | Message::RuleEditSave
+        | Message::RuleEditCancel
         | Message::KeychainMove(..)) => account_setup::handle(state, m),
         m @ (Message::AiSummarize(..)
         | Message::AiSummaryReady { .. }

@@ -307,6 +307,17 @@ pub(crate) enum Message {
     SyncEditInput(String),
     SyncEditSave,
     SyncEditCancel,
+    // ---- 过滤规则编辑（点亮规则引擎；常用形态全编辑，高级规则只读） ----
+    RuleEditOpen(usize),
+    RuleEditField(usize, usize),
+    RuleEditPredicate(usize, usize),
+    RuleEditValue(usize, String),
+    RuleEditAction(usize, usize),
+    RuleEditMoveDest(usize, String),
+    RuleEditAdd,
+    RuleEditDelete(usize),
+    RuleEditSave,
+    RuleEditCancel,
     // ---- 第 1 批标配：退订 / 归档 / 导出 ----
     /// List-Unsubscribe 退订（http URL 开浏览器；mailto 预填写信）
     Unsubscribe(String),

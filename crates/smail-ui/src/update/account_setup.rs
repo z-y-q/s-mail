@@ -412,6 +412,111 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             state.sync_edit = None;
             Task::none()
         }
+        // ---------------- 过滤规则编辑 ----------------
+        Message::RuleEditOpen(i) => {
+            // 载入该账号规则草稿；高级规则保留原结构（只读显示）
+            let drafts: Vec<setup::RuleDraft> = state
+                .accounts
+                .get(i)
+                .map(|a| {
+                    a.rules
+                        .iter()
+                        .map(|r| setup::RuleDraft::from_rule(r.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            state.rule_edit = Some((i, drafts));
+            Task::none()
+        }
+        Message::RuleEditField(row, idx) => {
+            if let Some((_, rows)) = &mut state.rule_edit {
+                if let Some(d) = rows.get_mut(row) {
+                    if setup::RuleDraft::editable(&d.rule) {
+                        d.set_field(idx);
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::RuleEditPredicate(row, idx) => {
+            if let Some((_, rows)) = &mut state.rule_edit {
+                if let Some(d) = rows.get_mut(row) {
+                    if setup::RuleDraft::editable(&d.rule) {
+                        d.set_predicate(idx);
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::RuleEditValue(row, v) => {
+            if let Some((_, rows)) = &mut state.rule_edit {
+                if let Some(d) = rows.get_mut(row) {
+                    if setup::RuleDraft::editable(&d.rule) {
+                        d.set_value(v);
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::RuleEditAction(row, idx) => {
+            if let Some((_, rows)) = &mut state.rule_edit {
+                if let Some(d) = rows.get_mut(row) {
+                    if setup::RuleDraft::editable(&d.rule) {
+                        d.set_action(idx);
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::RuleEditMoveDest(row, dest) => {
+            if let Some((_, rows)) = &mut state.rule_edit {
+                if let Some(d) = rows.get_mut(row) {
+                    d.set_move_dest(dest);
+                }
+            }
+            Task::none()
+        }
+        Message::RuleEditAdd => {
+            if let Some((_, rows)) = &mut state.rule_edit {
+                rows.push(setup::rule_template());
+            }
+            Task::none()
+        }
+        Message::RuleEditDelete(row) => {
+            if let Some((_, rows)) = &mut state.rule_edit {
+                if row < rows.len() {
+                    rows.remove(row);
+                }
+            }
+            Task::none()
+        }
+        Message::RuleEditSave => {
+            // 先在克隆上校验并归一化（trim 等），失败保留面板就地报错
+            let Some((i, rows)) = &state.rule_edit else {
+                return Task::none();
+            };
+            let mut normalized = rows.clone();
+            for (n, d) in normalized.iter_mut().enumerate() {
+                if let Err(e) = d.validate() {
+                    state.error = Some(format!("规则 {}：{e}", n + 1));
+                    return Task::none();
+                }
+            }
+            let rules: Vec<smail_core::Rule> =
+                normalized.iter().map(|d| d.rule.clone()).collect();
+            let mut accounts = state.accounts.clone();
+            if let Some(a) = accounts.get_mut(*i) {
+                a.rules = rules;
+                // 规则在同步时应用（apply_rules 读账号配置）：会话重启生效
+                persist_and_reload(state, accounts, None);
+            }
+            state.rule_edit = None;
+            Task::none()
+        }
+        Message::RuleEditCancel => {
+            state.rule_edit = None;
+            Task::none()
+        }
         Message::KeychainMove(i) => {
             let Some(a) = state.accounts.get(i) else {
                 return Task::none();

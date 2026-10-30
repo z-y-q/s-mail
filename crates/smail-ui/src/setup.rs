@@ -85,6 +85,195 @@ pub(crate) enum SetupField {
     SmtpPort,
 }
 
+/// 规则编辑面板的一行草稿：直接持有 Rule 结构（常用形态 all_of[1] +
+/// actions[1] 可完整编辑），三个下拉的选中下标与 Rule 双向映射
+#[derive(Debug, Clone)]
+pub(crate) struct RuleDraft {
+    pub(crate) rule: smail_core::Rule,
+    /// 0=发件人 1=主题 → RuleField
+    pub(crate) field_idx: usize,
+    /// 0=包含 1=等于 2=开头是 3=结尾是 → RulePredicate
+    pub(crate) predicate_idx: usize,
+    /// 0=标为已读 1=标星标 2=移动到文件夹 → RuleAction
+    pub(crate) action_idx: usize,
+}
+
+pub(crate) const RULE_FIELDS: [&str; 2] = ["发件人", "主题"];
+pub(crate) const RULE_PREDICATES: [&str; 4] = ["包含", "等于", "开头是", "结尾是"];
+pub(crate) const RULE_ACTIONS: [&str; 3] = ["标为已读", "标星标", "移动到文件夹"];
+
+impl RuleDraft {
+    /// 是否为可完整编辑的常用形态：单条件（all_of[1]、any_of 空）、
+    /// 单动作、无 folder 守卫、不 continue
+    pub(crate) fn editable(rule: &smail_core::Rule) -> bool {
+        rule.all_of.len() == 1
+            && rule.any_of.is_empty()
+            && rule.actions.len() == 1
+            && rule.folder.is_none()
+            && !rule.continue_after
+    }
+
+    pub(crate) fn from_rule(rule: smail_core::Rule) -> Self {
+        // 高级规则（多条件/多动作）不能索引 [0]：安全构造，idx 保持默认，
+        // 面板对该行只显示摘要
+        if !Self::editable(&rule) {
+            return Self {
+                rule,
+                field_idx: 0,
+                predicate_idx: 0,
+                action_idx: 0,
+            };
+        }
+        let field_idx = match rule.all_of[0].field {
+            smail_core::RuleField::From => 0,
+            smail_core::RuleField::Subject => 1,
+        };
+        let predicate_idx = match rule.all_of[0].predicate {
+            smail_core::RulePredicate::Contains => 0,
+            smail_core::RulePredicate::Equals => 1,
+            smail_core::RulePredicate::StartsWith => 2,
+            smail_core::RulePredicate::EndsWith => 3,
+        };
+        let action_idx = match rule.actions[0] {
+            smail_core::RuleAction::MarkSeen => 0,
+            smail_core::RuleAction::Flag => 1,
+            smail_core::RuleAction::Move(_) => 2,
+        };
+        Self {
+            rule,
+            field_idx,
+            predicate_idx,
+            action_idx,
+        }
+    }
+
+    /// 下标改动回写 Rule 结构（保持 actions[0] 的 Move 目的地）
+    pub(crate) fn set_field(&mut self, idx: usize) {
+        self.field_idx = idx;
+        if let Some(c) = self.rule.all_of.first_mut() {
+            c.field = match idx {
+                1 => smail_core::RuleField::Subject,
+                _ => smail_core::RuleField::From,
+            };
+        }
+    }
+
+    pub(crate) fn set_predicate(&mut self, idx: usize) {
+        self.predicate_idx = idx;
+        if let Some(c) = self.rule.all_of.first_mut() {
+            c.predicate = match idx {
+                1 => smail_core::RulePredicate::Equals,
+                2 => smail_core::RulePredicate::StartsWith,
+                3 => smail_core::RulePredicate::EndsWith,
+                _ => smail_core::RulePredicate::Contains,
+            };
+        }
+    }
+
+    pub(crate) fn set_action(&mut self, idx: usize) {
+        self.action_idx = idx;
+        let dest = match self.rule.actions.first() {
+            Some(smail_core::RuleAction::Move(d)) => d.clone(),
+            _ => String::new(),
+        };
+        self.rule.actions = vec![match idx {
+            1 => smail_core::RuleAction::Flag,
+            2 => smail_core::RuleAction::Move(dest),
+            _ => smail_core::RuleAction::MarkSeen,
+        }];
+    }
+
+    pub(crate) fn set_value(&mut self, v: String) {
+        if let Some(c) = self.rule.all_of.first_mut() {
+            c.value = v;
+        }
+    }
+
+    pub(crate) fn set_move_dest(&mut self, d: String) {
+        if self.action_idx == 2 {
+            self.rule.actions = vec![smail_core::RuleAction::Move(d)];
+        }
+    }
+
+    /// 保存校验：值非空；移动动作的目的地非空。返回给人话错误
+    pub(crate) fn validate(&mut self) -> std::result::Result<(), String> {
+        let value = self.rule.all_of[0].value.trim().to_string();
+        if value.is_empty() {
+            return Err("匹配值不能为空".into());
+        }
+        if let Some(smail_core::RuleAction::Move(d)) = self.rule.actions.first() {
+            if d.trim().is_empty() {
+                return Err("移动目标文件夹不能为空".into());
+            }
+        }
+        self.rule.all_of[0].value = value;
+        if let Some(smail_core::RuleAction::Move(d)) = self.rule.actions.first_mut() {
+            *d = d.trim().to_string();
+        }
+        Ok(())
+    }
+
+    /// 单行摘要（列表只读显示高级规则用）
+    pub(crate) fn summary(rule: &smail_core::Rule) -> String {
+        let conds: Vec<String> = rule
+            .all_of
+            .iter()
+            .chain(rule.any_of.iter())
+            .map(|c| {
+                format!(
+                    "{}{} {} \"{}\"",
+                    RULE_FIELDS[match c.field {
+                        smail_core::RuleField::From => 0,
+                        smail_core::RuleField::Subject => 1,
+                    }],
+                    if !rule.any_of.is_empty() { "(任一)" } else { "" },
+                    RULE_PREDICATES[match c.predicate {
+                        smail_core::RulePredicate::Contains => 0,
+                        smail_core::RulePredicate::Equals => 1,
+                        smail_core::RulePredicate::StartsWith => 2,
+                        smail_core::RulePredicate::EndsWith => 3,
+                    }],
+                    c.value
+                )
+            })
+            .collect();
+        let acts: Vec<String> = rule
+            .actions
+            .iter()
+            .map(|a| match a {
+                smail_core::RuleAction::MarkSeen => "标为已读".to_string(),
+                smail_core::RuleAction::Flag => "标星标".to_string(),
+                smail_core::RuleAction::Move(d) => format!("移动到 {d}"),
+            })
+            .collect();
+        let mut s = format!("{} → {}", conds.join(" 且 "), acts.join(" + "));
+        if let Some(f) = &rule.folder {
+            s.push_str(&format!("（仅 {f}）"));
+        }
+        s
+    }
+}
+
+/// 新增规则的模板行：发件人包含（值待填）→ 标为已读
+pub(crate) fn rule_template() -> RuleDraft {
+    RuleDraft::from_rule(smail_core::Rule {
+        all_of: vec![smail_core::RuleCondition {
+            field: smail_core::RuleField::From,
+            predicate: smail_core::RulePredicate::Contains,
+            value: String::new(),
+        }],
+        any_of: vec![],
+        actions: vec![smail_core::RuleAction::MarkSeen],
+        continue_after: false,
+        folder: None,
+        from: None,
+        subject: None,
+        mark_seen: false,
+        flag: false,
+        move_to: None,
+    })
+}
+
 pub(crate) struct SetupForm {
     pub(crate) preset: Preset,
     pub(crate) name: String,
@@ -396,6 +585,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
     .spacing(4);
     for (i, a) in state.accounts.iter().enumerate() {
         let pgp_on = a.pgp.is_some();
+        let rule_edit_open = state.rule_edit.as_ref().map(|(ra, _)| *ra == i).unwrap_or(false);
         // B6：任一密码已是 keychain 标记即视为已入钥匙串
         let kc_on = a
             .imap
@@ -408,6 +598,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                 .and_then(|s| s.password.as_deref())
                 .map(smail_core::keychain::is_marker)
                 .unwrap_or(false);
+        // 账号卡两行：信息+删除一行，操作按钮组一行（6 个按钮挤一行必溢出）
         list_col = list_col.push(
             row![
                 text(format!(
@@ -418,6 +609,15 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                 ))
                 .size(12),
                 Space::new().width(Length::Fill),
+                button(text(state.l().delete_short).size(12))
+                    .on_press(Message::SetupDelete(i))
+                    .padding([2, 8])
+                    .style(theme::ghost_button),
+            ]
+            .spacing(8),
+        );
+        list_col = list_col.push(
+            row![
                 button(text(if kc_on {
                     state.l().keychain_on
                 } else {
@@ -451,12 +651,18 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                     .on_press(Message::SyncEditOpen(i))
                     .padding([2, 8])
                     .style(theme::ghost_button),
-                button(text(state.l().delete_short).size(12))
-                    .on_press(Message::SetupDelete(i))
+                button(text(state.l().rules_btn).size(12))
+                    .on_press(Message::RuleEditOpen(i))
                     .padding([2, 8])
-                    .style(theme::ghost_button),
+                    .style(move |t, st| {
+                        if rule_edit_open {
+                            theme::accent_button(t, st)
+                        } else {
+                            theme::ghost_button(t, st)
+                        }
+                    }),
             ]
-            .spacing(8),
+            .spacing(6),
         );
         // 同步间隔内联编辑（同 PGP/签名的两态模式）
         if let Some((sa, raw)) = &state.sync_edit {
@@ -529,6 +735,12 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
                     .width(Length::Fill)
                     .style(theme::reader_meta),
                 );
+            }
+        }
+        // 规则编辑面板（点亮规则引擎：常用形态全编辑，高级规则只读+删除）
+        if let Some((ra, drafts)) = &state.rule_edit {
+            if *ra == i {
+                list_col = list_col.push(rule_edit_panel(state, drafts));
             }
         }
     }
@@ -769,6 +981,145 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
     .center_x(Length::Fill)
     .padding(24)
     .into()
+}
+
+/// 规则编辑面板：常用形态（单条件→单动作）下拉全编辑；
+/// 高级规则（多条件/多动作/folder 守卫）只读摘要 + 删除
+fn rule_edit_panel<'a>(
+    state: &'a State,
+    drafts: &'a [RuleDraft],
+) -> Element<'a, Message> {
+    let mut col = column![
+        text(state.l().rules_hdr)
+            .size(12)
+            .font(theme::ui_font(iced::font::Weight::Semibold)),
+        text(state.l().rules_hint).size(10).style(theme::secondary_text),
+    ]
+    .spacing(2);
+
+    if drafts.is_empty() {
+        col = col.push(
+            text(state.l().rules_none)
+                .size(11)
+                .style(theme::secondary_text),
+        );
+    }
+    for (n, d) in drafts.iter().enumerate() {
+        if RuleDraft::editable(&d.rule) {
+            let value = d.rule.all_of[0].value.clone();
+            let dest = match d.rule.actions.first() {
+                Some(smail_core::RuleAction::Move(dest)) => dest.clone(),
+                _ => String::new(),
+            };
+            let mut line = row![
+                iced::widget::pick_list(
+                    RULE_FIELDS,
+                    Some(RULE_FIELDS[d.field_idx]),
+                    move |sel: &'static str| {
+                        Message::RuleEditField(
+                            n,
+                            RULE_FIELDS.iter().position(|f| *f == sel).unwrap_or(0),
+                        )
+                    },
+                )
+                .width(76)
+                .text_size(12),
+                iced::widget::pick_list(
+                    RULE_PREDICATES,
+                    Some(RULE_PREDICATES[d.predicate_idx]),
+                    move |sel: &'static str| {
+                        Message::RuleEditPredicate(
+                            n,
+                            RULE_PREDICATES.iter().position(|p| *p == sel).unwrap_or(0),
+                        )
+                    },
+                )
+                .width(80)
+                .text_size(12),
+                iced::widget::text_input("", &value)
+                    .on_input(move |v| Message::RuleEditValue(n, v))
+                    .on_submit(Message::RuleEditValue(n, value.clone()))
+                    .size(12)
+                    .width(150)
+                    .padding(4),
+                iced::widget::pick_list(
+                    RULE_ACTIONS,
+                    Some(RULE_ACTIONS[d.action_idx]),
+                    move |sel: &'static str| {
+                        Message::RuleEditAction(
+                            n,
+                            RULE_ACTIONS.iter().position(|a| *a == sel).unwrap_or(0),
+                        )
+                    },
+                )
+                .width(120)
+                .text_size(12),
+            ]
+            .spacing(6)
+            .align_y(iced::alignment::Vertical::Center);
+            if d.action_idx == 2 {
+                line = line.push(
+                    iced::widget::text_input(state.l().rule_move_ph, &dest)
+                        .on_input(move |v| Message::RuleEditMoveDest(n, v))
+                        .on_submit(Message::RuleEditMoveDest(n, dest.clone()))
+                        .size(12)
+                        .width(130)
+                        .padding(4),
+                );
+            }
+            line = line.push(
+                button(text("✕").size(11))
+                    .on_press(Message::RuleEditDelete(n))
+                    .padding([2, 6])
+                    .style(theme::ghost_button),
+            );
+            col = col.push(line);
+        } else {
+            // 高级规则：只读摘要 + 删除（不提供破坏性编辑）
+            col = col.push(
+                row![
+                    text(format!("⚙ {}", RuleDraft::summary(&d.rule)))
+                        .size(11)
+                        .style(theme::secondary_text),
+                    Space::new().width(Length::Fill),
+                    text(state.l().rules_advanced)
+                        .size(10)
+                        .style(theme::secondary_text),
+                    button(text("✕").size(11))
+                        .on_press(Message::RuleEditDelete(n))
+                        .padding([2, 6])
+                        .style(theme::ghost_button),
+                ]
+                .spacing(6)
+                .align_y(iced::alignment::Vertical::Center),
+            );
+        }
+    }
+
+    col = col.push(
+        row![
+            button(text(state.l().rules_add).size(11))
+                .on_press(Message::RuleEditAdd)
+                .padding([2, 8])
+                .style(theme::outline_button),
+            Space::new().width(Length::Fill),
+            button(text(state.l().save).size(12))
+                .on_press(Message::RuleEditSave)
+                .padding([3, 12])
+                .style(theme::accent_button),
+            button(text(state.l().cancel).size(12))
+                .on_press(Message::RuleEditCancel)
+                .padding([3, 10])
+                .style(theme::ghost_button),
+        ]
+        .spacing(6),
+    );
+
+    container(col)
+        .padding(8)
+        .width(Length::Fill)
+        .style(theme::reader_meta)
+        .into()
 }
 
 /// PGP 内联编辑表单（三字段 + 文件选择 + 保存/取消）

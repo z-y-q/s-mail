@@ -225,6 +225,10 @@ pub(crate) struct State {
     pub(crate) signature_edit: Option<(usize, text_editor::Content)>,
     /// 同步间隔内联编辑中：（账号索引, 输入框内容，秒）
     pub(crate) sync_edit: Option<(usize, String)>,
+    /// 规则编辑面板：（账号索引, 草稿行列表）。草稿直接持有 Rule 结构
+    ///（all_of[1] + actions[1] 的常用形态可完整编辑；多条件/多动作的
+    /// 高级规则只读摘要 + 删除，不提供破坏性编辑）
+    pub(crate) rule_edit: Option<(usize, Vec<crate::setup::RuleDraft>)>,
     /// 本地索引只读连接（按账号懒打开）：切文件夹时 UI 直读缓存行，
     /// 不等服务线程——它可能正堵在长同步（重连全量拉取/IDLE 变更）上，
     /// 命令队列几十秒不被消费，等回包=「一同步就看不见邮件」
@@ -333,6 +337,7 @@ impl State {
                     pgp_edit: None,
                     signature_edit: None,
                     sync_edit: None,
+                    rule_edit: None,
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
@@ -468,6 +473,7 @@ impl State {
                     pgp_edit: None,
                     signature_edit: None,
                     sync_edit: None,
+                    rule_edit: None,
                     local_stores: HashMap::new(),
                     export_target: None,
                     ai: crate::ai::AiUiState::new(
@@ -585,6 +591,7 @@ pub(crate) fn persist_and_reload(
     state.export_target = None;
     state.body_req = None;
     state.sync_edit = None;
+    state.rule_edit = None;
     // 账号集变化：只读连接指向旧 slug 的库，全部作废重开
     state.local_stores.clear();
     state.unified_contrib.clear(); // 死键残留会让已删账号的邮件混入聚合
