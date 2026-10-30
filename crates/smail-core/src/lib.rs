@@ -64,7 +64,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use smail_backend::{test_connection, FolderKind, ImapConfig, SmtpConfig};
+pub use smail_backend::{test_connection, folder_kind, FolderKind, ImapConfig, SmtpConfig};
 use smail_backend::{MailBackend, ServerEvent};
 
 // Re-exports from new modules

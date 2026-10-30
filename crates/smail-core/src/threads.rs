@@ -126,6 +126,7 @@ mod tests {
             seen: false,
             flagged: false,
             has_body: false,
+            preview: String::new(),
         }
     }
 

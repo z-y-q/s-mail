@@ -78,6 +78,8 @@ pub struct MessageRow {
     pub has_body: bool,
     /// M5：会话聚合（"<id>" 形式，空=无/根）
     pub in_reply_to: String,
+    /// 列表行正文预览（纯文本前 ~160 字符；正文索引时生成，新邮件为空）
+    pub preview: String,
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +296,15 @@ impl Store {
             )?;
             conn.pragma_update(None, "user_version", 8)?;
         }
+        // v9：列表行正文预览（正文索引时生成；新邮件默认空，索引后回填）
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v < 9 {
+            let _ = conn.execute(
+                "ALTER TABLE messages ADD COLUMN preview TEXT NOT NULL DEFAULT ''",
+                [],
+            );
+            conn.pragma_update(None, "user_version", 9)?;
+        }
         Ok(())
     }
 }
@@ -378,6 +389,7 @@ mod vacuum_tests {
             flagged: false,
             has_body: false,
             in_reply_to: String::new(),
+            preview: String::new(),
         };
         for i in 0..500 {
             row.envelope_hash = i;
@@ -444,6 +456,7 @@ mod tests {
             flagged: false,
             has_body: false,
             in_reply_to: String::new(),
+            preview: String::new(),
         }
     }
 

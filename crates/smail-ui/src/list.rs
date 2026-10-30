@@ -27,7 +27,7 @@
 
 use crate::{DispKind, ListFilter, MailDisp, State};
 
-pub(crate) const ROW_H: f32 = 52.0;
+pub(crate) const ROW_H: f32 = 64.0;
 /// 可视高度初始估计值（仅首个滚动事件前使用，之后以 viewport 实测为准）
 pub(crate) const DEFAULT_VIEW_H: f32 = 590.0;
 /// 列表 scrollable 的部件 id（切文件夹/进搜索时 scroll_to 回顶用）

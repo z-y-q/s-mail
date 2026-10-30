@@ -298,7 +298,9 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         .center_x(Length::Fill);
 
     // 信头元信息行：发件人 + 右对齐日期（Apple Mail 式；数据从列表行取）
-    let meta_row = state
+    // 信头（Apple Mail 式）：圆形首字母头像 + 发件人/收件人两行，
+    // 右侧文件夹路径 + 完整时间。头像底色由发件地址哈希从调色板取（稳定可辨）
+    let meta_row: Option<Element<Message>> = state
         .rows
         .iter()
         .find(|(a, r)| *a == *acct && r.envelope_hash == hash)
@@ -315,15 +317,66 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             } else {
                 name
             };
-            row![
-                text(name)
-                    .size(13)
-                    .font(theme::ui_font(iced::font::Weight::Medium)),
-                Space::new().width(Length::Fill),
+            // 头像：首字符 + 稳定背景色（6 色 Apple 系调色板按地址哈希取）
+            let seed = r.from_addr.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64));
+            let avatar_bg = [
+                (0.36, 0.54, 0.96),
+                (0.94, 0.44, 0.38),
+                (0.35, 0.72, 0.44),
+                (0.92, 0.62, 0.24),
+                (0.62, 0.48, 0.88),
+                (0.28, 0.68, 0.78),
+            ][(seed % 6) as usize];
+            let initial: String = name.chars().next().map(String::from).unwrap_or_default();
+            let avatar = container(
+                text(initial)
+                    .size(17)
+                    .font(theme::ui_font(iced::font::Weight::Semibold))
+                    .color(iced::Color::WHITE),
+            )
+            .width(38)
+            .height(38)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(move |_t| container::Style {
+                background: Some(iced::Color::from_rgb(avatar_bg.0, avatar_bg.1, avatar_bg.2).into()),
+                border: iced::Border {
+                    radius: iced::border::Radius::from(19.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            let folder_label = crate::lang::folder_display(
+                state.l(),
+                smail_core::folder_kind(&r.folder),
+                &r.folder,
+            );
+            let recipients = reading.to_addrs.trim().to_string();
+            let left = column![
+                text(name.clone())
+                    .size(14)
+                    .font(theme::ui_font(iced::font::Weight::Semibold)),
+                (!recipients.is_empty()).then(|| {
+                    text(format!("收件人：{recipients}"))
+                        .size(11)
+                        .style(theme::secondary_text)
+                }),
+            ]
+            .spacing(2);
+            let right = column![
+                text(folder_label)
+                    .size(11)
+                    .style(theme::secondary_text),
                 text(unix_to_local(r.date_unix))
                     .size(11)
                     .style(theme::secondary_text),
             ]
+            .spacing(2)
+            .align_x(iced::alignment::Horizontal::Right);
+            row![avatar, left, Space::new().width(Length::Fill), right]
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .into()
         });
     let mut reader_col = column![text(reading.subject.clone())
         .size(17)

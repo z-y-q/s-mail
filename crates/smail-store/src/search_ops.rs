@@ -22,6 +22,37 @@
 
 use super::{row_from, tokenize, MessageRow, Store};
 
+/// 列表行预览提取：正文 → 纯文本单行（换行折叠、markdown 符号剥除）前 ~160 字符。
+/// markdown 与纯文本正文都走此清洗（HTML 邮件在转换成 markdown 后进来）
+pub fn preview_from_body(body: &str) -> String {
+    let mut out = String::new();
+    'outer: for line in body.lines() {
+        let t = line
+            .trim()
+            .trim_start_matches(['#', '>', '`'])
+            .trim()
+            .trim_end_matches(['`', '|'])
+            .trim();
+        if t.is_empty() || t == "---" {
+            continue;
+        }
+        for word in t.split_whitespace() {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(word);
+            if out.chars().count() >= 160 {
+                break 'outer;
+            }
+        }
+    }
+    if out.chars().count() > 160 {
+        out.chars().take(158).collect::<String>() + "…"
+    } else {
+        out
+    }
+}
+
 impl Store {
     /// 信封级索引（同步时调用）：主题+发件人即可搜，正文待后台索引
     pub fn index_envelope(&self, hash: i64, subject: &str, from: &str) -> rusqlite::Result<()> {
@@ -35,7 +66,8 @@ impl Store {
         Ok(())
     }
 
-    /// 正文索引（打开邮件或后台索引器调用）
+    /// 正文索引（打开邮件或后台索引器调用）。
+    /// 顺带生成列表行预览：纯文本前 ~160 字符（换行折叠为空格）
     pub fn index_body(&self, hash: i64, body: &str) -> rusqlite::Result<()> {
         let row = self
             .get(hash)?
@@ -49,8 +81,8 @@ impl Store {
             (hash, headers, tokenize(body)),
         )?;
         tx.execute(
-            "UPDATE messages SET indexed = 1 WHERE envelope_hash = ?1",
-            (hash,),
+            "UPDATE messages SET indexed = 1, preview = ?2 WHERE envelope_hash = ?1",
+            rusqlite::params![hash, preview_from_body(body)],
         )?;
         tx.commit()
     }

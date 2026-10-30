@@ -469,6 +469,8 @@ pub(crate) fn to_row(env: &EnvelopeSummary, folder: &str) -> MessageRow {
         seen: env.seen,
         flagged: env.flagged,
         has_body: false,
+        // 新信封正文未拉取：预览由 index_body 生成后回填
+        preview: String::new(),
     }
 }
 
@@ -712,6 +714,7 @@ fn reader_serves_cached_body_without_backend() {
         flagged: false,
         has_body: true,
         in_reply_to: String::new(),
+        preview: String::new(),
     };
     store.upsert(&row).unwrap();
     let eml = b"From: a@b\r\nSubject: s\r\n\r\ncached body text\r\n";

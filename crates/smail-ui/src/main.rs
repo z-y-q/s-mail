@@ -745,19 +745,62 @@ pub(crate) fn unix_to_local(ts: i64) -> String {
     format!("{y:04}-{mth:02}-{d:02} {h:02}:{m:02}:{s:02}")
 }
 
-/// 列表行短日期：同年显示「MM-DD HH:MM」，往年只显示「YYYY-MM-DD」。
-/// 列宽有限，完整秒级时间在阅读页头部（两处都走同一本地时钟，年份可直接比）
-pub(crate) fn unix_to_local_short(ts: i64) -> String {
-    let full = unix_to_local(ts);
+/// 民历六元组（年 月 日 时 分 秒）——relative_date 复用
+fn civil_parts(ts: i64) -> (i64, i64, i64, i64, i64, i64) {
+    let s = unix_to_local(ts);
+    let num = |a: usize, b: usize| s.get(a..b).and_then(|x| x.parse::<i64>().ok()).unwrap_or(0);
+    (num(0, 4), num(5, 7), num(8, 10), num(11, 13), num(14, 16), num(17, 19))
+}
+
+/// 列表行相对日期（Mail.app 式）：今天显示时刻、昨天显式标注、
+/// 本周显示星期、今年显示月日、更早显示年月日
+pub(crate) fn relative_date(ts: i64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let now_full = unix_to_local(now);
-    if now_full.as_bytes().get(..4) == full.as_bytes().get(..4) {
-        full.get(5..16).unwrap_or(&full).to_string()
+    let (ny, nm, nd, _nh, _nmi, _) = civil_parts(now);
+    let (y, m, d, h, mi, _) = civil_parts(ts);
+    if (y, m, d) == (ny, nm, nd) {
+        return format!("{h:02}:{mi:02}");
+    }
+    // 昨天：now 前一天的民历日与目标一致（本地无夏令时切换，按 86400 折算足够）
+    let (yy, ym, yd, _, _, _) = civil_parts(now - 86_400);
+    if (y, m, d) == (yy, ym, yd) {
+        return "昨天".to_string();
+    }
+    // 本周（7 天内）：显示星期
+    let weekday = |t: i64| {
+        // 1970-01-01 是周四：days 自 epoch 偏移对 7 取模
+        let days = t.div_euclid(86_400);
+        match days.rem_euclid(7) {
+            0 => "周一",
+            1 => "周二",
+            2 => "周三",
+            3 => "周四",
+            4 => "周五",
+            5 => "周六",
+            _ => "周日",
+        }
+    };
+    if now - ts < 7 * 86_400 && ts < now {
+        return weekday(ts).to_string();
+    }
+    if y == ny {
+        return format!("{m}月{d}日");
+    }
+    format!("{y}/{m:02}/{d:02}")
+}
+
+/// 列表行短日期：同年显示「MM-DD HH:MM」，往年只显示「YYYY-MM-DD」。
+/// 列宽有限，完整秒级时间在阅读页头部（两处都走同一本地时钟，年份可直接比）
+/// 发件人显示名："名字 <a@b>" → "名字"；裸地址原样
+pub(crate) fn from_display_name(from_addr: &str) -> String {
+    let name = from_addr.split('<').next().unwrap_or("").trim().to_string();
+    if name.is_empty() {
+        from_addr.to_string()
     } else {
-        full.get(..10).unwrap_or(&full).to_string()
+        name
     }
 }
 

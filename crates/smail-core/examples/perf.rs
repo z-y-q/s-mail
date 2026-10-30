@@ -52,6 +52,7 @@ fn row(i: usize) -> MessageRow {
         flagged: i.is_multiple_of(50),
         has_body: false,
         in_reply_to: String::new(),
+        preview: format!("第{i}号发票与报销通知的正文预览，用于压测列表渲染行高与滚动流畅度。"),
     }
 }
 

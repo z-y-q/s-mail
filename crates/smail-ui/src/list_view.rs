@@ -11,7 +11,7 @@
 use iced::widget::{button, column, container, mouse_area, row, scrollable, text, Space};
 use iced::{Element, Length};
 
-use crate::{list, theme, unix_to_local_short, DispKind, ListFilter, Message, State};
+use crate::{list, relative_date, theme, DispKind, ListFilter, Message, State};
 
 const ROW_H: f32 = list::ROW_H;
 const BUFFER: usize = 12;
@@ -787,7 +787,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                         })
                                     ),
                                     Space::new().width(Length::Fill),
-                                    text(unix_to_local_short(*last_date))
+                                    text(relative_date(*last_date))
                                         .size(11)
                                         .style(theme::secondary_text),
                                 ],
@@ -829,7 +829,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     star_txt,
                                     text(format!("↳ {}", r.subject)).size(13),
                                     Space::new().width(Length::Fill),
-                                    text(unix_to_local_short(r.date_unix))
+                                    text(relative_date(r.date_unix))
                                         .size(11)
                                         .style(theme::secondary_text),
                                 ],
@@ -869,45 +869,67 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         iced::font::Weight::Semibold
                     };
                     let cb = select_checkbox(state, acct, r.envelope_hash);
+                    // Mail.app 式三行布局：发件人(粗)+日期 / 主题 / 正文预览。
+                    // 预览取正文前 ~48 字（正文索引后回填，未索引的行留空）
+                    let from_name = crate::from_display_name(&r.from_addr);
+                    let preview: String = {
+                        let mut p: String = r.preview.chars().take(60).collect();
+                        if r.preview.chars().count() > 60 {
+                            p.push('…');
+                        }
+                        p
+                    };
+                    let search_line: Option<Element<Message>> = if state.nav.in_search {
+                        state.search_snippets.get(&r.envelope_hash).map(|snip| {
+                            Element::from(
+                                text(format!("  「{snip}」"))
+                                    .size(11)
+                                    .style(theme::secondary_text),
+                            )
+                        })
+                    } else {
+                        None
+                    };
+                    let mut lines = column![
+                        row![
+                            star_txt,
+                            text(from_name.clone())
+                                .size(13)
+                                .font(theme::ui_font(iced::font::Weight::Semibold)),
+                            Space::new().width(Length::Fill),
+                            text(relative_date(r.date_unix))
+                                .size(11)
+                                .style(theme::secondary_text),
+                        ],
+                        row![
+                            text(format!("{dot}{}", r.subject))
+                                .size(13)
+                                .font(theme::ui_font(subj_weight)),
+                        ],
+                    ]
+                    .spacing(2);
+                    // 第三行优先级：搜索片段 > 正文预览 > 收件标签
+                    if let Some(snip) = search_line {
+                        lines = lines.push(snip);
+                    } else if !preview.is_empty() {
+                        lines = lines.push(
+                            text(preview)
+                                .size(11)
+                                .style(theme::secondary_text),
+                        );
+                    } else if !tag.is_empty() {
+                        lines = lines.push(
+                            text(tag.trim().to_string())
+                                .size(11)
+                                .style(theme::secondary_text),
+                        );
+                    }
                     let row_el: Element<Message> = row![
                         cb,
                         button(
-                            column![
-                                row![
-                                    star_txt,
-                                    text(format!("{dot} {}", r.subject))
-                                        .size(13)
-                                        .font(theme::ui_font(subj_weight)),
-                                    Space::new().width(Length::Fill),
-                                    text(unix_to_local_short(r.date_unix))
-                                        .size(11)
-                                        .style(theme::secondary_text),
-                                ],
-                                if state.nav.in_search {
-                                    if let Some(snip) =
-                                        state.search_snippets.get(&r.envelope_hash)
-                                    {
-                                        Element::from(
-                                            text(format!("  「{snip}」"))
-                                                .size(11)
-                                                .style(theme::secondary_text),
-                                        )
-                                    } else {
-                                        Element::from(
-                                            text(format!("{}{tag}", r.from_addr))
-                                                .size(11)
-                                                .style(theme::secondary_text),
-                                        )
-                                    }
-                                } else {
-                                    Element::from(
-                                        text(format!("{}{tag}", r.from_addr))
-                                            .size(11)
-                                            .style(theme::secondary_text),
-                                    )
-                                }
-                            ]
-                            .spacing(2),
+                            container(lines)
+                                .width(Length::Fill)
+                                .padding([4, 0]),
                         )
                         .on_press(Message::RowSelected(acct, r.envelope_hash))
                         .padding([6, 8])

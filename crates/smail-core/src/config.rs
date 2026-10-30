@@ -505,6 +505,7 @@ mod rule_tests {
             flagged: false,
             has_body: false,
             in_reply_to: String::new(),
+            preview: String::new(),
         }
     }
 
