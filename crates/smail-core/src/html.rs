@@ -49,6 +49,47 @@ pub fn remote_img_urls(html: &str) -> Vec<String> {
         .collect()
 }
 
+/// HTML 原样渲染的消毒出口（系统网页视图加载用；与 markdown 转换共用白名单底座）
+///
+/// 与 `html_to_markdown` 的「删 img」隐私默认一致：`load_remote=false` 时
+/// 远程图片整棵删除（防跟踪像素）；`load_remote=true`（用户点过「显示图片」）
+/// 保留。其余按邮件排版需要放开、按攻击面收紧：
+///
+/// - 放开：`<style>` 标签与 `style`/`class` 属性（真实邮件排版全靠 CSS）、
+///   表格跨行跨列（colspan/rowspan）、`data:` 图片（离线内嵌，不联网）
+/// - 收紧：`<script>` 内容整体删除；`a href` 的 `data:`/`javascript:` 协议改写
+///   为 `#`（网页视图侧另禁导航兜底，两层防护互不依赖）
+///
+/// 兜底纵深：调用方还须禁 JS + 拦导航（smail-ui webview 模块），此处只管
+/// 「消毒后的 HTML 拿浏览器直接打开也安全」这一层。
+pub fn sanitized_html_for_webview(html: &str, load_remote: bool) -> String {
+    let mut b = ammonia::Builder::default();
+    // <style> 保留（邮件排版核心）；script 仍在 clean_content_tags 里删除。
+    // 默认 clean_content_tags 含 style（文本转换场景是正确默认），原样渲染
+    // 场景必须移出（留在两边会触发 ammonia 的配置一致性断言）
+    b.rm_clean_content_tags(["style"]);
+    b.add_tags(["style"]);
+    b.add_generic_attributes(["style", "class"]);
+    for t in ["td", "th"] {
+        b.add_tag_attributes(t, ["colspan", "rowspan"]);
+    }
+    // data: 仅供图片离线内嵌；链接上的 data:/javascript: 一律改写（见 attribute_filter）
+    b.add_url_schemes(["data"]);
+    b.attribute_filter(|element, attribute, value| {
+        if element == "a" && attribute == "href" {
+            let v = value.trim().to_lowercase();
+            if v.starts_with("data:") || v.starts_with("javascript:") {
+                return Some(std::borrow::Cow::Borrowed("#"));
+            }
+        }
+        Some(std::borrow::Cow::Borrowed(value))
+    });
+    if !load_remote {
+        b.rm_tags(["img"]);
+    }
+    b.clean(html).to_string()
+}
+
 /// 主入口：HTML → markdown 文本（供 markdown widget 渲染）
 pub fn html_to_markdown(html: &str) -> String {
     // 消毒：默认白名单基础上删掉 img（M4 图片策略：一律不加载）
@@ -416,6 +457,50 @@ fn collapse_ws(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webview_sanitize_keeps_style_and_kills_script() {
+        let html =
+            r#"<style>p{color:red}</style><p onclick="evil()">正文</p><script>alert(1)</script>"#;
+        let out = sanitized_html_for_webview(html, false);
+        assert!(
+            out.contains("<style>p{color:red}</style>"),
+            "style 保留：{out}"
+        );
+        assert!(out.contains("<p>正文</p>"), "事件属性剥除：{out}");
+        assert!(!out.contains("alert"), "script 内容删除：{out}");
+    }
+
+    #[test]
+    fn webview_sanitize_remote_images_default_off() {
+        let html = r#"<p>图</p><img src="https://track.example/pixel" width="1">"#;
+        let off = sanitized_html_for_webview(html, false);
+        assert!(!off.contains("track.example"), "默认删远程图：{off}");
+        let on = sanitized_html_for_webview(html, true);
+        assert!(on.contains("track.example"), "允许后保留：{on}");
+    }
+
+    #[test]
+    fn webview_sanitize_blocks_data_and_js_hrefs() {
+        let html =
+            r#"<a href="data:text/html,<h1> phishing">点</a><a href="javascript:evil()">再点</a>"#;
+        let out = sanitized_html_for_webview(html, false);
+        assert!(!out.contains("data:text"), "data: 链接改写：{out}");
+        assert!(!out.contains("javascript:"), "js 协议改写：{out}");
+        // data: 图片不受影响（离线内嵌是合法场景）
+        let img = r#"<img src="data:image/png;base64,AAAA">"#;
+        assert!(
+            sanitized_html_for_webview(img, true).contains("data:image/png"),
+            "data: 图片保留"
+        );
+    }
+
+    #[test]
+    fn webview_sanitize_keeps_table_span() {
+        let html = r#"<table><tr><td colspan="2">跨列</td></tr></table>"#;
+        let out = sanitized_html_for_webview(html, false);
+        assert!(out.contains(r#"colspan="2""#), "表格跨列保留：{out}");
+    }
 
     #[test]
     fn heading_paragraph_link() {

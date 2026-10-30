@@ -42,6 +42,7 @@ mod error;
 pub mod config;
 pub mod html;
 pub use html::html_to_markdown;
+pub use html::sanitized_html_for_webview;
 pub mod keychain;
 pub mod oauth;
 pub mod pgp;
