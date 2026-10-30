@@ -674,7 +674,7 @@ impl State {
                 }
             }
         }
-        all.sort_by(|x, y| y.1.date_unix.cmp(&x.1.date_unix));
+        all.sort_by_key(|x| std::cmp::Reverse(x.1.date_unix));
         self.rows = all;
     }
 
