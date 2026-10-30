@@ -35,7 +35,7 @@ use iced::widget::{button, column, container, row, scrollable, text, text_editor
 use iced::{Element, Length};
 
 use crate::setup::labeled_field;
-use crate::{theme, unix_to_local, Field, Message, Screen, State};
+use crate::{theme, unix_to_local, Field, Message, State};
 
 pub(crate) struct Compose {
     /// AI 起草指令（写信屏输入框）
@@ -75,14 +75,19 @@ pub(crate) enum ReplyKind {
 }
 
 /// 回复/转发：从当前阅读的邮件构造 compose（地址 + Re:/Fwd: 主题 + 引用正文）
-pub(crate) fn open_compose_with(state: &mut State, acct: usize, hash: i64, kind: ReplyKind) {
+pub(crate) fn open_compose_with(
+    state: &mut State,
+    acct: usize,
+    hash: i64,
+    kind: ReplyKind,
+) -> iced::Task<crate::Message> {
     let Some((_, r)) = state
         .rows
         .iter()
         .find(|(a, r)| *a == acct && r.envelope_hash == hash)
     else {
         state.error = Some(state.l().err_orig_missing.into());
-        return;
+        return iced::Task::none();
     };
     let orig = r.clone();
     // 发件人 "名字 <addr>" → addr；收件人地址（回复全部时带上除自己外的其他人）
@@ -162,7 +167,7 @@ pub(crate) fn open_compose_with(state: &mut State, acct: usize, hash: i64, kind:
         .unwrap_or_default();
     body.perform(text_editor_edit_paste(&format!("{sig}\n\n{quoted}\n")));
     state.send(acct, smail_core::Cmd::ListContacts); // M7：补全数据
-    state.screen = Screen::Compose(Compose {
+    state.compose = Some(Compose {
         ai_instruction: String::new(),
         ai_busy: false,
         ai_overwrite_ask: false,
@@ -182,6 +187,18 @@ pub(crate) fn open_compose_with(state: &mut State, acct: usize, hash: i64, kind:
         body,
         attachments: vec![],
     });
+    // 回复/转发：弹独立写信窗（已开则复用），主窗列表保持可见。
+    // open 的 Task 必须由 update 返回链路上抛，否则窗口不会真正创建
+    if state.compose_window.is_none() {
+        let (win_id, task) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(900.0, 640.0),
+            min_size: Some(iced::Size::new(720.0, 480.0)),
+            ..Default::default()
+        });
+        state.compose_window = Some(win_id);
+        return task.map(move |_| crate::Message::ComposeWindowOpened(win_id));
+    }
+    iced::Task::none()
 }
 
 pub(crate) fn text_editor_edit_paste(body: &str) -> iced::widget::text_editor::Action {

@@ -3,7 +3,7 @@
 use crate::update::{close_reading_if_gone, selection_by_acct};
 use crate::{
     compose::{self, open_compose_with, ReplyKind},
-    extract_forward_attachments, open_in_browser, Compose, DispKind, Message, Screen, State,
+    extract_forward_attachments, open_in_browser, Compose, DispKind, Message, State,
 };
 use iced::widget::text_editor;
 use iced::Task;
@@ -13,15 +13,13 @@ use smail_core::Cmd;
 pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
     match msg {
         Message::Reply(acct, hash) => {
-            open_compose_with(state, acct, hash, ReplyKind::Reply);
-            Task::none()
+            open_compose_with(state, acct, hash, ReplyKind::Reply)
         }
         Message::ReplyAll(acct, hash) => {
-            open_compose_with(state, acct, hash, ReplyKind::ReplyAll);
-            Task::none()
+            open_compose_with(state, acct, hash, ReplyKind::ReplyAll)
         }
         Message::Forward(acct, hash) => {
-            open_compose_with(state, acct, hash, ReplyKind::Forward);
+            let open_task = open_compose_with(state, acct, hash, ReplyKind::Forward);
             // 转发带附件：从本地 .eml 提取到 staging 目录后回填（发送时
             // 服务线程按路径读文件）。.eml 未缓存（没打开过就转发）则没有
             // 附件，用户可在编辑器里手动添加
@@ -37,7 +35,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 .join(format!("{hash}.eml"));
             let staging = state.data_root.join("attachments-staging");
             if eml.exists() {
-                return Task::perform(
+                let attach_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
                             extract_forward_attachments(&eml, &staging)
@@ -47,11 +45,12 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     },
                     Message::ForwardAttachmentsReady,
                 );
+                return Task::batch([open_task, attach_task]);
             }
-            Task::none()
+            open_task
         }
         Message::ForwardAttachmentsReady(paths) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 for p in paths {
                     if let Some(ps) = p.to_str() {
                         if !c.attachments.contains(&ps.to_string()) {
@@ -398,7 +397,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     return Task::none();
                 }
                 let account = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
-                state.screen = Screen::Compose(Compose {
+                state.compose = Some(Compose {
                     ai_instruction: String::new(),
                     ai_busy: false,
                     ai_overwrite_ask: false,
@@ -418,6 +417,16 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     body: text_editor::Content::new(),
                     attachments: vec![],
                 });
+                // mailto 退订同样弹独立写信窗（已开则复用）
+                if state.compose_window.is_none() {
+                    let (win_id, task) = iced::window::open(iced::window::Settings {
+                        size: iced::Size::new(900.0, 640.0),
+                        min_size: Some(iced::Size::new(720.0, 480.0)),
+                        ..Default::default()
+                    });
+                    state.compose_window = Some(win_id);
+                    return task.map(move |_| Message::ComposeWindowOpened(win_id));
+                }
             }
             Task::none()
         }
@@ -526,7 +535,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     {
                         body.perform(compose::text_editor_edit_paste(&format!("\n\n-- \n{sig}")));
                     }
-                    state.screen = Screen::Compose(Compose {
+                    state.compose = Some(Compose {
                         ai_instruction: String::new(),
                         autosave_at: None,
                         ai_busy: false,
@@ -546,6 +555,16 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                         body,
                         attachments: vec![],
                     });
+                    // 正文里的 mailto 链接：同样弹独立写信窗（已开则复用）
+                    if state.compose_window.is_none() {
+                        let (win_id, task) = iced::window::open(iced::window::Settings {
+                            size: iced::Size::new(900.0, 640.0),
+                            min_size: Some(iced::Size::new(720.0, 480.0)),
+                            ..Default::default()
+                        });
+                        state.compose_window = Some(win_id);
+                        return task.map(move |_| Message::ComposeWindowOpened(win_id));
+                    }
                 }
             }
             Task::none()

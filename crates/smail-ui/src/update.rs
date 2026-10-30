@@ -394,6 +394,52 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.contact_search = s;
             Task::none()
         }
+        // ---------------- 多窗口：主窗/写信窗生命周期 ----------------
+        Message::MainWindowOpened(id) => {
+            state.main_window = Some(id);
+            Task::none()
+        }
+        Message::ComposeWindowOpened(id) => {
+            state.compose_window = Some(id);
+            Task::none()
+        }
+        Message::WindowCloseRequested(id) => {
+            if state.compose_window == Some(id) {
+                // 红叉：自动存草稿再关（用户数据无损；与写信窗内「存草稿」同语义）
+                if let Some(c) = &state.compose {
+                    let acct = c.account;
+                    state.send(
+                        acct,
+                        Cmd::SaveDraft {
+                            id: c.draft_id,
+                            to: c.to.clone(),
+                            cc: c.cc.clone(),
+                            bcc: c.bcc.clone(),
+                            subject: c.subject.clone(),
+                            body: c.body.text().to_string(),
+                        },
+                    );
+                    state.statuses.insert(acct, "草稿已保存".into());
+                }
+                if let Some(win_id) = state.compose_window.take() {
+                    state.compose = None;
+                    return iced::window::close(win_id);
+                }
+                Task::none()
+            } else if state.main_window == Some(id) {
+                // 主窗被关：重新打开（应用托盘常驻，主窗必须随时可用）
+                state.main_window = None;
+                let (new_id, task) = iced::window::open(iced::window::Settings {
+                    size: iced::Size::new(1280.0, 760.0),
+                    min_size: Some(iced::Size::new(980.0, 560.0)),
+                    ..Default::default()
+                });
+                state.main_window = Some(new_id);
+                task.map(move |_| Message::MainWindowOpened(new_id))
+            } else {
+                Task::none()
+            }
+        }
         m @ (Message::SetupOpen
         | Message::SetupClose
         | Message::SetupPreset(..)

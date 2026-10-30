@@ -394,7 +394,7 @@ pub(crate) fn start_draft(
     let Some(chat) = make_chat(state).map_err(|e| state.error = Some(e)).ok() else {
         return iced::Task::none();
     };
-    if let crate::Screen::Compose(c) = &mut state.screen {
+    if let Some(c) = &mut state.compose {
         c.ai_busy = true;
     }
     let id = new_req(state, BusyKind::Draft);
@@ -420,9 +420,9 @@ pub(crate) fn start_rewrite(state: &mut State, instruction: String) -> iced::Tas
     if !gate(state, Message::AiRewrite(instruction.clone())) {
         return iced::Task::none();
     }
-    let (subject, body) = match &state.screen {
-        crate::Screen::Compose(c) => (c.subject.clone(), c.body.text().to_string()),
-        _ => return iced::Task::none(),
+    let (subject, body) = match &state.compose {
+        Some(c) => (c.subject.clone(), c.body.text().to_string()),
+        None => return iced::Task::none(),
     };
     if body.trim().is_empty() && subject.trim().is_empty() {
         state.error = Some(state.l().ai_err_empty_body.into());
@@ -431,7 +431,7 @@ pub(crate) fn start_rewrite(state: &mut State, instruction: String) -> iced::Tas
     let Some(chat) = make_chat(state).map_err(|e| state.error = Some(e)).ok() else {
         return iced::Task::none();
     };
-    if let crate::Screen::Compose(c) = &mut state.screen {
+    if let Some(c) = &mut state.compose {
         c.ai_busy = true;
         c.ai_rewrite_mode = true;
     }
@@ -460,8 +460,8 @@ pub(crate) fn draft_ready(
     }
     state.ai.in_flight = 0;
     state.ai.busy = None;
-    let crate::Screen::Compose(c) = &mut state.screen else {
-        return; // 用户已关写作屏：丢弃
+    let Some(c) = state.compose.as_mut() else {
+        return; // 用户已关写信窗：丢弃
     };
     c.ai_busy = false;
     let rewrite = c.ai_rewrite_mode;
@@ -489,7 +489,7 @@ pub(crate) fn draft_ready(
 
 /// AI 改写前的快照（单步撤销）
 fn stash_prev(state: &mut State) {
-    if let crate::Screen::Compose(c) = &mut state.screen {
+    if let Some(c) = state.compose.as_mut() {
         let snap = (c.subject.clone(), c.body.text().to_string());
         // 连续多次 AI 操作只保留最早快照（撤销回到 AI 介入前）
         if c.ai_prev.is_none() {
@@ -500,7 +500,7 @@ fn stash_prev(state: &mut State) {
 
 /// 撤销上一次 AI 修改
 pub(crate) fn draft_undo(state: &mut State) {
-    if let crate::Screen::Compose(c) = &mut state.screen {
+    if let Some(c) = state.compose.as_mut() {
         if let Some((subject, body)) = c.ai_prev.take() {
             c.subject = subject;
             let mut content = iced::widget::text_editor::Content::new();
@@ -513,7 +513,7 @@ pub(crate) fn draft_undo(state: &mut State) {
 }
 
 fn fill_draft(state: &mut State, d: smail_ai::DraftContent) {
-    if let crate::Screen::Compose(c) = &mut state.screen {
+    if let Some(c) = state.compose.as_mut() {
         c.subject = d.subject;
         let mut content = iced::widget::text_editor::Content::new();
         content.perform(crate::compose::text_editor_edit_paste(&d.body));
@@ -528,20 +528,17 @@ fn fill_draft(state: &mut State, d: smail_ai::DraftContent) {
 }
 
 pub(crate) fn draft_apply_overwrite(state: &mut State) {
-    let pending = match &mut state.screen {
-        crate::Screen::Compose(c) => {
-            c.ai_overwrite_ask = false;
-            c.ai_pending.take()
-        }
-        _ => None,
-    };
-    if let Some(d) = pending {
+    let pending = state.compose.as_mut().map(|c| {
+        c.ai_overwrite_ask = false;
+        c.ai_pending.take()
+    });
+    if let Some(d) = pending.flatten() {
         fill_draft(state, d);
     }
 }
 
 pub(crate) fn draft_discard_overwrite(state: &mut State) {
-    if let crate::Screen::Compose(c) = &mut state.screen {
+    if let Some(c) = state.compose.as_mut() {
         c.ai_overwrite_ask = false;
         c.ai_pending = None;
     }
@@ -573,12 +570,13 @@ pub(crate) fn smart_reply(state: &mut State, acct: usize, hash: i64) -> iced::Ta
         body: reading.body.clone(),
     };
     let instruction = state.l().ai_reply_instruction.to_string();
-    // 开写作屏（普通回复的收件人/主题逻辑），再走起草
-    crate::compose::open_compose_with(state, acct, hash, crate::compose::ReplyKind::Reply);
-    if let crate::Screen::Compose(c) = &mut state.screen {
+    // 开写信窗（普通回复的收件人/主题逻辑），再走起草
+    let open_task =
+        crate::compose::open_compose_with(state, acct, hash, crate::compose::ReplyKind::Reply);
+    if let Some(c) = state.compose.as_mut() {
         c.ai_instruction = instruction.clone();
     }
-    start_draft(state, instruction, Some(orig))
+    open_task.chain(start_draft(state, instruction, Some(orig)))
 }
 
 // ---------------------------------------------------------------------------

@@ -35,9 +35,9 @@ use smail_core::{Cmd, FolderInfo, Session, SessionCmd};
 use smail_store::{DraftRow, MessageRow};
 use std::sync::Arc;
 
+#[allow(clippy::large_enum_variant)] // Setup 表单一次性传递（盒装无收益）
 pub(crate) enum Screen {
     Mail,
-    Compose(Compose),
     /// M6：账号配置（首次运行引导 / 顶栏 ＋ 进入）
     Setup(SetupForm),
 }
@@ -195,6 +195,12 @@ pub(crate) struct State {
     /// 展开的会话（key = 根邮件 hash）
     pub(crate) expanded: HashMap<i64, bool>,
     pub(crate) screen: Screen,
+    /// 写信独立窗口的写作状态（None=无写信窗；多窗口：主窗保持邮件列表可见）
+    pub(crate) compose: Option<Compose>,
+    /// 写信窗口 id（window::open 回填；关闭与标题判定用）
+    pub(crate) compose_window: Option<iced::window::Id>,
+    /// 主窗 id（boot 时 window::open 回填；托盘激活与关闭请求处理用）
+    pub(crate) main_window: Option<iced::window::Id>,
     /// 每账号最近状态（顶栏展示）
     pub(crate) statuses: HashMap<usize, String>,
     /// M6：完整账号配置（添加/删除后写回并热重载会话）
@@ -287,6 +293,17 @@ impl State {
         let (boot_theme, boot_follow, boot_lang, boot_ai_ack, boot_win) = boot_prefs(&data_root);
         let boot_last_view = crate::lang::load_prefs(&data_root).last_view;
         let boot_cols = crate::lang::load_prefs(&data_root).columns;
+        // 主窗几何（daemon 模式：boot 任务里显式 open 主窗）
+        let (win_size, win_pos) = match crate::lang::load_prefs(&data_root).win {
+            Some([w, h, x, y]) if w >= 980.0 && h >= 560.0 => (
+                iced::Size::new(w, h),
+                iced::window::Position::Specific(iced::Point::new(x, y)),
+            ),
+            _ => (
+                iced::Size::new(1280.0, 760.0),
+                iced::window::Position::Default,
+            ),
+        };
         match Session::start(&cfg_path, &data_root) {
             Ok((session, rx)) => {
                 let accounts = smail_core::load_accounts(&cfg_path).unwrap_or_default();
@@ -342,6 +359,9 @@ impl State {
                     pending_delete: None,
                     expanded: HashMap::new(),
                     screen: Screen::Mail,
+                    compose: None,
+                    compose_window: None,
+                    main_window: None,
                     statuses: HashMap::new(),
                     batch: BatchOps {
                         selection: Default::default(),
@@ -416,10 +436,19 @@ impl State {
                         }
                     }
                 };
-                // 启动即对齐系统深浅色
+                // 启动即对齐系统深浅色 + 打开主窗（daemon 多窗口模式）
+                let (_main_id, open_task) = iced::window::open(iced::window::Settings {
+                    size: win_size,
+                    position: win_pos,
+                    min_size: Some(iced::Size::new(980.0, 560.0)),
+                    ..Default::default()
+                });
+                let open_main = open_task.map(crate::Message::MainWindowOpened);
                 (
                     state,
-                    restore.chain(iced::system::theme().map(Message::SystemTheme)),
+                    restore
+                        .chain(open_main)
+                        .chain(iced::system::theme().map(crate::Message::SystemTheme)),
                 )
             }
             Err(e) => {
@@ -483,6 +512,9 @@ impl State {
                     pending_delete: None,
                     expanded: HashMap::new(),
                     screen: Screen::Setup(setup),
+                    compose: None,
+                    compose_window: None,
+                    main_window: None,
                     statuses: HashMap::new(),
                     batch: BatchOps {
                         selection: Default::default(),
@@ -520,7 +552,15 @@ impl State {
                 let mut state = state;
                 state.prefs.win_geom = boot_win;
                 state.ai.ack = boot_ai_ack;
-                (state, Task::none())
+                // 无配置引导屏也要有主窗（daemon 模式窗口由 boot 显式打开）
+                let (_main_id, open_task) = iced::window::open(iced::window::Settings {
+                    size: win_size,
+                    position: win_pos,
+                    min_size: Some(iced::Size::new(980.0, 560.0)),
+                    ..Default::default()
+                });
+                let open_main = open_task.map(crate::Message::MainWindowOpened);
+                (state, open_main)
             }
         }
     }
@@ -578,6 +618,20 @@ impl State {
     pub(crate) fn send(&self, account: usize, cmd: Cmd) {
         if let Some(tx) = &self.cmd_tx {
             let _ = tx.send(SessionCmd::Route { account, cmd });
+        }
+    }
+
+    /// 多窗口标题：写信窗与主窗区分（daemon .title 每窗口调用）
+    pub(crate) fn window_title(&self, window: iced::window::Id) -> String {
+        if self.compose_window == Some(window) {
+            match &self.compose {
+                Some(c) if !c.subject.trim().is_empty() => {
+                    format!("{} — 写邮件", c.subject.trim())
+                }
+                _ => "写邮件".to_string(),
+            }
+        } else {
+            "s-mail".to_string()
         }
     }
 

@@ -246,18 +246,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             let folder_btn = button(
                 row![
                     text(format!(
-                        "{}{}{} {}",
+                        // 纯文字排版（Apple Mail 式）：⇩⊘▤⌫ 这类稀有字形在
+                        // SF Pro 里缺字形回退渲染参差，是侧栏「丑」的主因；
+                        // 层级靠缩进表达，选中态靠底色，未读靠徽标
+                        "{}{}{}",
                         "  ".repeat(depth),
-                        // 单色字形（彩色 emoji 与暗色主题混排突兀）
-                        match f.kind {
-                            smail_core::FolderKind::Inbox => "⇩",
-                            smail_core::FolderKind::Sent => "⇧",
-                            smail_core::FolderKind::Junk => "⊘",
-                            smail_core::FolderKind::Archive => "▤",
-                            smail_core::FolderKind::Trash => "⌫",
-                            _ => " ",
-                        },
-                        if is_cur { "▸" } else { " " },
+                        if is_cur { "▸ " } else { "" },
                         crate::lang::folder_display(state.l(), f.kind, &f.path)
                     ))
                     .size(13),

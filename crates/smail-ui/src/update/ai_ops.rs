@@ -1,7 +1,7 @@
 //! AI 助手消息：摘要/起草/改写/智能回复/整理计划/隐私门/设置表单
 
 use crate::update::update;
-use crate::{ai, AiField, Message, Screen, State};
+use crate::{ai, AiField, Message, State};
 use iced::Task;
 
 /// 消息组的统一入口（分发器按 or-pattern 委托；模式与处理体自 update.rs 原样搬运）
@@ -22,9 +22,9 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::AiDraftGo => {
-            let instr = match &state.screen {
-                Screen::Compose(c) => c.ai_instruction.clone(),
-                _ => String::new(),
+            let instr = match &state.compose {
+                Some(c) => c.ai_instruction.clone(),
+                None => String::new(),
             };
             ai::start_draft(state, instr, None)
         }
@@ -41,7 +41,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::AiInstructionInput(s) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.ai_instruction = s;
             }
             Task::none()

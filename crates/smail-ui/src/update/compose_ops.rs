@@ -1,13 +1,30 @@
-//! 写作屏消息：编辑/自动保存/发信/附件/草稿/发件箱/PGP 开关
+//! 写作窗消息：编辑/自动保存/发信/附件/草稿/发件箱/PGP 开关/窗口生命周期
+//!
+//! 多窗口模型：写信是独立窗口（state.compose_window），
+//! 主窗邮件列表始终可见；窗口关闭=自动存草稿（红叉）或显式丢弃确认
 
 use crate::update::update;
 use crate::{
     compose::{split_last_segment, text_editor_edit_paste},
-    Compose, Field, Message, Screen, State,
+    Compose, Field, Message, State,
 };
 use iced::widget::text_editor;
 use iced::Task;
 use smail_core::Cmd;
+
+/// 写信窗统一关闭：关窗口 + 清写作状态（数据由调用方决定是否先存）
+fn close_compose_window(state: &mut State) -> Task<Message> {
+    let mut tasks: Vec<Task<Message>> = vec![];
+    if let Some(id) = state.compose_window.take() {
+        tasks.push(iced::window::close(id));
+    }
+    state.compose = None;
+    if tasks.is_empty() {
+        Task::none()
+    } else {
+        Task::batch(tasks)
+    }
+}
 
 /// 消息组的统一入口（分发器按 or-pattern 委托；模式与处理体自 update.rs 原样搬运）
 pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
@@ -17,6 +34,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 state.error = Some(state.l().err_need_account.into());
                 return Task::none();
             }
+            // 已有写信窗：复用（内容重置为新邮件）
             let account = state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0);
             state.send(account, Cmd::ListContacts); // M7：补全数据
                                                     // 签名预填（账号配置 signature；分隔符用邮件惯用的 "-- "）
@@ -29,7 +47,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             {
                 body.perform(text_editor_edit_paste(&format!("\n\n-- \n{sig}")));
             }
-            state.screen = Screen::Compose(Compose {
+            state.compose = Some(Compose {
                 ai_instruction: String::new(),
                 ai_busy: false,
                 ai_overwrite_ask: false,
@@ -49,7 +67,16 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 body,
                 attachments: vec![],
             });
-            Task::none()
+            if state.compose_window.is_some() {
+                return Task::none(); // 复用现有窗口
+            }
+            let (id, task) = iced::window::open(iced::window::Settings {
+                size: iced::Size::new(900.0, 640.0),
+                min_size: Some(iced::Size::new(720.0, 480.0)),
+                ..Default::default()
+            });
+            state.compose_window = Some(id);
+            task.map(move |_| Message::ComposeWindowOpened(id))
         }
         Message::ComposeFromDraft(acct, id) => {
             if let Some(d) = state
@@ -61,7 +88,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 let mut content = text_editor::Content::new();
                 content.perform(text_editor_edit_paste(&d.body));
                 state.send(acct, Cmd::ListContacts); // M7：补全数据
-                state.screen = Screen::Compose(Compose {
+                state.compose = Some(Compose {
                     ai_instruction: String::new(),
                     ai_busy: false,
                     ai_overwrite_ask: false,
@@ -81,12 +108,22 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     body: content,
                     attachments: vec![],
                 });
+                // 草稿双击同样弹写信窗（窗口已存在则复用）
+                if state.compose_window.is_none() {
+                    let (win_id, task) = iced::window::open(iced::window::Settings {
+                        size: iced::Size::new(900.0, 640.0),
+                        min_size: Some(iced::Size::new(720.0, 480.0)),
+                        ..Default::default()
+                    });
+                    state.compose_window = Some(win_id);
+                    return task.map(move |_| Message::ComposeWindowOpened(win_id));
+                }
             }
             Task::none()
         }
         Message::ComposeClose => {
             // 与 Esc 同语义：有内容先弹丢弃确认（否则误点关闭直接丢并小时心血）
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 let has_content = !c.to.is_empty()
                     || !c.subject.is_empty()
                     || !c.body.text().trim().is_empty()
@@ -96,17 +133,16 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     return Task::none();
                 }
             }
-            state.screen = Screen::Mail;
-            Task::none()
+            close_compose_window(state)
         }
         Message::ComposeAccountNext => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.account = (c.account + 1) % state.account_names.len().max(1);
             }
             Task::none()
         }
         Message::ComposeField(field, value) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.autosave_at = Some(std::time::Instant::now());
                 match field {
                     Field::To => c.to = value,
@@ -118,7 +154,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::ComposeBodyEdit(action) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.autosave_at = Some(std::time::Instant::now());
                 c.body.perform(action);
             }
@@ -126,11 +162,9 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
         }
         Message::AutosaveTick => {
             // 静默 20s 且有实质内容才存：不打扰快速写作，也不建空草稿。
-            // 先取快照再发送（send 需要 &self，与 &mut screen 借用冲突）
+            // 先取快照再发送（send 需要 &self，与 &mut compose 借用冲突）
             let send_now = (|| {
-                let Screen::Compose(c) = &mut state.screen else {
-                    return None;
-                };
+                let c = state.compose.as_mut()?;
                 let due = c
                     .autosave_at
                     .map(|t| t.elapsed().as_secs() >= 20)
@@ -162,8 +196,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::ComposeShortcut(key) => {
-            // 只在写信屏生效（其他屏的 ⌘↩/⌘S 交给系统语义）
-            if matches!(state.screen, Screen::Compose(_)) {
+            // 只在写信窗打开时生效（其他场景的 ⌘↩/⌘S 交给系统语义）
+            if state.compose.is_some() {
                 match key {
                     crate::ComposeKey::Send => update(state, Message::SendClicked),
                     crate::ComposeKey::SaveDraft => update(state, Message::SaveDraftClicked),
@@ -173,7 +207,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             }
         }
         Message::SendClicked => {
-            if let Screen::Compose(c) = &state.screen {
+            if let Some(c) = &state.compose {
                 if c.to.trim().is_empty() {
                     state.error = Some(state.l().err_empty_to.into());
                     return Task::none();
@@ -195,13 +229,13 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 if let Some(id) = c.draft_id {
                     state.send(acct, Cmd::DeleteDraft(id));
                 }
-                state.screen = Screen::Mail;
                 state.statuses.insert(acct, "发送中…".into());
+                return close_compose_window(state);
             }
             Task::none()
         }
         Message::SaveDraftClicked => {
-            if let Screen::Compose(c) = &state.screen {
+            if let Some(c) = &state.compose {
                 let acct = c.account;
                 state.send(
                     acct,
@@ -214,8 +248,9 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                         body: c.body.text().to_string(),
                     },
                 );
-                state.screen = Screen::Mail;
                 state.statuses.insert(acct, "草稿已保存".into());
+                // 存草稿并关写信窗（与旧「存草稿」按钮语义一致）
+                return close_compose_window(state);
             }
             Task::none()
         }
@@ -241,7 +276,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Message::AttachmentsPicked,
         ),
         Message::AttachmentsPicked(Some(files)) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.autosave_at = Some(std::time::Instant::now());
                 for f in files {
                     if let Some(p) = f.to_str() {
@@ -253,7 +288,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
         }
         Message::AttachmentsPicked(None) => Task::none(),
         Message::RemoveAttachment(i) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.autosave_at = Some(std::time::Instant::now());
                 if i < c.attachments.len() {
                     c.attachments.remove(i);
@@ -262,7 +297,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::ContactPicked(field, addr) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 let cur = match field {
                     Field::To => c.to.clone(),
                     Field::Cc => c.cc.clone(),
@@ -282,13 +317,13 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
         }
         // ---------------- AI 助手 ----------------
         Message::TogglePgpSign => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.pgp_sign = !c.pgp_sign;
             }
             Task::none()
         }
         Message::TogglePgpEncrypt => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.pgp_encrypt = !c.pgp_encrypt;
                 if c.pgp_encrypt {
                     c.pgp_sign = true; // 我们的加密必签名（防篡改）
@@ -297,11 +332,11 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::ComposeDiscardConfirm => {
-            state.screen = Screen::Mail;
-            Task::none()
+            // 丢弃：不存草稿直接关写信窗
+            close_compose_window(state)
         }
         Message::ComposeDiscardCancel => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 c.confirm_discard = false;
             }
             Task::none()

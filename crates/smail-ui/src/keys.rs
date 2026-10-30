@@ -42,7 +42,7 @@ use smail_core::{Cmd, SessionCmd};
 pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Message> {
     match key {
         Key::Named(iced::keyboard::key::Named::Escape) => {
-            if let Screen::Compose(c) = &mut state.screen {
+            if let Some(c) = &mut state.compose {
                 let has_content = !c.to.is_empty()
                     || !c.subject.is_empty()
                     || !c.body.text().trim().is_empty()
@@ -50,7 +50,16 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
                 if has_content && !c.confirm_discard {
                     c.confirm_discard = true; // 先确认再丢
                 } else {
-                    state.screen = Screen::Mail;
+                    // 关写信窗（有内容已确认丢弃，数据放弃）
+                    let mut tasks: Vec<iced::Task<Message>> = vec![];
+                    if let Some(id) = state.compose_window.take() {
+                        tasks.push(iced::window::close(id));
+                    }
+                    state.compose = None;
+                    if tasks.is_empty() {
+                        return iced::Task::none();
+                    }
+                    return iced::Task::batch(tasks);
                 }
             } else if let Screen::Setup(f) = &mut state.screen {
                 // 表单有内容时 Esc 不直接关屏（清输入框的习惯性 Esc 会丢整张表单）；

@@ -63,7 +63,7 @@ mod theme;
 mod tray;
 mod update;
 
-use compose::{compose_view, Compose};
+use compose::Compose;
 pub(crate) use list::ROW_H;
 use list_view::main_view;
 use setup::{build_account, setup_view, Preset, SetupField, SetupForm};
@@ -89,26 +89,12 @@ fn main() -> iced::Result {
         };
     }
     tray::spawn();
-    // 窗口几何记忆（ui.json；无记录用默认）
-    let (win_size, win_pos) = match crate::lang::load_prefs(&crate::paths().1).win {
-        Some([w, h, x, y]) if w >= 980.0 && h >= 560.0 => (
-            iced::Size::new(w, h),
-            iced::window::Position::Specific(iced::Point::new(x, y)),
-        ),
-        _ => (
-            iced::Size::new(1280.0, 760.0),
-            iced::window::Position::Default,
-        ),
-    };
-    iced::application(State::boot, update, view)
-        .title("s-mail")
-        .window(iced::window::Settings {
-            size: win_size,
-            position: win_pos,
-            min_size: Some(iced::Size::new(980.0, 560.0)),
-            ..Default::default()
-        })
-        .theme(|state: &State| state.prefs.ui_theme.clone())
+    // 多窗口 daemon：主窗（邮件列表）boot 时 open（几何从 ui.json 读）；
+    // 「写邮件」弹独立写信窗，主窗列表保持可见。
+    // daemon 模式下关掉全部窗口不退出（托盘常驻语义）
+    iced::daemon(State::boot, update, view)
+        .title(|state: &State, window| state.window_title(window))
+        .theme(|state: &State, _window| state.prefs.ui_theme.clone())
         // macOS 系统字体（SF Pro Text；缺失时 iced 回退默认字体）
         .default_font(Font::with_name("SF Pro Text"))
         .subscription(subscription)
@@ -332,6 +318,13 @@ pub(crate) enum Message {
     ContextMenuClose,
     /// 通讯录搜索过滤词（设置页）
     ContactSearchInput(String),
+    // ---- 多窗口：主窗/写信窗生命周期 ----
+    /// boot 后主窗打开完成（回填 id）
+    MainWindowOpened(iced::window::Id),
+    /// 「写邮件」写信窗打开完成（回填 id）
+    ComposeWindowOpened(iced::window::Id),
+    /// 窗口关闭请求（红叉）：按 id 分派——写信窗自动存草稿关闭，主窗重开
+    WindowCloseRequested(iced::window::Id),
     // ---- 第 1 批标配：退订 / 归档 / 导出 ----
     /// List-Unsubscribe 退订（http URL 开浏览器；mailto 预填写信）
     Unsubscribe(String),
@@ -480,8 +473,8 @@ fn subscription(state: &State) -> Subscription<Message> {
         _ => None,
     });
     let theme_sub = iced::system::theme_changes().map(Message::SystemTheme);
-    // 写信自动保存节拍（只在写作屏激活；每 5s 检查，静默 20s 落草稿）
-    let autosave_sub = if matches!(state.screen, Screen::Compose(_)) {
+    // 写信自动保存节拍（写信窗打开时激活；每 5s 检查，静默 20s 落草稿）
+    let autosave_sub = if state.compose.is_some() {
         iced::time::every(std::time::Duration::from_secs(5)).map(|_| Message::AutosaveTick)
     } else {
         Subscription::none()
@@ -503,6 +496,9 @@ fn subscription(state: &State) -> Subscription<Message> {
     } else {
         Subscription::none()
     };
+    // 窗口关闭请求（红叉）：按 id 分派给写信窗（自动存草稿）/主窗（重开）
+    let close_req_sub = iced::window::close_requests()
+        .map(Message::WindowCloseRequested);
     // 托盘事件（std mpsc → 轮询转 Message；100ms 足够托盘交互）
     let tray_sub = match crate::tray::take_receiver() {
         Some(rx) => {
@@ -576,6 +572,7 @@ fn subscription(state: &State) -> Subscription<Message> {
         autosave_sub,
         tray_sub,
         split_sub,
+        close_req_sub,
         events_sub,
     ])
 }
@@ -584,7 +581,18 @@ fn subscription(state: &State) -> Subscription<Message> {
 // view
 // ---------------------------------------------------------------------------
 
-fn view(state: &State) -> Element<'_, Message> {
+fn view(state: &State, window: iced::window::Id) -> Element<'_, Message> {
+    // 写信独立窗口：多窗口下按 window id 渲染（主窗列表保持可见）
+    if state.compose_window == Some(window) {
+        if let Some(c) = &state.compose {
+            return crate::compose::compose_view(state, c);
+        }
+        // 窗口已建、回填未到的一帧：空占位（下一帧即出写信界面）
+        return container(Space::new().width(Length::Fill).height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     // 错误横幅（曾被写给一个永不渲染的字段——所有错误提示静默丢失，修复：
     // 顶层显示 + ✕ 关闭 + 新动作/新 Status 自动清除）
     if let Some(err) = &state.error {
@@ -642,7 +650,6 @@ fn view(state: &State) -> Element<'_, Message> {
         .into();
     }
     match &state.screen {
-        Screen::Compose(c) => compose_view(state, c),
         Screen::Mail => main_view(state),
         Screen::Setup(f) => setup_view(state, f),
     }
