@@ -515,8 +515,16 @@ impl MailBackend for MelibBackend {
         let hash = self.mailbox_of(folder)?;
         let mut stream = self.with_backend(|b| b.fetch(hash))?;
         let mut out = Vec::new();
+        // 同一信封 hash 只收一次：melib fetch 在批次边界/重放场景可能输出
+        // 重复信封（同 hash = 同 folder 同 UID），重复会让上层精确计数与
+        // 唯一性断言失真
+        let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
         while let Some(batch) = block_on_t(stream.next(), NET_OP_TIMEOUT_SECS)? {
             for env in batch? {
+                let h = env.hash().0;
+                if !seen.insert(h) {
+                    continue;
+                }
                 out.push(EnvelopeSummary {
                     hash: env.hash().0,
                     message_id: env.message_id().to_string(),
