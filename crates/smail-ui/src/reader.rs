@@ -178,6 +178,17 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
         Space::new().width(Length::Fill),
     ]
     .spacing(4);
+    // 原样渲染开关（仅 HTML 邮件显示；非 macOS 无该功能）
+    #[cfg(target_os = "macos")]
+    let organize_row = if reading.md.is_some() {
+        organize_row.push(mk(
+            state.l().render_native.to_string(),
+            Message::ToggleHtmlRender(*acct, hash),
+            state.html.on,
+        ))
+    } else {
+        organize_row
+    };
     let actions = column![reply_row, organize_row].spacing(4);
 
     // 删除确认：废纸篓语义——普通文件夹=移废纸篓（温和文案），
@@ -576,10 +587,31 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 .style(theme::ghost_button),
         );
     }
-    reader_col = reader_col.push(attachments_col).push(body_view);
-    container(scrollable(reader_col))
-        .padding(16)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    reader_col = reader_col.push(attachments_col);
+    // 原样渲染：正文区换挂系统网页视图（probe_pane 每帧回填几何供 set_bounds），
+    // 上方（主题/信头/操作/附件）保持滚动；未开启走常规 markdown/纯文本滚动布局
+    if state.html.on && state.html.source.is_some() {
+        let pane = crate::drag::probe_pane(
+            container(Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_t| container::Style {
+                    background: Some(card_bg.into()),
+                    border: iced::border::rounded(8),
+                    ..Default::default()
+                }),
+            state.html.pane.clone(),
+        );
+        container(column![scrollable(reader_col).height(Length::Shrink), pane].spacing(8))
+            .padding(16)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        container(scrollable(reader_col.push(body_view)))
+            .padding(16)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
 }

@@ -244,6 +244,10 @@ pub(crate) struct State {
     pub(crate) list_w: f32,
     /// 拖拽中的分割条 + 起始光标 x（首个 CursorMoved 填充）+ 起始宽度
     pub(crate) split_drag: Option<(SplitKind, Option<f32>, f32)>,
+    /// 拖拽中的邮件（按下即候选，超阈值成真拖；松开按悬停目标投递）
+    pub(crate) drag: Option<crate::drag::MailDrag>,
+    /// 侧栏文件夹命中表（投放目标；每帧绘制回填）
+    pub(crate) drag_targets: crate::drag::TargetRects,
     /// 右键菜单打开中：（账号, hash）；菜单行渲染在该邮件行后
     pub(crate) context_menu: Option<(usize, i64)>,
     /// 通讯录搜索过滤词（设置页，前端过滤）
@@ -261,6 +265,46 @@ pub(crate) struct State {
     pub(crate) export_target: Option<(usize, i64)>,
     /// AI 助手状态（配置/在途/摘要缓存/整理预览）
     pub(crate) ai: crate::ai::AiUiState,
+    /// HTML 原样渲染（阅读窗正文区换挂系统网页视图；细节见 webview.rs）
+    pub(crate) html: HtmlView,
+    /// 网页视图本体（!Send，update 主线程持有；None=未创建/已关闭）
+    #[cfg(target_os = "macos")]
+    pub(crate) webview: Option<wry::WebView>,
+}
+
+/// 原样渲染会话状态（平台无关部分；非 macOS 无入口按钮，字段恒为初始值）
+pub(crate) struct HtmlView {
+    /// 开关（阅读 HTML 邮件时显示；切换非 HTML 邮件自动失效回 markdown）
+    pub(crate) on: bool,
+    /// 当前信的消毒 HTML（Extract 任务回填；None=未就绪/非 HTML）
+    pub(crate) source: Option<String>,
+    /// 远程图片许可（默认禁——与 markdown 视图的「显示图片」同一隐私语义）
+    pub(crate) load_remote: bool,
+    /// 阅读窗正文区几何（探针每帧回填，取最后一个登记）
+    pub(crate) pane: crate::drag::PaneRects,
+    /// 已同步给网页视图的几何（避免每帧重复 set_bounds）
+    pub(crate) synced: Option<[f32; 4]>,
+    /// 原生窗口句柄已捕获（window::run 异步回填，创建子视图的前置）
+    pub(crate) handles_ready: bool,
+    /// 句柄未就绪时的挂起打开（HtmlHandlesReady 到场后补创建）
+    pub(crate) pending_open: bool,
+    /// 主窗内容视图指针（window::run 回调期提取；0/None=未捕获）
+    pub(crate) raw_ns_view: Option<u64>,
+}
+
+impl HtmlView {
+    pub(crate) fn new() -> Self {
+        Self {
+            on: false,
+            source: None,
+            load_remote: false,
+            pane: crate::drag::new_pane_rects(),
+            synced: None,
+            handles_ready: false,
+            pending_open: false,
+            raw_ns_view: None,
+        }
+    }
 }
 
 /// 列表快速过滤（会话视图按会话级谓词：任一成员命中则显示整会话）
@@ -434,6 +478,8 @@ impl State {
                     sidebar_w: boot_cols.as_ref().map(|c| c.0).unwrap_or(200.0),
                     list_w: boot_cols.as_ref().map(|c| c.1).unwrap_or(380.0),
                     split_drag: None,
+                    drag: None,
+                    drag_targets: crate::drag::new_target_rects(),
                     context_menu: None,
                     contact_search: String::new(),
                     export_folder: None,
@@ -444,6 +490,9 @@ impl State {
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
                     ),
+                    html: HtmlView::new(),
+                    #[cfg(target_os = "macos")]
+                    webview: None,
                 };
                 let mut state = state;
                 state.prefs.win_geom = boot_win;
@@ -588,6 +637,8 @@ impl State {
                     sidebar_w: 200.0,
                     list_w: 380.0,
                     split_drag: None,
+                    drag: None,
+                    drag_targets: crate::drag::new_target_rects(),
                     context_menu: None,
                     contact_search: String::new(),
                     export_folder: None,
@@ -598,6 +649,9 @@ impl State {
                         smail_ai::load_config(&cfg_path.with_file_name("ai.toml")),
                         &data_root,
                     ),
+                    html: HtmlView::new(),
+                    #[cfg(target_os = "macos")]
+                    webview: None,
                 };
                 let mut state = state;
                 state.prefs.win_geom = boot_win;

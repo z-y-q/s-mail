@@ -65,6 +65,10 @@ pub(crate) struct Compose {
     pub(crate) subject: String,
     pub(crate) body: text_editor::Content,
     pub(crate) attachments: Vec<String>,
+    /// 富文本预览开（markdown 标记 → 排版视图；编辑正文即退出预览）
+    pub(crate) preview: bool,
+    /// 预览渲染内容（后台解析回填；None=解析中显示提示）
+    pub(crate) preview_md: Option<iced::widget::markdown::Content>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -186,6 +190,8 @@ pub(crate) fn open_compose_with(
         subject,
         body,
         attachments: vec![],
+        preview: false,
+        preview_md: None,
     });
     // 回复/转发：弹独立写信窗（已开则复用），主窗列表保持可见。
     // open 的 Task 必须由 update 返回链路上抛，否则窗口不会真正创建
@@ -412,6 +418,104 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         None
     };
 
+    // 富文本工具栏（markdown 标记套选区；发送管线统一出 HTML 版）。
+    // 预览态下整排隐藏（预览只读，编辑按钮单独出现）
+    let fmt_btn = |label: &'static str, fmt: MdFmt, weight: iced::font::Weight| {
+        button(
+            text(label.to_string())
+                .size(11)
+                .font(theme::ui_font(weight)),
+        )
+        .on_press(Message::ComposeFormat(fmt))
+        .padding([2, 8])
+        .style(theme::ghost_button)
+    };
+    let toolbar: Element<Message> = row![
+        fmt_btn("B", MdFmt::Bold, iced::font::Weight::Bold),
+        fmt_btn("I", MdFmt::Italic, iced::font::Weight::Normal),
+        fmt_btn("</>", MdFmt::Code, iced::font::Weight::Normal),
+        fmt_btn("链接", MdFmt::Link, iced::font::Weight::Normal),
+        fmt_btn("引用", MdFmt::Quote, iced::font::Weight::Normal),
+        fmt_btn("列表", MdFmt::Bullet, iced::font::Weight::Normal),
+        fmt_btn("标题", MdFmt::Heading, iced::font::Weight::Normal),
+        Space::new().width(Length::Fill),
+        button(
+            text(if c.preview {
+                state.l().edit.to_string()
+            } else {
+                state.l().preview.to_string()
+            })
+            .size(11)
+        )
+        .on_press_maybe(if c.body.text().trim().is_empty() && !c.preview {
+            None
+        } else {
+            Some(Message::ComposePreviewToggle)
+        })
+        .padding([2, 8])
+        .style(move |t, st| {
+            if c.preview {
+                theme::accent_button(t, st)
+            } else {
+                theme::ghost_button(t, st)
+            }
+        }),
+    ]
+    .spacing(4)
+    .into();
+
+    // 正文区：编辑态 = 工具栏 + 编辑器；预览态 = markdown 排版视图
+    // （与阅读窗同一渲染管线，收发两侧观感一致）
+    let body_area: Element<Message> = if c.preview {
+        match &c.preview_md {
+            Some(md) => container(
+                scrollable(
+                    iced::widget::markdown::view(
+                        md.items(),
+                        iced::widget::markdown::Settings::with_text_size(13, {
+                            if matches!(state.prefs.ui_theme, iced::Theme::Dark) {
+                                iced::Theme::Dark
+                            } else {
+                                iced::Theme::Light
+                            }
+                        }),
+                    )
+                    .map(Message::LinkClicked),
+                )
+                .height(Length::Fill),
+            )
+            .height(400)
+            .width(Length::Fill)
+            .into(),
+            None => container(
+                text(state.l().img_loading.to_string())
+                    .size(13)
+                    .style(theme::secondary_text),
+            )
+            .height(400)
+            .width(Length::Fill)
+            .center(Length::Fill)
+            .into(),
+        }
+    } else {
+        column![
+            // 占位提示：text_editor 没有占位符 API，空正文时在上方给一行引导
+            (c.body.text().is_empty()).then(|| {
+                text(state.l().body_ph.to_string())
+                    .size(13)
+                    .style(theme::secondary_text)
+            }),
+            text_editor(&c.body)
+                .on_action(Message::ComposeBodyEdit)
+                .height(400),
+            text(state.l().compose_hints.to_string())
+                .size(11)
+                .style(theme::secondary_text),
+        ]
+        .spacing(2)
+        .into()
+    };
+
     let mut col = column![header.padding([8, 16])].spacing(0);
     if let Some(bar) = discard_bar {
         col = col.push(bar);
@@ -451,25 +555,9 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
             ),
             ai_block,
             attach_row,
-            container(
-                column![
-                    // 占位提示：text_editor 没有占位符 API，空正文时在上方给一行引导
-                    (c.body.text().is_empty()).then(|| {
-                        text(state.l().body_ph.to_string())
-                            .size(13)
-                            .style(theme::secondary_text)
-                    }),
-                    text_editor(&c.body)
-                        .on_action(Message::ComposeBodyEdit)
-                        .height(400),
-                    text(state.l().compose_hints.to_string())
-                        .size(11)
-                        .style(theme::secondary_text),
-                ]
-                .spacing(2),
-            )
-            .padding(8)
-            .width(Length::Fill),
+            container(column![toolbar, body_area].spacing(2),)
+                .padding(8)
+                .width(Length::Fill),
             text(state.statuses.get(&c.account).cloned().unwrap_or_default()).size(11),
         ]
         .spacing(8)
@@ -478,6 +566,164 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
     .into()
 }
 
+/// 富文本工具栏动作（markdown 标记；发送管线自动转 HTML 版）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MdFmt {
+    Bold,
+    Italic,
+    Code,
+    Link,
+    Quote,
+    Bullet,
+    Heading,
+}
+
+impl MdFmt {
+    /// 包裹类标记（选区两侧成对插入；支持撤销切换）
+    fn markers(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            MdFmt::Bold => Some(("**", "**")),
+            MdFmt::Italic => Some(("*", "*")),
+            MdFmt::Code => Some(("`", "`")),
+            MdFmt::Link => Some(("[", "](链接地址)")),
+            _ => None,
+        }
+    }
+
+    /// 行首前缀（整行作用；引用/列表逐行，标题只作用首行）
+    fn line_prefix(self) -> Option<&'static str> {
+        match self {
+            MdFmt::Quote => Some("> "),
+            MdFmt::Bullet => Some("- "),
+            MdFmt::Heading => Some("## "),
+            _ => None,
+        }
+    }
+}
+
+/// (行, 列[字符]) → 全文字节偏移（iced text_editor 的 Position 语义）
+fn position_to_offset(text: &str, pos: text_editor::Position) -> usize {
+    let mut offset = 0usize;
+    for (i, line) in text.split('\n').enumerate() {
+        if i == pos.line {
+            return offset
+                + line
+                    .chars()
+                    .take(pos.column)
+                    .map(char::len_utf8)
+                    .sum::<usize>();
+        }
+        offset += line.len() + 1;
+    }
+    text.len()
+}
+
+/// 全文字节偏移 → (行, 列[字符])
+pub(crate) fn offset_to_position(text: &str, offset: usize) -> text_editor::Position {
+    let offset = offset.min(text.len());
+    let line = text[..offset].matches('\n').count();
+    let line_start = text[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    text_editor::Position {
+        line,
+        column: text[line_start..offset].chars().count(),
+    }
+}
+
+/// 富文本标记应用：返回（新全文, 新光标选区起点/终点字节偏移）。
+/// 包裹类（B/I/代码/链接）：已有成对标记时撤销剥离；无选区插入空标记光标居中。
+/// 行首类（引用/列表/标题）：选区覆盖的每一行加/去前缀（标题只作用首行）。
+pub(crate) fn md_apply(
+    text: &str,
+    sel: Option<(usize, usize)>,
+    fmt: MdFmt,
+) -> (String, usize, usize) {
+    let (start, end) = sel
+        .map(|(a, b)| (a.min(b), a.max(b)))
+        .unwrap_or((text.len(), text.len()));
+    let (start, end) = (start.min(text.len()), end.min(text.len()));
+
+    if let Some((pre, post)) = fmt.markers() {
+        // 撤销判定：选区两侧已是同款标记 → 剥离（再点一次恢复原样）
+        if text[..start].ends_with(pre) && text[end..].starts_with(post) {
+            let inner = &text[start..end];
+            let mut out = String::with_capacity(text.len() - pre.len() - post.len());
+            out.push_str(&text[..start - pre.len()]);
+            out.push_str(inner);
+            out.push_str(&text[end + post.len()..]);
+            let c = start - pre.len();
+            return (out, c, c);
+        }
+        let inner = &text[start..end];
+        let mut out = String::with_capacity(text.len() + pre.len() + post.len());
+        out.push_str(&text[..start]);
+        out.push_str(pre);
+        let inner_start = out.len();
+        out.push_str(inner);
+        let inner_end = out.len();
+        out.push_str(post);
+        out.push_str(&text[end..]);
+        // 链接：光标选中地址占位符（直接输入即覆盖）；其余：无选区光标居中
+        if fmt == MdFmt::Link {
+            // post = "](链接地址)"：占位符在 "](" 之后、")" 之前
+            let (a, b) = (inner_end + 2, inner_end + post.len() - 1);
+            return (out, a, b);
+        }
+        let (a, b) = if inner.is_empty() {
+            (inner_end, inner_end)
+        } else {
+            (inner_start, inner_end)
+        };
+        return (out, a, b);
+    }
+
+    let prefix = fmt.line_prefix().expect("非包裹类必有行前缀");
+    // 行边界：start 所在行首（含跨行选区的首行）到 end 所在行尾
+    let line_start = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let last_line = match fmt {
+        MdFmt::Heading => start, // 标题只作用光标所在行
+        _ => end,
+    };
+    let line_end = text[last_line..]
+        .find('\n')
+        .map(|i| last_line + i)
+        .unwrap_or(text.len());
+    let block = &text[line_start..line_end];
+    let already = block.lines().all(|l| l.is_empty() || l.starts_with(prefix));
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..line_start]);
+    let mut new_block_end = out.len();
+    for (i, line) in block.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if already {
+            // 撤销：剥掉同款前缀（保留其余内容）
+            out.push_str(line.strip_prefix(prefix).unwrap_or(line));
+        } else if line.is_empty() && fmt != MdFmt::Heading {
+            out.push_str(line); // 空行不加列表/引用前缀（避免制造垃圾行）
+        } else {
+            out.push_str(prefix);
+            out.push_str(line);
+        }
+        new_block_end = out.len();
+    }
+    out.push_str(&text[line_end..]);
+    // 光标落在被改块的末尾（新文本坐标系）
+    (out, new_block_end, new_block_end)
+}
+
+/// 当前编辑器全文+选区 → md_apply 入参（字节偏移对）。
+/// 无选区时返回光标所在点（成对标记就地插入，不跳到文末）
+pub(crate) fn editor_selection_offsets(c: &text_editor::Content) -> (usize, usize) {
+    let text = c.text();
+    let cur = c.cursor();
+    let caret = position_to_offset(&text, cur.position);
+    let anchor = cur
+        .selection
+        .map(|p| position_to_offset(&text, p))
+        .unwrap_or(caret);
+    (anchor, caret)
+}
 /// 逗号/分号（含中文全角）分隔的多地址串：返回（前缀切割点，最后一段）。
 /// 补全针对最后一段，回填时保留前缀。
 pub(crate) fn split_last_segment(s: &str) -> (usize, &str) {
@@ -526,4 +772,88 @@ fn compose_field_with_contacts<'a>(
         container(list).padding([2, 0]).style(theme::reader_meta)
     ]
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bold_wraps_selection_and_centers_cursor_without_selection() {
+        let text = "你好世界";
+        // 选中「世界」（字节 6..12）
+        let (out, a, b) = md_apply(text, Some((6, 12)), MdFmt::Bold);
+        assert_eq!(out, "你好**世界**");
+        assert_eq!(&out[a..b], "世界");
+        // 无选区：插入成对标记，光标（空选区）落中间
+        let (out, a, b) = md_apply("", None, MdFmt::Bold);
+        assert_eq!(out, "****");
+        assert_eq!((a, b), (2, 2));
+    }
+
+    #[test]
+    fn bold_toggles_off_when_already_wrapped() {
+        let text = "前**重点**后";
+        // 选区正指「重点」，两侧已是 ** → 剥离（前=3B + **=2B → 选区起点 5）
+        let s = "前**".len();
+        let e = s + "重点".len();
+        let (out, _, _) = md_apply(text, Some((s, e)), MdFmt::Bold);
+        assert_eq!(out, "前重点后");
+    }
+
+    #[test]
+    fn code_and_italic_use_single_char_markers() {
+        let (out, a, b) = md_apply("x val y", Some((2, 5)), MdFmt::Code);
+        assert_eq!(out, "x `val` y");
+        assert_eq!(&out[a..b], "val");
+        // 无选区（= 光标点）：就地插入成对标记，光标落中间
+        let (out, a, b) = md_apply("速率", Some(("速率".len(), "速率".len())), MdFmt::Italic);
+        assert_eq!(out, "速率**");
+        assert_eq!((a, b), ("速率".len() + 1, "速率".len() + 1));
+    }
+
+    #[test]
+    fn link_selects_address_placeholder() {
+        let (out, a, b) = md_apply("看这里", Some((0, "看这里".len())), MdFmt::Link);
+        assert_eq!(out, "[看这里](链接地址)");
+        assert_eq!(&out[a..b], "链接地址");
+    }
+
+    #[test]
+    fn quote_prefixes_each_selected_line_and_strips_on_toggle() {
+        let text = "甲\n乙\n丙";
+        let all = Some((0, text.len()));
+        let (out, _, _) = md_apply(text, all, MdFmt::Quote);
+        assert_eq!(out, "> 甲\n> 乙\n> 丙");
+        // 再点一次：整块剥离
+        let (out2, _, _) = md_apply(&out, Some((0, out.len())), MdFmt::Quote);
+        assert_eq!(out2, text);
+    }
+
+    #[test]
+    fn bullet_skips_blank_lines() {
+        let text = "一\n\n二";
+        let (out, _, _) = md_apply(text, Some((0, text.len())), MdFmt::Bullet);
+        assert_eq!(out, "- 一\n\n- 二");
+    }
+
+    #[test]
+    fn heading_touches_cursor_line_only() {
+        let text = "第一行\n第二行";
+        // 光标在第二行行首（偏移 = 第一行+换行）
+        let off = "第一行".len() + 1;
+        let (out, _, _) = md_apply(text, Some((off, off)), MdFmt::Heading);
+        assert_eq!(out, "第一行\n## 第二行");
+    }
+
+    #[test]
+    fn offsets_round_trip_through_positions() {
+        let text = "ab\ncd你好\nef";
+        let pos = text_editor::Position { line: 1, column: 3 };
+        let off = position_to_offset(text, pos);
+        // 第 1 行第 3 字符之后 = 「好」的字节起点（列按字符计，偏移按字节计）
+        assert_eq!(&text[off..off + "好".len()], "好");
+        let back = offset_to_position(text, off);
+        assert_eq!((back.line, back.column), (1, 3));
+    }
 }

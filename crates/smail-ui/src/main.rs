@@ -50,6 +50,7 @@ use iced::{Element, Font, Length, Subscription, Theme};
 
 mod ai;
 mod compose;
+mod drag;
 mod events;
 mod keys;
 mod lang;
@@ -62,6 +63,7 @@ mod state;
 mod theme;
 mod tray;
 mod update;
+mod webview;
 
 use compose::Compose;
 pub(crate) use list::ROW_H;
@@ -311,6 +313,26 @@ pub(crate) enum Message {
     SplitMoved(f32),
     /// 松开：结束拖拽并持久化列宽
     SplitReleased,
+    // ---- 邮件拖拽移动到文件夹（自实现手势，状态机见 drag.rs） ----
+    /// 列表行按下：登记拖拽候选并携带原点击消息（未成拖拽时松开还原为点击）
+    DragPress(usize, i64, Box<Message>),
+    /// 拖拽移动（全局鼠标流；候选态即订阅）
+    DragMoved(iced::Point),
+    /// 松开：未成拖拽→还原点击；成拖拽→按悬停目标投递移动
+    /// （ButtonReleased 不带坐标，落点用最近一次 DragMoved 的光标位置）
+    DragReleased,
+    // ---- 撰写富文本工具栏（markdown 标记 + 排版预览） ----
+    /// 正文格式化（选中区间包裹/行首前缀；发送管线自动出 HTML 版）
+    ComposeFormat(crate::compose::MdFmt),
+    /// 预览开关（markdown → 排版视图；再点回编辑）
+    ComposePreviewToggle,
+    /// 预览解析回填（ParsedMd 一次性传递盒，同 MarkdownParsed）
+    ComposePreviewReady(crate::state::ParsedMd),
+    // ---- HTML 原样渲染（macOS 网页视图；其余平台按钮不出现） ----
+    /// 阅读器工具栏开关（抽取消毒正文 → 子视图装载）
+    ToggleHtmlRender(usize, i64),
+    /// 主窗原生句柄回填（ns_view 指针；0=失败）
+    HtmlHandlesReady(u64),
     /// 右键行打开菜单（acct, hash）
     ContextMenuOpen(usize, i64),
     /// 菜单项点击：关菜单后转发原动作
@@ -552,6 +574,21 @@ fn subscription(state: &State) -> Subscription<Message> {
     } else {
         Subscription::none()
     };
+    // 邮件拖拽：按下即候选（还原点击需要松开时机），同模式全局鼠标流。
+    // Esc 取消走 KeyPressed 分支（keys.rs 层级链最浅层）
+    let drag_sub = if state.drag.is_some() {
+        iced::event::listen_with(|event, _status, _id| match event {
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                Some(Message::DragMoved(position))
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                Some(Message::DragReleased)
+            }
+            _ => None,
+        })
+    } else {
+        Subscription::none()
+    };
     // 窗口关闭请求（红叉）：按 id 分派给写信窗（自动存草稿）/主窗（重开）
     let close_req_sub = iced::window::close_requests().map(Message::WindowCloseRequested);
     // 托盘事件（std mpsc → 轮询转 Message；100ms 足够托盘交互）
@@ -594,6 +631,7 @@ fn subscription(state: &State) -> Subscription<Message> {
             autosave_sub,
             tray_sub,
             split_sub,
+            drag_sub,
         ]);
     };
     let events_sub = Subscription::run_with(events, |events: &EventTap| {
@@ -627,6 +665,7 @@ fn subscription(state: &State) -> Subscription<Message> {
         autosave_sub,
         tray_sub,
         split_sub,
+        drag_sub,
         close_req_sub,
         reminders_sub,
         events_sub,
@@ -755,7 +794,7 @@ fn extract_forward_attachments(eml: &PathBuf, staging: &PathBuf) -> Vec<PathBuf>
 
 /// 系统默认浏览器打开 URL（macOS open / Linux xdg-open）
 /// 从 .eml 提取全部附件到 staging（转发用）；失败/无附件返回空
-fn open_in_browser(url: &str) {
+pub(crate) fn open_in_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let program = "open";
     #[cfg(all(unix, not(target_os = "macos")))]

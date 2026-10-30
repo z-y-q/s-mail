@@ -294,6 +294,11 @@ pub(crate) struct Lex {
     pub(crate) subject_ph: &'static str,
     pub(crate) body_ph: &'static str,
     pub(crate) compose_hints: &'static str,
+    /// 富文本工具栏：预览开关（预览态按钮变「编辑」）
+    pub(crate) preview: &'static str,
+    pub(crate) edit: &'static str,
+    /// 阅读器：HTML 原样渲染开关（系统网页视图）
+    pub(crate) render_native: &'static str,
 
     // ---- 设置屏 ----
     pub(crate) welcome: &'static str,
@@ -550,6 +555,9 @@ pub(crate) const ZH: Lex = Lex {
     subject_ph: "邮件主题",
     body_ph: "在此输入正文…",
     compose_hints: "⌘↩ 发送 · ⌘S 存草稿 · Esc 关闭（有内容时先确认）",
+    preview: "预览",
+    edit: "编辑",
+    render_native: "原样",
 
     welcome: "欢迎使用 s-mail —— 先加一个账号",
     add_hdr: "添加账号",
@@ -803,6 +811,9 @@ pub(crate) const EN: Lex = Lex {
     subject_ph: "Subject",
     body_ph: "Write your message…",
     compose_hints: "⌘↩ Send · ⌘S Save draft · Esc Close (confirm first when not empty)",
+    preview: "Preview",
+    edit: "Edit",
+    render_native: "As-is",
 
     welcome: "Welcome to s-mail — add an account",
     add_hdr: "Add account",

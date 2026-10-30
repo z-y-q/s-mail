@@ -19,6 +19,8 @@ mail-parser = { workspace = true }
 # 托盘仅 macOS（Linux 需 gtk/appindicator 运行时；按平台限定避免 CI Linux 拉依赖）
 tray-icon = "0.24"
 mac-notification-sys = "0.6"
+# HTML 原样渲染阅读（WKWebView 子视图挂 iced 主窗；版本策略见根 Cargo.toml）
+wry = { workspace = true }
 
 [[bin]]
 name = "s-mail"

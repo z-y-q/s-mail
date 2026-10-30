@@ -460,6 +460,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 subject,
                 body: content,
                 attachments: vec![],
+                preview: false,
+                preview_md: None,
             });
             if state.compose_window.is_none() {
                 let (win_id, task) = iced::window::open(iced::window::Settings {
@@ -570,6 +572,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 subject,
                 body: text_editor::Content::new(),
                 attachments: vec![eml_path.display().to_string()],
+                preview: false,
+                preview_md: None,
             });
             if state.compose_window.is_none() {
                 let (win_id, task) = iced::window::open(iced::window::Settings {
@@ -611,6 +615,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     subject: "Unsubscribe".into(),
                     body: text_editor::Content::new(),
                     attachments: vec![],
+                    preview: false,
+                    preview_md: None,
                 });
                 // mailto 退订同样弹独立写信窗（已开则复用）
                 if state.compose_window.is_none() {
@@ -678,6 +684,12 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::LoadRemoteImages(acct, hash) => {
+            // 原样渲染开着：走网页视图自己的放行通道（重新消毒装载），
+            // 不需要 markdown 视图的下载→回填链路
+            if state.html.on {
+                crate::webview::remote_reveal(state, acct, hash);
+                return Task::none();
+            }
             // pending 不清空：下载失败（回包为空）时按钮保留可重试；
             // loading 标记防连点，成功时在 ImagesLoaded 里清 pending
             if let Some((a, r)) = &mut state.reading {
@@ -749,6 +761,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                         subject,
                         body,
                         attachments: vec![],
+                        preview: false,
+                        preview_md: None,
                     });
                     // 正文里的 mailto 链接：同样弹独立写信窗（已开则复用）
                     if state.compose_window.is_none() {

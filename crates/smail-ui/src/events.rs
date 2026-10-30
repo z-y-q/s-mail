@@ -176,6 +176,8 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                     pgp,
                 },
             ));
+            // 原样渲染开着：切信即换装（非 HTML 邮件自动回退 markdown 视图）
+            crate::webview::apply_reading(state, acct, hash);
             if let Some(src) = md_src {
                 return Task::perform(
                     async move {

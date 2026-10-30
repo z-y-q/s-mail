@@ -42,7 +42,10 @@ use smail_core::{Cmd, SessionCmd};
 pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Message> {
     match key {
         Key::Named(iced::keyboard::key::Named::Escape) => {
-            if let Some(c) = &mut state.compose {
+            if state.drag.is_some() {
+                // 拖拽中 Esc：取消拖拽（最浅层临时手势态）
+                state.drag = None;
+            } else if let Some(c) = &mut state.compose {
                 let has_content = !c.to.is_empty()
                     || !c.subject.is_empty()
                     || !c.body.text().trim().is_empty()

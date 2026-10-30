@@ -232,6 +232,8 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                     crate::lang::save_prefs(&state.data_root, &state.current_prefs());
                 }
             }
+            // 原样渲染子视图跟随窗口缩放（有变化才真正调系统接口）
+            crate::webview::sync_bounds(state);
             Task::none()
         }
         Message::SystemTheme(mode) => {
@@ -396,6 +398,78 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.split_drag = None;
             // 松手即持久化列宽（一次写盘，拖拽过程不写）
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            // 列宽变化改变阅读窗几何：原样渲染子视图跟随
+            crate::webview::sync_bounds(state);
+            Task::none()
+        }
+        Message::HtmlHandlesReady(ns_view) => crate::webview::handles_ready(state, ns_view),
+        Message::ToggleHtmlRender(acct, hash) => crate::webview::toggle(state, acct, hash),
+        // ---------------- 邮件拖拽移动（状态机见 drag.rs） ----------------
+        Message::DragPress(acct, hash, click) => {
+            // 从列表行取拖拽所需字段（folder/subject），登记候选
+            if let Some((_, r)) = state
+                .rows
+                .iter()
+                .find(|(a, r)| *a == acct && r.envelope_hash == hash)
+            {
+                state.drag = Some(crate::drag::MailDrag::new(
+                    acct,
+                    hash,
+                    r.folder.clone(),
+                    r.subject.clone(),
+                    (*click).clone(),
+                ));
+            }
+            Task::none()
+        }
+        Message::DragMoved(p) => {
+            let Some(drag) = &mut state.drag else {
+                return Task::none();
+            };
+            // 起点 x/y 由第一条 CursorMoved 填充（on_press 不带坐标）
+            let press = match drag.press {
+                Some(v) => v,
+                None => {
+                    drag.press = Some(p);
+                    p
+                }
+            };
+            drag.cursor = Some(p);
+            if !drag.active && crate::drag::beyond_drag_threshold(press, p) {
+                drag.active = true;
+            }
+            drag.hover = if drag.active {
+                // 跨账号目标不算命中（移动命令按账号连接路由）
+                crate::drag::target_at(&state.drag_targets.borrow(), p)
+                    .filter(|t| t.acct == drag.src.acct && t.path != drag.src.folder)
+            } else {
+                None
+            };
+            Task::none()
+        }
+        Message::DragReleased => {
+            let Some(drag) = state.drag.take() else {
+                return Task::none();
+            };
+            if !drag.active {
+                // 未超阈值：普通点击（原样转发行点击行为）
+                return update(state, *drag.click);
+            }
+            // 成拖拽：投递到悬停目标（多选整批，单封直达）
+            if let Some(t) = drag.hover {
+                let multi = state.batch.selection.len() > 1
+                    && state
+                        .batch
+                        .selection
+                        .contains(&(drag.src.acct, drag.src.hash));
+                if multi {
+                    return update(state, Message::BatchMoveDest(drag.src.acct, t.path));
+                }
+                return update(
+                    state,
+                    Message::MoveToDest(drag.src.acct, drag.src.hash, t.path),
+                );
+            }
             Task::none()
         }
         // ---------------- 行右键菜单 ----------------
@@ -639,7 +713,12 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
                 Task::none()
             } else if state.main_window == Some(id) {
-                // 主窗被关：重新打开（应用托盘常驻，主窗必须随时可用）
+                // 主窗被关：网页子视图挂在旧窗上随之失效——先丢（否则子视图
+                // 指向已销毁的父窗），句柄一并作废（重开后由下次开关重取）
+                crate::webview::close(state);
+                state.html.handles_ready = false;
+                state.html.raw_ns_view = None;
+                // 重新打开（应用托盘常驻，主窗必须随时可用）
                 state.main_window = None;
                 let (new_id, task) = iced::window::open(iced::window::Settings {
                     size: iced::Size::new(1280.0, 760.0),
@@ -723,6 +802,9 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ComposeShortcut(_)
         | Message::ComposeField(..)
         | Message::ComposeBodyEdit(..)
+        | Message::ComposeFormat(..)
+        | Message::ComposePreviewToggle
+        | Message::ComposePreviewReady(..)
         | Message::AutosaveTick
         | Message::SendClicked
         | Message::SaveDraftClicked

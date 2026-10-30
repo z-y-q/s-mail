@@ -11,6 +11,7 @@ use crate::{
 use iced::widget::text_editor;
 use iced::Task;
 use smail_core::Cmd;
+use std::sync::Arc;
 
 /// 写信窗统一关闭：关窗口 + 清写作状态（数据由调用方决定是否先存）
 fn close_compose_window(state: &mut State) -> Task<Message> {
@@ -66,6 +67,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 subject: String::new(),
                 body,
                 attachments: vec![],
+                preview: false,
+                preview_md: None,
             });
             if state.compose_window.is_some() {
                 return Task::none(); // 复用现有窗口
@@ -107,6 +110,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     subject: d.subject,
                     body: content,
                     attachments: vec![],
+                    preview: false,
+                    preview_md: None,
                 });
                 // 草稿双击同样弹写信窗（窗口已存在则复用）
                 if state.compose_window.is_none() {
@@ -157,6 +162,57 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             if let Some(c) = &mut state.compose {
                 c.autosave_at = Some(std::time::Instant::now());
                 c.body.perform(action);
+            }
+            Task::none()
+        }
+        Message::ComposeFormat(fmt) => {
+            // 富文本工具栏：markdown 标记套在选区上（发送管线统一转 HTML）。
+            // 全文 SelectAll+粘贴替换（保留撤销历史的一体编辑），再恢复光标选区
+            let Some(c) = &mut state.compose else {
+                return Task::none();
+            };
+            let text = c.body.text();
+            let sel = crate::compose::editor_selection_offsets(&c.body);
+            let (new_text, sa, sb) = crate::compose::md_apply(&text, Some(sel), fmt);
+            c.body.perform(iced::widget::text_editor::Action::SelectAll);
+            c.body.perform(text_editor_edit_paste(&new_text));
+            c.body.move_to(text_editor::Cursor {
+                position: crate::compose::offset_to_position(&new_text, sb),
+                selection: Some(crate::compose::offset_to_position(&new_text, sa)),
+            });
+            c.autosave_at = Some(std::time::Instant::now());
+            Task::none()
+        }
+        Message::ComposePreviewToggle => {
+            let Some(c) = &mut state.compose else {
+                return Task::none();
+            };
+            if c.preview {
+                c.preview = false;
+                c.preview_md = None;
+                return Task::none();
+            }
+            let body = c.body.text();
+            if body.trim().is_empty() {
+                return Task::none();
+            }
+            c.preview = true;
+            c.preview_md = None; // 解析中显示提示，回填即替换
+            Task::perform(
+                async move {
+                    crate::state::ParsedMd(Arc::new(std::sync::Mutex::new(Some(
+                        iced::widget::markdown::Content::parse(&body),
+                    ))))
+                },
+                Message::ComposePreviewReady,
+            )
+        }
+        Message::ComposePreviewReady(md) => {
+            if let Some(c) = &mut state.compose {
+                let taken = md.0.lock().unwrap().take();
+                if c.preview {
+                    c.preview_md = taken;
+                }
             }
             Task::none()
         }

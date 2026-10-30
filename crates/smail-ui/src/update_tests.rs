@@ -110,6 +110,8 @@ fn ts() -> State {
         sidebar_w: 200.0,
         list_w: 380.0,
         split_drag: None,
+        drag: None,
+        drag_targets: crate::drag::new_target_rects(),
         context_menu: None,
         contact_search: String::new(),
         export_folder: None,
@@ -120,6 +122,9 @@ fn ts() -> State {
         cfg_path: std::path::PathBuf::from("/tmp/smail-test-config.toml"),
         data_root: std::path::PathBuf::from("/tmp"),
         ai: ai::AiUiState::new(Default::default(), std::path::Path::new("/tmp")),
+        html: crate::state::HtmlView::new(),
+        #[cfg(target_os = "macos")]
+        webview: None,
     }
 }
 

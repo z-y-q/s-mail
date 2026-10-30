@@ -8,7 +8,9 @@
 //! - **批量操作栏**：选择复选框 + 操作按钮
 //! - **小组件**：搜索输入框、新建文件夹输入框
 
-use iced::widget::{button, column, container, mouse_area, row, scrollable, text, Space};
+use iced::widget::{
+    button, canvas, column, container, mouse_area, row, scrollable, stack, text, Space,
+};
 use iced::{Element, Length};
 
 use crate::{list, relative_date, theme, DispKind, ListFilter, Message, State};
@@ -19,6 +21,9 @@ const MAIL_LIST_ID: &str = list::MAIL_LIST_ID;
 
 use list::clean_subject;
 pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
+    // 投放目标命中表清空：本帧绘制期由 hit_target 包装组件重新登记
+    //（拖放命中测试永远看当前帧几何，无跨帧残留）
+    state.drag_targets.borrow_mut().clear();
     // 状态行过长会挤掉右侧按钮：逐段截断（字符级，不切中文字节）
     let clip = |s: &str| -> String {
         if s.chars().count() > 48 {
@@ -332,6 +337,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             } else {
                 None
             };
+            // 拖拽悬停高亮：拖动邮件经过时按选中态配色（与分割拖拽互不干扰）
+            let drop_hover = state
+                .drag
+                .as_ref()
+                .filter(|d| d.active)
+                .and_then(|d| d.hover.as_ref())
+                .map(|t| t.acct == i && t.path == f.path)
+                .unwrap_or(false);
             let folder_btn = button(
                 row![
                     text(format!(
@@ -352,7 +365,17 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .on_press(Message::FolderSelected(i, f.path.clone()))
             .padding([3, 6])
             .width(Length::Fill)
-            .style(move |t, st| theme::sidebar_item(t, st, is_cur));
+            .style(move |t, st| theme::sidebar_item(t, st, is_cur || drop_hover));
+            // 拖拽投放目标登记：文件夹按钮整行都是落点
+            let folder_btn = crate::drag::hit_target(
+                folder_btn,
+                state.drag_targets.clone(),
+                crate::drag::DropTarget {
+                    acct: i,
+                    path: f.path.clone(),
+                    label: crate::lang::folder_display(state.l(), f.kind, &f.path),
+                },
+            );
             // 改名/删除只给自建文件夹（Plain）。标准文件夹（收发/垃圾/废纸篓/
             // 归档）是服务器结构，行尾常驻红 ✕ 既危险又不可用——一律不显示
             let (ren, del): (Option<Element<Message>>, Option<Element<Message>>) =
@@ -930,7 +953,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             ]
                             .spacing(2),
                         )
-                        .on_press(Message::ThreadRootClicked(acct, r.envelope_hash, *latest))
+                        .on_press(Message::DragPress(
+                            acct,
+                            r.envelope_hash,
+                            Box::new(Message::ThreadRootClicked(acct, r.envelope_hash, *latest,)),
+                        ))
                         .padding([6, 8])
                         .width(Length::Fill)
                         .style(move |t, st| theme::list_row(t, st, is_sel)),
@@ -990,7 +1017,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             ]
                             .spacing(1),
                         )
-                        .on_press(Message::RowSelected(acct, r.envelope_hash))
+                        .on_press(Message::DragPress(
+                            acct,
+                            r.envelope_hash,
+                            Box::new(Message::RowSelected(acct, r.envelope_hash)),
+                        ))
                         .padding([4, 10])
                         .width(Length::Fill)
                         .style(move |t, st| theme::list_row(t, st, is_sel)),
@@ -1080,7 +1111,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     let row_el: Element<Message> = row![
                         cb,
                         button(container(lines).width(Length::Fill).padding([4, 0]),)
-                            .on_press(Message::RowSelected(acct, r.envelope_hash))
+                            .on_press(Message::DragPress(
+                                acct,
+                                r.envelope_hash,
+                                Box::new(Message::RowSelected(acct, r.envelope_hash)),
+                            ))
                             .padding([6, 8])
                             .width(Length::Fill)
                             .style(move |t, st| theme::list_row(t, st, is_sel)),
@@ -1269,11 +1304,47 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .style(|t| theme::status_badage(t, theme::BadgeKind::Warn)),
         );
     }
-    column![
-        root,
-        row![sidebar, split_sidebar, mail_list, split_list, reader]
-            .spacing(1)
-            .height(Length::Fill),
+    // 拖拽幽灵浮层盖在整幅主界面上（非拖拽帧 canvas 程序不画任何东西）
+    let ghost = {
+        let drag = state.drag.as_ref().filter(|d| d.active);
+        let (at, subject, dest, in_selection) = match drag {
+            Some(d) => (
+                d.cursor,
+                d.src.subject.clone(),
+                d.hover.as_ref().map(|t| t.label.clone()),
+                state.batch.selection.contains(&(d.src.acct, d.src.hash)),
+            ),
+            None => (None, String::new(), None, false),
+        };
+        let n_extra = if in_selection {
+            state
+                .batch
+                .selection
+                .iter()
+                .filter(|(a, _)| *a == cur_acct.unwrap_or(usize::MAX))
+                .count()
+                .saturating_sub(1)
+        } else {
+            0
+        };
+        canvas(crate::drag::GhostChip {
+            at,
+            subject,
+            n_extra,
+            dest,
+            dark: matches!(state.prefs.ui_theme, iced::Theme::Dark),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+    };
+    stack![
+        column![
+            root,
+            row![sidebar, split_sidebar, mail_list, split_list, reader]
+        ]
+        .spacing(1)
+        .height(Length::Fill),
+        ghost,
     ]
     .into()
 }
