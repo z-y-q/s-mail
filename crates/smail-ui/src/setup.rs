@@ -908,6 +908,39 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         );
     }
 
+    // 发件人统计（设置屏打开时从本地索引聚合；频率降序前 50）
+    let mut stats_col = column![text(state.l().stats_hdr)
+        .size(13)
+        .font(theme::ui_font(iced::font::Weight::Semibold)),]
+    .spacing(4);
+    if state.sender_stats.is_empty() {
+        stats_col = stats_col.push(
+            text(state.l().no_contacts)
+                .size(11)
+                .style(theme::secondary_text),
+        );
+    }
+    for (addr, name, count, last) in state.sender_stats.iter().take(50) {
+        let display = if name.is_empty() || name == addr {
+            addr.clone()
+        } else {
+            format!("{name} <{addr}>")
+        };
+        stats_col = stats_col.push(
+            row![
+                text(display).size(13),
+                Space::new().width(Length::Fill),
+                text(crate::lang::f(state.l().stats_n, &[count]))
+                    .size(11)
+                    .style(theme::secondary_text),
+                text(crate::relative_date(*last))
+                    .size(11)
+                    .style(theme::secondary_text),
+            ]
+            .spacing(8),
+        );
+    }
+
     // ---- AI 助手（独立 ai.toml；执行边界见 smail-ai crate 注释） ----
     let mut ai_col = column![text(state.l().ai_section)
         .size(13)
@@ -1098,6 +1131,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         page = page.push(contacts_col);
         page = page.push(templates_col);
         page = page.push(undo_card);
+        page = page.push(stats_col);
     }
     page = page.push(ai_col);
     page = page.push(

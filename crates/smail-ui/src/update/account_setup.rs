@@ -20,6 +20,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::ContactsFull);
             }
+            // 发件人统计：本地只读连接直读聚合（跨账号合并显示名变体）
+            state.refresh_sender_stats();
             Task::none()
         }
         Message::SetupClose => {

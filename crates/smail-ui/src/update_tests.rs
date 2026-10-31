@@ -124,6 +124,7 @@ fn ts() -> State {
         drag_targets: crate::drag::new_target_rects(),
         context_menu: None,
         contact_search: String::new(),
+        sender_stats: vec![],
         template_edit: None,
         undo_send: None,
         export_folder: None,

@@ -270,6 +270,8 @@ pub(crate) struct State {
     pub(crate) context_menu: Option<(usize, i64)>,
     /// 通讯录搜索过滤词（设置页，前端过滤）
     pub(crate) contact_search: String,
+    /// 发件人统计（设置页；裸地址 → (显示名, 邮件数, 最近 unix)）
+    pub(crate) sender_stats: Vec<(String, String, i64, i64)>,
     /// 模板编辑面板（设置页；None=关闭）。editing=Some(idx) 为编辑既有模板
     pub(crate) template_edit: Option<TemplateDraft>,
     /// 撤销发送挂起（None=无；顶栏倒计时+撤销按钮）
@@ -544,6 +546,7 @@ impl State {
                     drag_targets: crate::drag::new_target_rects(),
                     context_menu: None,
                     contact_search: String::new(),
+                    sender_stats: vec![],
                     template_edit: None,
                     undo_send: None,
                     export_folder: None,
@@ -715,6 +718,7 @@ impl State {
                     drag_targets: crate::drag::new_target_rects(),
                     context_menu: None,
                     contact_search: String::new(),
+                    sender_stats: vec![],
                     template_edit: None,
                     undo_send: None,
                     export_folder: None,
@@ -786,6 +790,41 @@ impl State {
             .and_then(|s| s.list_folder(folder, limit).ok())
             .map(|rows| rows.into_iter().map(|r| (acct, r)).collect())
             .unwrap_or_default()
+    }
+
+    /// 发件人统计聚合（设置屏打开时刷新；跨账号按裸地址合并显示名变体）
+    pub(crate) fn refresh_sender_stats(&mut self) {
+        let mut merged: std::collections::HashMap<String, (String, i64, i64)> = Default::default();
+        // 懒打开每个账号的本地只读连接（列表视图已在用的同一批连接）
+        let folders: Vec<(usize, String)> = Vec::new();
+        let _ = folders;
+        for (acct, cfg) in self.accounts.iter().enumerate() {
+            if !self.local_stores.contains_key(&acct) {
+                let db = self.data_root.join(&cfg.slug).join("index.db");
+                if let Ok(s) = smail_store::Store::open_readonly(&db) {
+                    self.local_stores.insert(acct, s);
+                }
+            }
+            let Some(s) = self.local_stores.get(&acct) else {
+                continue;
+            };
+            let Ok(rows) = s.sender_stats(2000) else {
+                continue;
+            };
+            for (from, count, last) in rows {
+                let addr = crate::addr_of(&from);
+                let name = crate::from_display_name(&from);
+                let e = merged.entry(addr.clone()).or_insert((name, 0, 0));
+                e.1 += count;
+                e.2 = e.2.max(last);
+            }
+        }
+        let mut v: Vec<(String, String, i64, i64)> = merged
+            .into_iter()
+            .map(|(addr, (name, count, last))| (addr, name, count, last))
+            .collect();
+        v.sort_by_key(|(_, _, _, last)| std::cmp::Reverse(*last));
+        self.sender_stats = v.into_iter().take(50).collect();
     }
 
     /// 智能邮箱聚合：跨账号跨文件夹按谓词收集行（本地索引直读，离线可用）。

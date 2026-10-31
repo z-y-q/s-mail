@@ -117,6 +117,23 @@ impl Store {
         rows.collect::<rusqlite::Result<Vec<_>>>()
     }
 
+    /// 发件人统计（from_addr → 邮件数, 最近时间 unix 秒）；频率降序。
+    /// UI 层按裸地址二次合并显示名变体
+    pub fn sender_stats(&self, limit: u32) -> rusqlite::Result<Vec<(String, i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT from_addr, COUNT(*), MAX(date_unix) FROM messages
+             GROUP BY from_addr ORDER BY COUNT(*) DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+    }
+
     /// 本地索引里的全部文件夹与计数（离线优先：启动即广播侧栏）
     pub fn folder_stats(&self) -> rusqlite::Result<Vec<(String, u32, u32)>> {
         let mut stmt = self.conn.prepare(

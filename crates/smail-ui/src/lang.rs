@@ -266,6 +266,9 @@ pub(crate) struct Lex {
     pub(crate) schedule_ph: &'static str,
     pub(crate) schedule_confirm: &'static str,
     pub(crate) hold_hint: &'static str,
+    /// 设置页发件人统计区
+    pub(crate) stats_hdr: &'static str,
+    pub(crate) stats_n: &'static str, // {n}
     /// 右键菜单：加入/移出 VIP 发件人
     pub(crate) vip_add: &'static str,
     pub(crate) vip_remove: &'static str,
@@ -558,6 +561,8 @@ pub(crate) const ZH: Lex = Lex {
     schedule_ph: "YYYY-MM-DD HH:MM",
     schedule_confirm: "定时发送",
     hold_hint: "计划投递",
+    stats_hdr: "发件人统计（最活跃前 50）",
+    stats_n: "{n} 封",
     undo_hdr: "撤销发送（发送后 N 秒内可撤销）",
     mark_all_read: "全部已读",
     apply_rules: "应用规则",
@@ -837,6 +842,8 @@ pub(crate) const EN: Lex = Lex {
     schedule_ph: "YYYY-MM-DD HH:MM",
     schedule_confirm: "Schedule send",
     hold_hint: "Scheduled for",
+    stats_hdr: "Sender stats (top 50)",
+    stats_n: "{n} mails",
     undo_hdr: "Undo send (revoke within N seconds)",
     mark_all_read: "Mark all read",
     apply_rules: "Apply rules",
