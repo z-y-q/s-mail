@@ -126,12 +126,10 @@ fn main() {
                         }
                     }
                 }
-                Event::Status(s) => {
-                    if s.contains("已移动") && !move_status {
-                        move_status = true;
-                        println!("[m21] {s}");
-                        send(&session, account, Cmd::SelectFolder(boxname.clone()));
-                    }
+                Event::Status(s) if s.contains("已移动") && !move_status => {
+                    move_status = true;
+                    println!("[m21] {s}");
+                    send(&session, account, Cmd::SelectFolder(boxname.clone()));
                 }
                 _ => {}
             }
