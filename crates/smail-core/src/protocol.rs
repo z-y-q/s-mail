@@ -40,6 +40,8 @@ pub enum Cmd {
         sign: bool,
         /// M5-d：PGP 加密（隐含签名）
         encrypt: bool,
+        /// 高优先级（X-Priority: 1 / Importance: high；重试保留）
+        high_priority: bool,
     },
     SaveDraft {
         id: Option<i64>,
@@ -177,6 +179,8 @@ pub enum Event {
         remote_images: Vec<String>,
         /// M5-c：PGP 状态（None=非 PGP 邮件）
         pgp: Option<String>,
+        /// 高优先级（X-Priority/Importance/Priority 头命中）
+        high_priority: bool,
         body: String,
         /// true = body 是 markdown（源自 HTML 邮件，UI 用 markdown widget 渲染）
         is_html: bool,

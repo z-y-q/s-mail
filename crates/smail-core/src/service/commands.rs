@@ -149,9 +149,10 @@ impl ServiceInner {
                 attachments,
                 sign,
                 encrypt,
+                high_priority,
             } => {
                 let id = store
-                    .enqueue_outbox(&to, &cc, &bcc, &subject, &body, &attachments)
+                    .enqueue_outbox(&to, &cc, &bcc, &subject, &body, &attachments, high_priority)
                     .unwrap_or(-1);
                 // 入队即广播计数：离线发送也要立刻看到「发件箱」入口
                 //（此前只在连接正常时的 flush 轮询里报——断网发送=石沉大海）
@@ -181,6 +182,7 @@ impl ServiceInner {
                                     _ => None,
                                 },
                                 &sender,
+                                high_priority,
                             );
                         }
                     }

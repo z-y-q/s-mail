@@ -59,6 +59,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 draft_id: None,
                 account,
                 pgp_sign: false,
+                high_priority: false,
                 pgp_encrypt: false,
                 confirm_discard: false,
                 to: String::new(),
@@ -105,6 +106,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     draft_id: Some(d.id),
                     account: acct,
                     pgp_sign: false,
+                    high_priority: false,
                     pgp_encrypt: false,
                     confirm_discard: false,
                     to: d.to_addr,
@@ -284,6 +286,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                         attachments: c.attachments.clone(),
                         sign: c.pgp_sign,
                         encrypt: c.pgp_encrypt,
+                        high_priority: c.high_priority,
                     },
                 );
                 if let Some(id) = c.draft_id {
@@ -388,6 +391,12 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 if c.pgp_encrypt {
                     c.pgp_sign = true; // 我们的加密必签名（防篡改）
                 }
+            }
+            Task::none()
+        }
+        Message::ToggleHighPriority => {
+            if let Some(c) = &mut state.compose {
+                c.high_priority = !c.high_priority;
             }
             Task::none()
         }

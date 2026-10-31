@@ -78,6 +78,7 @@ fn main() {
                             attachments: vec![attach_path.display().to_string()],
                             sign: false,
                             encrypt: false,
+                            high_priority: false,
                         });
                     }
                 }

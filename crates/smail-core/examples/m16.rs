@@ -52,6 +52,7 @@ fn inject_foreign_draft(subject: &str) {
         body: "来自其他设备的草稿内容".into(),
         body_html: None,
         attachments: vec![],
+        high_priority: false,
     };
     let bytes = build_draft_bytes(&mail, "<m16-foreign-1@other-device>").expect("组草稿 MIME");
     b.append_draft(bytes).expect("注入外来草稿");

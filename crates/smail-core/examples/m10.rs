@@ -64,6 +64,7 @@ fn main() {
                 attachments: vec![],
                 sign,
                 encrypt,
+                high_priority: false,
             },
         });
     };

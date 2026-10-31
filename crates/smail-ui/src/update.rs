@@ -866,6 +866,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ContactPicked(..)
         | Message::TogglePgpSign
         | Message::TogglePgpEncrypt
+        | Message::ToggleHighPriority
         | Message::ComposeDiscardConfirm
         | Message::ComposeDiscardCancel) => compose_ops::handle(state, m),
         m @ (Message::Reply(..)

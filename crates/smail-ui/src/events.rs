@@ -132,6 +132,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             is_html,
             attachments,
             pgp,
+            high_priority,
         } => {
             // 在途守卫：请求后用户可能已切文件夹/删信/另选——迟到的正文
             // 不覆写阅读器（否则弹开一封不在当前列表的邮件，快捷键随之误作用）
@@ -174,6 +175,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                     md: None,
                     attachments,
                     pgp,
+                    high_priority,
                 },
             ));
             // 原样渲染开着：切信即换装（非 HTML 邮件自动回退 markdown 视图）

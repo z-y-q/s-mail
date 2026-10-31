@@ -231,6 +231,7 @@ impl ReaderCtx {
         // 以下与旧 open_message 管线一致（seen 部分已上移主循环）
         let (parse_bytes, pgp_status) = pgp_decode(self.pgp.as_ref(), &bytes);
         let (body, is_html) = extract_body(&parse_bytes);
+        let high_priority = header_block_is_high_priority(&bytes);
         if pgp_status.is_none() {
             store.index_body(hash, &body).ok(); // 加密邮件正文不进全文索引（安全默认）
         }
@@ -259,8 +260,20 @@ impl ReaderCtx {
             is_html,
             attachments,
             pgp: pgp_status,
+            high_priority,
         });
     }
+}
+
+/// 头块高优先级检测：X-Priority: 1 / Importance: high / Priority: urgent /
+/// X-MSMail-Priority: High 任一命中即真（只扫头块，大小写不敏感）
+fn header_block_is_high_priority(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]).to_lowercase();
+    let head = head.split("\r\n\r\n").next().unwrap_or(&head);
+    head.contains("x-priority: 1")
+        || head.contains("x-msmail-priority: high")
+        || head.contains("importance: high")
+        || head.contains("priority: urgent")
 }
 
 /// M5-c：顶层 PGP/MIME 处理（Reader 线程用）。返回（用于正文解析的字节, 状态行）。

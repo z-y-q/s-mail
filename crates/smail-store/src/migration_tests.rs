@@ -111,7 +111,7 @@ fn migration_v0_to_v7_complete() {
         .conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 10, "应升级到 v10");
+    assert_eq!(v, 11, "应升级到 v11");
 
     // v1：flagged 字段存在且默认值正确
     let flagged: i64 = store
@@ -248,7 +248,7 @@ fn migration_v3_to_v7_partial() {
         .conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 10);
+    assert_eq!(v, 11);
 
     // v4：pending_flags 表应创建
     store
@@ -283,7 +283,7 @@ fn migration_idempotence() {
         .unwrap()
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v1, 10);
+    assert_eq!(v1, 11);
 
     // 第二次打开：应幂等（不重复执行迁移）
     let _ = super::Store::open(&path).unwrap();
@@ -291,7 +291,7 @@ fn migration_idempotence() {
         .unwrap()
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v2, 10);
+    assert_eq!(v2, 11);
 
     // contacts 表不应重复回填（幂等性）
     let count: i64 = Connection::open(&path)

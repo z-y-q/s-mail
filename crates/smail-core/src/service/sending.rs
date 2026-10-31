@@ -41,6 +41,7 @@ impl ServiceInner {
             body: row.body.clone(),
             body_html: Some(crate::html::markdown_to_html(&row.body)),
             attachments: vec![],
+            high_priority: false, // 草稿上传是存储副本，不带优先级头
         };
         let bytes = match smail_backend::build_draft_bytes(&mail, &new_mid) {
             Ok(b) => b,
@@ -134,6 +135,7 @@ impl ServiceInner {
                 &p.attachments,
                 None,
                 &sender,
+                p.priority,
             );
         }
     }
@@ -242,6 +244,7 @@ impl ServiceInner {
         attachment_paths: &[String],
         pgp_mode: Option<pgp::PgpSendMode>,
         sender: &smail_backend::SmtpSender,
+        high_priority: bool,
     ) {
         let mut attachments: Vec<(String, Vec<u8>)> = Vec::new();
         for path in attachment_paths {
@@ -277,6 +280,7 @@ impl ServiceInner {
             // 撰写器正文按 markdown 自动生成 HTML 版（multipart/alternative）
             body_html: Some(crate::html::markdown_to_html(body)),
             attachments,
+            high_priority,
         };
         // M5-d：PGP 发信（构造完整 MIME 后走 raw 通道；
         // 密钥类失败是永久错误 → failed，不进重试队列）

@@ -451,6 +451,14 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 .style(move |t| theme::status_badage(t, theme::badge_kind(badge))),
         );
     }
+    // 高优先级徽章（⚠ 暖色一眼可见；来源=X-Priority/Importance 头）
+    if reading.high_priority {
+        reader_col = reader_col.push(
+            container(text("⚠ 高优先级").size(13))
+                .padding([3, 8])
+                .style(|t| theme::status_badage(t, crate::theme::BadgeKind::Warn)),
+        );
+    }
     // AI 摘要卡片（缓存命中且可见时）
     if state.ai.summary_visible {
         if let Some(sum) = state.ai.summary_cache.get(&(*acct, reading.hash)) {

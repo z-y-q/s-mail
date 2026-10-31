@@ -126,6 +126,8 @@ pub struct OutgoingMail {
     pub body_html: Option<String>,
     /// (文件名, 字节)。M3：附件随 multipart 发送
     pub attachments: Vec<(String, Vec<u8>)>,
+    /// 高优先级（X-Priority: 1 + Importance: high + X-MSMail-Priority: High）
+    pub high_priority: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -948,6 +950,25 @@ fn build_mime_message(message_id: &str, mail: &OutgoingMail) -> Result<lettre::M
     let builder = builder
         .message_id(Some(message_id.to_string()))
         .subject(&mail.subject);
+    // 高优先级：X-Priority/Importance/X-MSMail-Priority 三头并报（各家客户端
+    // 读取的头不一致，惯例是三头同发）；raw_header 原样写入
+    let builder = if mail.high_priority {
+        builder
+            .raw_header(lettre::message::header::HeaderValue::new(
+                lettre::message::header::HeaderName::new_from_ascii_str("X-Priority"),
+                "1".into(),
+            ))
+            .raw_header(lettre::message::header::HeaderValue::new(
+                lettre::message::header::HeaderName::new_from_ascii_str("Importance"),
+                "high".into(),
+            ))
+            .raw_header(lettre::message::header::HeaderValue::new(
+                lettre::message::header::HeaderName::new_from_ascii_str("X-MSMail-Priority"),
+                "High".into(),
+            ))
+    } else {
+        builder
+    };
 
     // HTML 版正文：multipart/alternative（纯文本客户端回退 plain）
     let make_alt =
@@ -1029,6 +1050,7 @@ mod tests {
             body: "正文内容".into(),
             body_html: None,
             attachments: vec![],
+            high_priority: false,
         }
     }
 

@@ -285,6 +285,8 @@ pub(crate) struct Lex {
     pub(crate) account_sw: &'static str, // {name}
     pub(crate) sign_toggle: &'static str,
     pub(crate) enc_toggle: &'static str,
+    /// 撰写高优先级开关
+    pub(crate) priority_toggle: &'static str,
     pub(crate) send: &'static str,
     pub(crate) save_draft: &'static str,
     pub(crate) close: &'static str,
@@ -557,6 +559,7 @@ pub(crate) const ZH: Lex = Lex {
     account_sw: "账号：{} ⇄",
     sign_toggle: "签名",
     enc_toggle: "加密",
+    priority_toggle: "高优先级",
     send: "发送",
     save_draft: "存草稿",
     close: "关闭",
@@ -821,6 +824,7 @@ pub(crate) const EN: Lex = Lex {
     account_sw: "Account: {} ⇄",
     sign_toggle: "Sign",
     enc_toggle: "Encrypt",
+    priority_toggle: "High priority",
     send: "Send",
     save_draft: "Save draft",
     close: "Close",

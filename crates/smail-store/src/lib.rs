@@ -103,6 +103,8 @@ pub struct OutboxRow {
     pub subject: String,
     pub body: String,
     pub attachments: Vec<String>,
+    /// 高优先级标记（发信 X-Priority/Importance 头；重试保留）
+    pub priority: bool,
     pub status: String,
     pub attempts: i32,
     pub error: String,
@@ -322,6 +324,15 @@ impl Store {
             Self::contacts_normalize(conn)?;
             conn.pragma_update(None, "user_version", 10)?;
         }
+        // v11：outbox.priority——高优先级标记随发件队列持久化（重试不丢）
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v < 11 {
+            let _ = conn.execute(
+                "ALTER TABLE outbox ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            conn.pragma_update(None, "user_version", 11)?;
+        }
         Ok(())
     }
 
@@ -504,7 +515,9 @@ mod tests {
     #[test]
     fn outbox_retry_limit() {
         let s = mem("outbox-limit");
-        let oid = s.enqueue_outbox("x@y.z", "", "", "t", "b", &[]).unwrap();
+        let oid = s
+            .enqueue_outbox("x@y.z", "", "", "t", "b", &[], false)
+            .unwrap();
         // 穷尽 20 次重试后：不再进入 pending 集，状态转 failed
         for _ in 0..20 {
             s.outbox_mark(oid, "pending", "temporary").unwrap();
@@ -517,7 +530,9 @@ mod tests {
             .unwrap();
         assert_eq!(status, "failed");
         // 未超限的 pending 不受影响
-        let oid2 = s.enqueue_outbox("y@y.z", "", "", "t2", "b", &[]).unwrap();
+        let oid2 = s
+            .enqueue_outbox("y@y.z", "", "", "t2", "b", &[], true)
+            .unwrap();
         s.outbox_mark(oid2, "pending", "e").unwrap();
         assert_eq!(s.fail_exhausted_outbox().unwrap(), 0);
         assert_eq!(s.pending_outbox().unwrap().len(), 1);
@@ -636,6 +651,7 @@ mod tests {
                 "带附件",
                 "正文",
                 &["/tmp/a.pdf".into(), "/tmp/b.zip".into()],
+                false,
             )
             .unwrap();
         let rows = s.pending_outbox().unwrap();

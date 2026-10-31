@@ -57,6 +57,8 @@ pub(crate) struct Compose {
     /// M5-d：PGP 签名/加密开关
     pub(crate) pgp_sign: bool,
     pub(crate) pgp_encrypt: bool,
+    /// 高优先级（X-Priority: 1 / Importance: high，随发件队列重试保留）
+    pub(crate) high_priority: bool,
     /// Esc 时有内容 → 先确认丢弃（防手滑丢稿）
     pub(crate) confirm_discard: bool,
     pub(crate) to: String,
@@ -182,6 +184,7 @@ pub(crate) fn open_compose_with(
         draft_id: None,
         account: acct,
         pgp_sign: false,
+        high_priority: false,
         pgp_encrypt: false,
         confirm_discard: false,
         to,
@@ -250,7 +253,7 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         );
     }
     header = header.push(Space::new().width(Length::Fill));
-    // 签名/加密：真正的开关控件（以前用 ○● 字符拼按钮，看着像没渲染完）
+    // 签名/加密/高优先级：真正的开关控件（以前用 ○● 字符拼按钮，看着像没渲染完）
     let sign_toggler = iced::widget::Toggler::new(c.pgp_sign)
         .label(state.l().sign_toggle.to_string())
         .on_toggle(|_| Message::TogglePgpSign)
@@ -263,8 +266,15 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         .size(16.0)
         .text_size(13)
         .spacing(6);
+    let prio_toggler = iced::widget::Toggler::new(c.high_priority)
+        .label(state.l().priority_toggle.to_string())
+        .on_toggle(|_| Message::ToggleHighPriority)
+        .size(16.0)
+        .text_size(13)
+        .spacing(6);
     header = header.push(sign_toggler);
     header = header.push(enc_toggler);
+    header = header.push(prio_toggler);
     header = header.push(
         button(text(state.l().send).size(13))
             .on_press(Message::SendClicked)

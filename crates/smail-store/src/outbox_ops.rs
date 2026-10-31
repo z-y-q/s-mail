@@ -21,6 +21,7 @@ use super::{OutboxRow, Store};
 const OUTBOX_MAX_ATTEMPTS: i64 = 20;
 
 impl Store {
+    #[allow(clippy::too_many_arguments)]
     pub fn enqueue_outbox(
         &self,
         to: &str,
@@ -29,18 +30,27 @@ impl Store {
         subject: &str,
         body: &str,
         attachments: &[String],
+        priority: bool,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO outbox(to_addr, cc, bcc, subject, body, attachments)
-             VALUES (?1,?2,?3,?4,?5,?6)",
-            (to, cc, bcc, subject, body, attachments.join("\u{1}")),
+            "INSERT INTO outbox(to_addr, cc, bcc, subject, body, attachments, priority)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            (
+                to,
+                cc,
+                bcc,
+                subject,
+                body,
+                attachments.join("\u{1}"),
+                priority as i64,
+            ),
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn pending_outbox(&self) -> rusqlite::Result<Vec<OutboxRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, to_addr, cc, bcc, subject, body, attachments, status, attempts, error \
+            "SELECT id, to_addr, cc, bcc, subject, body, attachments, priority, status, attempts, error \
              FROM outbox WHERE status = 'pending' AND attempts < ?1",
         )?;
         let rows = stmt.query_map([OUTBOX_MAX_ATTEMPTS], |r| {
@@ -57,9 +67,10 @@ impl Store {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string)
                     .collect(),
-                status: r.get(7)?,
-                attempts: r.get(8)?,
-                error: r.get(9)?,
+                priority: r.get::<_, i64>(7)? != 0,
+                status: r.get(8)?,
+                attempts: r.get(9)?,
+                error: r.get(10)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -68,7 +79,7 @@ impl Store {
     /// 发件箱全量（含 failed——UI 发件箱视图用）
     pub fn list_outbox_all(&self) -> rusqlite::Result<Vec<OutboxRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, to_addr, cc, bcc, subject, body, attachments, status, attempts, error \
+            "SELECT id, to_addr, cc, bcc, subject, body, attachments, priority, status, attempts, error \
              FROM outbox ORDER BY id",
         )?;
         let rows = stmt
@@ -82,8 +93,9 @@ impl Store {
                     subject: r.get(4)?,
                     body: r.get(5)?,
                     attachments: att.split('\u{1}').map(|s| s.to_string()).collect(),
-                    status: r.get(7)?,
-                    attempts: r.get(8)?,
+                    priority: r.get::<_, i64>(7)? != 0,
+                    status: r.get(8)?,
+                    attempts: r.get(9)?,
                     error: r.get(9)?,
                 })
             })?

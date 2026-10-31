@@ -67,6 +67,8 @@ pub(crate) struct Reading {
     pub(crate) attachments: Vec<(String, usize)>,
     /// M5-c：PGP 状态徽章（None=非 PGP）
     pub(crate) pgp: Option<String>,
+    /// 高优先级（X-Priority/Importance 头命中，信头徽章）
+    pub(crate) high_priority: bool,
 }
 
 /// markdown 解析结果一次性传递盒：Content 无 Clone 而 iced 要求 Message: Clone，

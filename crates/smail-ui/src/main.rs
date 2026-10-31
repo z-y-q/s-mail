@@ -178,6 +178,8 @@ pub(crate) enum Message {
     LinkClicked(String),
     TogglePgpSign,
     TogglePgpEncrypt,
+    /// 撰写高优先级开关
+    ToggleHighPriority,
     // ---- M6 账号配置 ----
     SetupOpen,
     SetupClose,

@@ -250,6 +250,7 @@ fn late_body_loaded_dropped_without_body_req() {
                 is_html: false,
                 attachments: vec![],
                 pgp: None,
+                high_priority: false,
             },
         }),
     );
@@ -300,6 +301,7 @@ fn images_loaded_wrong_account_not_filled() {
             md: None,
             attachments: vec![],
             pgp: None,
+            high_priority: false,
         },
     ));
     let _ = update(
@@ -356,6 +358,7 @@ fn delete_mail_closes_only_that_reading() {
             md: None,
             attachments: vec![],
             pgp: None,
+            high_priority: false,
         },
     ));
     let _ = update(&mut s, Message::DeleteMail(0, 1));
