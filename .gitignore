@@ -7,3 +7,6 @@ spikes/spike-melib/imap-test/mail/
 # 编辑器临时备份
 *.bak
 .smoke-home/
+
+# up-nomove.sh 运行时生成物（从真实 CAPABILITY 派生，每次运行重写）
+spikes/spike-melib/imap-test/dovecot-nomove.conf
