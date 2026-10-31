@@ -31,7 +31,9 @@
 
 use std::sync::Arc;
 
-use iced::widget::{button, column, container, row, scrollable, text, text_editor, Space};
+use iced::widget::{
+    button, column, container, row, scrollable, text, text_editor, text_input, Space,
+};
 use iced::{Element, Length};
 
 use crate::setup::labeled_field;
@@ -61,6 +63,10 @@ pub(crate) struct Compose {
     pub(crate) high_priority: bool,
     /// Esc 时有内容 → 先确认丢弃（防手滑丢稿）
     pub(crate) confirm_discard: bool,
+    /// 定时发送面板开（schedule_input 生效）
+    pub(crate) schedule_open: bool,
+    /// 定时发送输入（格式 YYYY-MM-DD HH:MM）
+    pub(crate) schedule_input: String,
     pub(crate) to: String,
     pub(crate) cc: String,
     pub(crate) bcc: String,
@@ -93,6 +99,8 @@ impl Clone for Compose {
             pgp_encrypt: self.pgp_encrypt,
             high_priority: self.high_priority,
             confirm_discard: self.confirm_discard,
+            schedule_open: self.schedule_open,
+            schedule_input: self.schedule_input.clone(),
             to: self.to.clone(),
             cc: self.cc.clone(),
             bcc: self.bcc.clone(),
@@ -217,6 +225,8 @@ pub(crate) fn open_compose_with(
         high_priority: false,
         pgp_encrypt: false,
         confirm_discard: false,
+        schedule_open: false,
+        schedule_input: String::new(),
         to,
         cc: String::new(),
         bcc: String::new(),
@@ -471,7 +481,7 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         .padding([2, 8])
         .style(theme::ghost_button)
     };
-    let toolbar: Element<Message> = row![
+    let mut toolbar: Element<Message> = row![
         fmt_btn("B", MdFmt::Bold, iced::font::Weight::Bold),
         fmt_btn("I", MdFmt::Italic, iced::font::Weight::Normal),
         fmt_btn("</>", MdFmt::Code, iced::font::Weight::Normal),
@@ -500,6 +510,11 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
             .text_size(11)
             .padding([2, 6])
         },
+        // 定时发送：展开时间输入面板（hold 通道，到点由 flush 真投）
+        button(text(state.l().schedule_btn).size(11))
+            .on_press(Message::ScheduleToggle)
+            .padding([2, 8])
+            .style(theme::ghost_button),
         Space::new().width(Length::Fill),
         button(
             text(if c.preview {
@@ -525,6 +540,30 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
     ]
     .spacing(4)
     .into();
+
+    // 定时发送面板（工具栏下方一行：时间输入 + 确认/收起）
+    if c.schedule_open {
+        let schedule_row: Element<Message> = row![
+            text_input(state.l().schedule_ph, &c.schedule_input)
+                .on_input(Message::ScheduleInput)
+                .size(12)
+                .width(Length::Fixed(180.0))
+                .padding(4),
+            button(text(state.l().schedule_confirm).size(12))
+                .on_press(Message::ScheduleConfirm)
+                .padding([3, 10])
+                .style(theme::accent_button),
+            button(text(state.l().cancel).size(12))
+                .on_press(Message::ScheduleToggle)
+                .padding([3, 8])
+                .style(theme::ghost_button),
+        ]
+        .spacing(6)
+        .into();
+        toolbar = container(column![toolbar, schedule_row].spacing(4))
+            .width(Length::Fill)
+            .into();
+    }
 
     // 正文区：编辑态 = 工具栏 + 编辑器；预览态 = markdown 排版视图
     // （与阅读窗同一渲染管线，收发两侧观感一致）

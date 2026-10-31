@@ -259,6 +259,11 @@ pub(crate) struct Lex {
     /// 顶栏撤销发送横幅与按钮
     pub(crate) undo_banner: &'static str,
     pub(crate) undo_btn: &'static str,
+    /// 定时发送（撰写窗按钮/面板/发件箱行提示）
+    pub(crate) schedule_btn: &'static str,
+    pub(crate) schedule_ph: &'static str,
+    pub(crate) schedule_confirm: &'static str,
+    pub(crate) hold_hint: &'static str,
     /// 右键菜单：加入/移出 VIP 发件人
     pub(crate) vip_add: &'static str,
     pub(crate) vip_remove: &'static str,
@@ -546,6 +551,10 @@ pub(crate) const ZH: Lex = Lex {
     template_name_ph: "模板名称",
     undo_banner: "稍后发送，剩",
     undo_btn: "撤销",
+    schedule_btn: "定时",
+    schedule_ph: "YYYY-MM-DD HH:MM",
+    schedule_confirm: "定时发送",
+    hold_hint: "计划投递",
     undo_hdr: "撤销发送（发送后 N 秒内可撤销）",
     mark_all_read: "全部已读",
     apply_rules: "应用规则",
@@ -820,6 +829,10 @@ pub(crate) const EN: Lex = Lex {
     template_name_ph: "Template name",
     undo_banner: "Sending later,",
     undo_btn: "Undo",
+    schedule_btn: "Schedule",
+    schedule_ph: "YYYY-MM-DD HH:MM",
+    schedule_confirm: "Schedule send",
+    hold_hint: "Scheduled for",
     undo_hdr: "Undo send (revoke within N seconds)",
     mark_all_read: "Mark all read",
     apply_rules: "Apply rules",

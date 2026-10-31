@@ -93,7 +93,7 @@ impl Store {
 
     pub fn pending_outbox(&self) -> rusqlite::Result<Vec<OutboxRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, to_addr, cc, bcc, subject, body, attachments, priority, status, attempts, error \
+            "SELECT id, to_addr, cc, bcc, subject, body, attachments, priority, send_at, status, attempts, error \
              FROM outbox WHERE status = 'pending' AND attempts < ?1",
         )?;
         let rows = stmt.query_map([OUTBOX_MAX_ATTEMPTS], |r| {
@@ -111,9 +111,10 @@ impl Store {
                     .map(str::to_string)
                     .collect(),
                 priority: r.get::<_, i64>(7)? != 0,
-                status: r.get(8)?,
-                attempts: r.get(9)?,
-                error: r.get(10)?,
+                send_at: r.get(8)?,
+                status: r.get(9)?,
+                attempts: r.get(10)?,
+                error: r.get(11)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -122,7 +123,7 @@ impl Store {
     /// 发件箱全量（含 failed——UI 发件箱视图用）
     pub fn list_outbox_all(&self) -> rusqlite::Result<Vec<OutboxRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, to_addr, cc, bcc, subject, body, attachments, priority, status, attempts, error \
+            "SELECT id, to_addr, cc, bcc, subject, body, attachments, priority, send_at, status, attempts, error \
              FROM outbox ORDER BY id",
         )?;
         let rows = stmt
@@ -137,9 +138,10 @@ impl Store {
                     body: r.get(5)?,
                     attachments: att.split('\u{1}').map(|s| s.to_string()).collect(),
                     priority: r.get::<_, i64>(7)? != 0,
-                    status: r.get(8)?,
-                    attempts: r.get(9)?,
-                    error: r.get(9)?,
+                    send_at: r.get(8)?,
+                    status: r.get(9)?,
+                    attempts: r.get(10)?,
+                    error: r.get(11)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

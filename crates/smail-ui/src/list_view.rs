@@ -854,8 +854,18 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .take(last.saturating_sub(first))
             .collect();
         for (_a, o) in items {
+            // hold=定时未到（显示计划投递时间），failed=重试穷尽
             let (icon, err) = if o.status == "failed" {
                 ("✗", o.error.clone())
+            } else if o.status == "hold" {
+                (
+                    "⏰",
+                    format!(
+                        "{} {}",
+                        state.l().hold_hint,
+                        crate::unix_to_local(o.send_at.max(0))
+                    ),
+                )
             } else {
                 ("⏳", String::new())
             };

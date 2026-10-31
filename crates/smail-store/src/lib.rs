@@ -105,6 +105,8 @@ pub struct OutboxRow {
     pub attachments: Vec<String>,
     /// 高优先级标记（发信 X-Priority/Importance 头；重试保留）
     pub priority: bool,
+    /// 延后投递时间戳（unix 秒；status='hold' 行的到点）
+    pub send_at: i64,
     pub status: String,
     pub attempts: i32,
     pub error: String,

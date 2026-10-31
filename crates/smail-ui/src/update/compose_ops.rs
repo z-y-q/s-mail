@@ -62,6 +62,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 high_priority: false,
                 pgp_encrypt: false,
                 confirm_discard: false,
+                schedule_open: false,
+                schedule_input: String::new(),
                 to: String::new(),
                 cc: String::new(),
                 bcc: String::new(),
@@ -109,6 +111,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     high_priority: false,
                     pgp_encrypt: false,
                     confirm_discard: false,
+                    schedule_open: false,
+                    schedule_input: String::new(),
                     to: d.to_addr,
                     cc: d.cc,
                     bcc: d.bcc,
@@ -493,6 +497,75 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 c.confirm_discard = true; // 有内容了，Esc 需先确认丢弃
             }
             Task::none()
+        }
+        // ---- 定时发送（hold 通道；send_at=用户指定时刻） ----
+        Message::ScheduleToggle => {
+            if let Some(c) = &mut state.compose {
+                c.schedule_open = !c.schedule_open;
+                if !c.schedule_open {
+                    c.schedule_input.clear();
+                }
+            }
+            Task::none()
+        }
+        Message::ScheduleInput(v) => {
+            if let Some(c) = &mut state.compose {
+                c.schedule_input = v;
+            }
+            Task::none()
+        }
+        Message::ScheduleConfirm => {
+            let Some(c) = state.compose.clone() else {
+                return Task::none();
+            };
+            if c.to.trim().is_empty() {
+                state.error = Some(state.l().err_empty_to.into());
+                return Task::none();
+            }
+            let Some(send_at) = crate::parse_schedule(&c.schedule_input) else {
+                state.error = Some("时间格式应为 YYYY-MM-DD HH:MM".into());
+                return Task::none();
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if send_at <= now {
+                state.error = Some("定时时间必须晚于当前时刻".into());
+                return Task::none();
+            }
+            let acct = c.account;
+            let id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+            state.send(
+                acct,
+                Cmd::QueueHold {
+                    id,
+                    to: c.to.clone(),
+                    cc: c.cc.clone(),
+                    bcc: c.bcc.clone(),
+                    subject: c.subject.clone(),
+                    body: c.body.text().to_string(),
+                    attachments: c.attachments.clone(),
+                    sign: c.pgp_sign,
+                    encrypt: c.pgp_encrypt,
+                    high_priority: c.high_priority,
+                    send_at,
+                },
+            );
+            if let Some(draft_id) = c.draft_id {
+                state.send(acct, Cmd::DeleteDraft(draft_id));
+            }
+            state.statuses.insert(
+                acct,
+                format!(
+                    "已定时：{} 发出（可在发件箱撤销）",
+                    crate::unix_to_local(send_at)
+                ),
+            );
+            close_compose_window(state)
         }
         Message::ComposeDiscardConfirm => {
             // 丢弃：不存草稿直接关写信窗

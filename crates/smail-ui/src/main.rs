@@ -239,6 +239,10 @@ pub(crate) enum Message {
     UndoSendExpire(usize, i64),
     /// 设置页：撤销发送窗口时长选择（0=关）
     UndoSecsPick(u64),
+    // ---- 定时发送（hold 通道；send_at=用户指定时刻） ----
+    ScheduleToggle,
+    ScheduleInput(String),
+    ScheduleConfirm,
     /// 循环切换本地旗标颜色（无→红→橙→绿→蓝→紫→灰→无）
     CycleFlagColor(usize, i64),
     /// 右键「代转」：读信区弹出收件人输入行
@@ -956,6 +960,48 @@ pub(crate) fn relative_date(ts: i64) -> String {
 /// 列表行短日期：同年显示「MM-DD HH:MM」，往年只显示「YYYY-MM-DD」。
 /// 列宽有限，完整秒级时间在阅读页头部（两处都走同一本地时钟，年份可直接比）
 /// 发件人显示名："名字 <a@b>" → "名字"；裸地址原样
+/// 民历（年 月 日 时 分）→ unix 秒。与 unix_to_local 同基准（互逆），
+/// 定时发送解析用户输入用
+pub(crate) fn civil_to_unix(y: i64, m: i64, d: i64, h: i64, mi: i64) -> i64 {
+    let yy = if m <= 2 { y - 1 } else { y };
+    let era = yy.div_euclid(400);
+    let yoe = yy - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    days * 86400 + h * 3600 + mi * 60
+}
+
+/// 解析 "YYYY-MM-DD HH:MM" → unix 秒（格式错返回 None）
+pub(crate) fn parse_schedule(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.len() != 16
+        || s.as_bytes().get(4) != Some(&b'-')
+        || s.as_bytes().get(7) != Some(&b'-')
+        || s.as_bytes().get(10) != Some(&b' ')
+        || s.as_bytes().get(13) != Some(&b':')
+    {
+        return None;
+    }
+    let num = |a: usize, b: usize| s.get(a..b).and_then(|x| x.parse::<i64>().ok());
+    let (y, m, d, h, mi) = (
+        num(0, 4)?,
+        num(5, 7)?,
+        num(8, 10)?,
+        num(11, 13)?,
+        num(14, 16)?,
+    );
+    if !(1..=12).contains(&m)
+        || !(1..=31).contains(&d)
+        || !(0..=23).contains(&h)
+        || !(0..=59).contains(&mi)
+    {
+        return None;
+    }
+    Some(civil_to_unix(y, m, d, h, mi))
+}
+
 pub(crate) fn from_display_name(from_addr: &str) -> String {
     let name = from_addr.split('<').next().unwrap_or("").trim().to_string();
     if name.is_empty() {
