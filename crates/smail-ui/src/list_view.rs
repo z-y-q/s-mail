@@ -47,20 +47,29 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         clip(&state.statuses.get(&0).cloned().unwrap_or_default())
     };
 
-    // 会话视图下才有意义：全部展开/折叠当前邮箱的会话（平铺视图隐藏）
-    let expand_collapse: Element<Message> = if state.nav.threaded {
-        row![
-            button(text(state.l().expand_all).size(13))
-                .on_press(Message::ExpandAllThreads)
-                .padding([4, 8])
-                .style(theme::ghost_button),
-            button(text(state.l().collapse_all).size(13))
-                .on_press(Message::CollapseAllThreads)
-                .padding([4, 8])
-                .style(theme::ghost_button),
-        ]
-        .spacing(4)
-        .into()
+    // 会话视图下才有意义：全部展开/折叠当前邮箱的会话。
+    // 单个状态感知按钮——有已展开的会话显示「折叠全部」，否则「展开全部」；
+    // 平铺/搜索/统一收件箱/草稿/发件箱视图下是死按钮，直接隐藏
+    let cur_view = state.nav.cur.as_ref().map(|(_, c)| c.as_str());
+    let thread_capable = state.nav.threaded
+        && !state.nav.in_search
+        && !state.nav.viewing_unified
+        && !matches!(
+            cur_view,
+            Some("__drafts__") | Some("__outbox__") | Some("__all_inbox__")
+        );
+    let expand_collapse: Element<Message> = if thread_capable {
+        let any_expanded = state.expanded.values().any(|v| *v);
+        let (label, msg) = if any_expanded {
+            (state.l().collapse_all, Message::CollapseAllThreads)
+        } else {
+            (state.l().expand_all, Message::ExpandAllThreads)
+        };
+        button(text(label).size(13))
+            .on_press(msg)
+            .padding([4, 8])
+            .style(theme::ghost_button)
+            .into()
     } else {
         Space::new().width(0).into()
     };
