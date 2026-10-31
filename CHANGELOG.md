@@ -2,6 +2,20 @@
 
 本项目遵守语义化版本。0.x 阶段以里程碑为节奏，以下按版本累积记录用户可感知的变更。
 
+## [Unreleased]
+
+### 修复
+
+- **托盘「打开 s-mail」点不出窗口（重启才恢复）根治**：iced 的
+  `window::Settings.exit_on_close_request` 默认 true——红叉的
+  CloseRequested 被 iced 静默关窗并吞掉，应用层永远收不到
+  `WindowCloseRequested`：写草稿窗的「自动存草稿再关」从未执行过、
+  主窗红叉的清理与重开逻辑从未运行过，`main_window` 一直挂着死窗口
+  的 id，托盘「打开」聚焦的是幽灵。全窗创建显式
+  `exit_on_close_request: false`（主窗×2/写信窗×6/托盘重开×1），
+  关闭事件回到应用层；托盘「打开」改为原生窗口管理（在则还原聚焦、
+  关了则重开），移除对无障碍权限的 AppleScript 依赖
+
 ## [0.1.6] - 2026-10-31
 
 ### 新增

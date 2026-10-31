@@ -552,6 +552,8 @@ impl State {
                     size: win_size,
                     position: win_pos,
                     min_size: Some(iced::Size::new(980.0, 560.0)),
+                    // 关闭事件交还应用层：红叉清理（webview/句柄）必须经我们
+                    exit_on_close_request: false,
                     ..Default::default()
                 });
                 let open_main = open_task.map(crate::Message::MainWindowOpened);
@@ -677,6 +679,8 @@ impl State {
                     size: win_size,
                     position: win_pos,
                     min_size: Some(iced::Size::new(980.0, 560.0)),
+                    // 关闭事件交还应用层：红叉清理（webview/句柄）必须经我们
+                    exit_on_close_request: false,
                     ..Default::default()
                 });
                 let open_main = open_task.map(crate::Message::MainWindowOpened);

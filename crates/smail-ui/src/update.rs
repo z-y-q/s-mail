@@ -37,6 +37,7 @@ fn show_main_window(state: &mut State) -> Task<Message> {
             let (id, task) = iced::window::open(iced::window::Settings {
                 size: iced::Size::new(1280.0, 760.0),
                 min_size: Some(iced::Size::new(980.0, 560.0)),
+                exit_on_close_request: false,
                 ..Default::default()
             });
             state.main_window = Some(id);

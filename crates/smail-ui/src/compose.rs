@@ -199,6 +199,7 @@ pub(crate) fn open_compose_with(
         let (win_id, task) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(900.0, 640.0),
             min_size: Some(iced::Size::new(720.0, 480.0)),
+            exit_on_close_request: false,
             ..Default::default()
         });
         state.compose_window = Some(win_id);

@@ -76,6 +76,9 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             let (id, task) = iced::window::open(iced::window::Settings {
                 size: iced::Size::new(900.0, 640.0),
                 min_size: Some(iced::Size::new(720.0, 480.0)),
+                // 关闭事件交还应用层（红叉→存草稿→close）；默认 true 会被
+                // iced 静默关窗且吞掉 WindowCloseRequested，红叉逻辑全死
+                exit_on_close_request: false,
                 ..Default::default()
             });
             state.compose_window = Some(id);
@@ -118,6 +121,7 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     let (win_id, task) = iced::window::open(iced::window::Settings {
                         size: iced::Size::new(900.0, 640.0),
                         min_size: Some(iced::Size::new(720.0, 480.0)),
+                        exit_on_close_request: false,
                         ..Default::default()
                     });
                     state.compose_window = Some(win_id);
