@@ -306,6 +306,8 @@ pub(crate) struct Lex {
     // ---- 设置屏 ----
     pub(crate) welcome: &'static str,
     pub(crate) add_hdr: &'static str,
+    /// 设置页副标题（一句话说明本页能做什么）
+    pub(crate) setup_sub: &'static str,
     pub(crate) preset_custom: &'static str,
     pub(crate) email_label: &'static str,
     pub(crate) name_label: &'static str,
@@ -566,6 +568,7 @@ pub(crate) const ZH: Lex = Lex {
 
     welcome: "欢迎使用 s-mail —— 先加一个账号",
     add_hdr: "添加账号",
+    setup_sub: "选择服务商，填入邮箱与授权码；已有账号与通讯录在下方管理",
     preset_custom: "自定义",
     email_label: "邮箱地址",
     name_label: "显示名",
@@ -824,6 +827,7 @@ pub(crate) const EN: Lex = Lex {
 
     welcome: "Welcome to s-mail — add an account",
     add_hdr: "Add account",
+    setup_sub: "Pick a provider, enter your address and app password. Manage existing accounts below.",
     preset_custom: "Custom",
     email_label: "Email",
     name_label: "Display name",

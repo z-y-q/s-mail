@@ -418,14 +418,22 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         );
     }
 
-    let mut form_col = column![
+    // 页面标题 + 副标题（原 17px 标题缩在表单里、与内容无层级）
+    let page_header = column![
         text(if first_run {
             state.l().welcome
         } else {
             state.l().add_hdr
         })
-        .size(17)
+        .size(20)
         .font(theme::ui_font(iced::font::Weight::Semibold)),
+        text(state.l().setup_sub)
+            .size(13)
+            .style(theme::secondary_text),
+    ]
+    .spacing(4);
+
+    let mut form_col = column![
         preset_row,
         setup_field(
             state.l().email_label,
@@ -569,6 +577,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
             .style(theme::accent_button),
     ]
     .spacing(8);
+    actions = actions.push(Space::new().width(Length::Fill));
     actions = actions.push(
         button(
             text(if first_run {
@@ -990,23 +999,40 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         ai_col = ai_col.push(container(form).padding(8).style(theme::reader_meta));
     }
 
+    // 页面骨架：滚动视是全宽的，max_width 的内容列会被吞成贴左——
+    // 必须在滚动视内再套一层居中容器，内容才真正居中。
+    // 表单区装进圆角卡片（macOS 分组框观感），动作行随卡；
+    // 首跑（无账号）不显示管理/通讯录区，页面只剩「选服务商→保存」一件事
+    let form_card = container(column![form_col, actions].spacing(12))
+        .padding(16)
+        .width(Length::Fill)
+        .style(theme::reader_meta);
+
+    let mut page = column![page_header, form_card].spacing(20).max_width(640);
+    if !first_run {
+        page = page.push(list_col);
+        page = page.push(contacts_col);
+    }
+    page = page.push(ai_col);
+    page = page.push(
+        text(state.l().cfg_note)
+            .size(11)
+            .style(theme::secondary_text),
+    );
+
     container(scrollable(
-        column![
-            column![form_col, actions].spacing(12),
-            Space::new().height(16),
-            list_col,
-            Space::new().height(10),
-            contacts_col,
-            Space::new().height(10),
-            ai_col,
-            text(state.l().cfg_note)
-                .size(11)
-                .style(theme::secondary_text),
-        ]
-        .spacing(8)
-        .max_width(560),
+        container(page)
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .padding(iced::Padding {
+                top: 16.0,
+                right: 0.0,
+                bottom: 24.0,
+                left: 0.0,
+            }),
     ))
-    .center_x(Length::Fill)
+    .width(Length::Fill)
+    .height(Length::Fill)
     .padding(24)
     .into()
 }
