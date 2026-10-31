@@ -654,8 +654,31 @@ impl MailBackend for MelibBackend {
         let src = self.mailbox_of(folder)?;
         let dst = self.mailbox_of(dest)?;
         let batch = self.batch_of(hashes)?;
+        // 服务器不支持 MOVE（QQ 类）时 melib 回退 COPY + STORE \Deleted：
+        // 副本留在源文件夹直到 EXPUNGE——移完主动清源，否则同一封邮件
+        // 两处同现（收件箱里删不掉的幽灵）
+        let has_move = self.with_backend(|b| {
+            b.as_any()
+                .downcast_ref::<ImapType>()
+                .map(|imap| {
+                    imap.capabilities()
+                        .iter()
+                        .any(|c| c.eq_ignore_ascii_case("MOVE"))
+                })
+                .unwrap_or(true) // 非 IMAP 后端无能力表概念
+        });
         let fut = self.with_backend(|b| b.copy_messages(batch, src, dst, true));
         block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
+        if !has_move {
+            let fut = self
+                .with_backend(|b| {
+                    b.as_any()
+                        .downcast_ref::<ImapType>()
+                        .map(|imap| imap.expunge_mailbox(src))
+                })
+                .ok_or_else(|| BackendError::Other("backend 不是 IMAP".into()))?;
+            block_on_t(fut?, NET_OP_TIMEOUT_SECS)??;
+        }
         Ok(())
     }
 

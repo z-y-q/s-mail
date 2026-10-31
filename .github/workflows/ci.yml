@@ -238,3 +238,12 @@ jobs:
           SMAIL_CONFIG: spikes/spike-melib/config.toml
           SMAIL_HOME: /tmp/smail-ci-m20
         run: timeout 120 ./target/debug/examples/m20 80
+
+      - name: m21 无 MOVE 回退 e2e（QQ 类服务器仿真：COPY+EXPUNGE 清源）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m21
+        run: |
+          sh spikes/spike-melib/imap-test/up-nomove.sh
+          timeout 120 ./target/debug/examples/m21 60
+          sh spikes/spike-melib/imap-test/down.sh
