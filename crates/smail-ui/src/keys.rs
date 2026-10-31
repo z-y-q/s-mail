@@ -85,6 +85,10 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
             } else if state.context_menu.is_some() {
                 // 右键菜单：Esc 先关菜单（最浅层临时浮层）
                 state.context_menu = None;
+            } else if state.batch.redirect_prompt.is_some() {
+                // 代转输入行：Esc 收起
+                state.batch.redirect_prompt = None;
+                state.batch.redirect_to.clear();
             } else if state.pending_delete.is_some() {
                 state.pending_delete = None;
             } else if state.batch.move_open

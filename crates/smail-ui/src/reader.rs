@@ -482,6 +482,38 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     }
     // 动作区：极淡底圆角分组（proxity=关联；无硬分隔线）
     reader_col = reader_col.push(container(actions).style(theme::reader_meta));
+    // 代转收件人输入行（右键菜单「代转」触发；Esc 收起，回车发送）
+    if state.batch.redirect_prompt == Some((*acct, hash)) {
+        let to = state.batch.redirect_to.clone();
+        reader_col = reader_col.push(
+            container(
+                row![
+                    iced::widget::text_input(state.l().redirect_ph, &to)
+                        .on_input(Message::RedirectToInput)
+                        .on_submit(Message::RedirectConfirm(*acct, hash, to.clone(),))
+                        .size(13)
+                        .width(280)
+                        .padding(4),
+                    button(text(state.l().redirect_send).size(13))
+                        .on_press_maybe(if to.trim().is_empty() {
+                            None
+                        } else {
+                            Some(Message::RedirectConfirm(*acct, hash, to.clone()))
+                        })
+                        .padding([3, 10])
+                        .style(theme::accent_button),
+                    button(text(state.l().cancel).size(13))
+                        .on_press(Message::RedirectCancel)
+                        .padding([3, 10])
+                        .style(theme::ghost_button),
+                    Space::new().width(Length::Fill),
+                ]
+                .spacing(6),
+            )
+            .padding([6, 0])
+            .width(Length::Fill),
+        );
+    }
     // M7：移动目标面板（该账号全部文件夹，排除当前文件夹）
     if move_open {
         let cur_folder = state

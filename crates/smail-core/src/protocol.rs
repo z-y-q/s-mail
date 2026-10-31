@@ -128,6 +128,16 @@ pub enum Cmd {
     /// 手动批量应用规则：对指定文件夹全部存量邮件重放规则引擎
     ///（同步时只打新邮件，建规则前的存量靠这里回放）
     ApplyRules(String),
+    /// 代转：原信加 Resent-* 头原样重投给新收件人（正文/头不动）
+    Redirect {
+        hash: i64,
+        to: String,
+    },
+    /// 代转续发：Reader 已取回正文并落缓存，此时真正重投
+    RedirectNow {
+        hash: i64,
+        to: String,
+    },
 }
 
 #[derive(Debug, Clone)]

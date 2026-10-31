@@ -154,6 +154,12 @@ pub(crate) struct BatchOps {
     pub(crate) pending_delete: bool,
     /// 读信区「移动到」面板展开中：（账号, hash）
     pub(crate) move_picker: Option<(usize, i64)>,
+    /// 读信区「代转」收件人输入中：（账号, hash）
+    pub(crate) redirect_prompt: Option<(usize, i64)>,
+    /// 代转收件人输入框内容（随 prompt 开关清空）
+    pub(crate) redirect_to: String,
+    /// 代转挂起：Reader 正在取正文（BodyLoaded 到达后以 RedirectNow 续发）
+    pub(crate) redirect_pending: Option<(usize, i64, String)>,
 }
 
 /// 侧栏文件夹内联编辑（新建/改名/删除确认）
@@ -475,6 +481,9 @@ impl State {
                         move_open: false,
                         pending_delete: false,
                         move_picker: None,
+                        redirect_prompt: None,
+                        redirect_to: String::new(),
+                        redirect_pending: None,
                     },
                     folder_edit: FolderEdit {
                         new_folder: None,
@@ -636,6 +645,9 @@ impl State {
                         move_open: false,
                         pending_delete: false,
                         move_picker: None,
+                        redirect_prompt: None,
+                        redirect_to: String::new(),
+                        redirect_pending: None,
                     },
                     folder_edit: FolderEdit {
                         new_folder: None,

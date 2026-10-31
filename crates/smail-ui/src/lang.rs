@@ -236,6 +236,12 @@ pub(crate) struct Lex {
     pub(crate) batch_archive: &'static str,
     pub(crate) batch_spam: &'static str,
     pub(crate) batch_delete: &'static str,
+    /// 右键菜单：代转（原信重投给新收件人）
+    pub(crate) redirect_menu: &'static str,
+    /// 代转收件人输入占位
+    pub(crate) redirect_ph: &'static str,
+    /// 代转发送按钮
+    pub(crate) redirect_send: &'static str,
     pub(crate) clear: &'static str,
     pub(crate) no_dest: &'static str,
     pub(crate) perm_delete: &'static str,
@@ -508,6 +514,9 @@ pub(crate) const ZH: Lex = Lex {
     batch_archive: "归档",
     batch_spam: "标为垃圾",
     batch_delete: "删除",
+    redirect_menu: "代转…",
+    redirect_ph: "代转收件人地址",
+    redirect_send: "代转发送",
     clear: "✕ 清除",
     no_dest: "没有其他文件夹（可在侧栏新建）",
     perm_delete: "永久删除",
@@ -769,6 +778,9 @@ pub(crate) const EN: Lex = Lex {
     batch_archive: "Archive",
     batch_spam: "Junk",
     batch_delete: "Delete",
+    redirect_menu: "Redirect…",
+    redirect_ph: "Redirect to address",
+    redirect_send: "Redirect",
     clear: "✕ Clear",
     no_dest: "No other folders (create one in the sidebar)",
     perm_delete: "Delete forever",

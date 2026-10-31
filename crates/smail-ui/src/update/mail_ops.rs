@@ -543,6 +543,38 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             );
             Task::none()
         }
+        Message::RedirectPrompt(acct, hash) => {
+            state.batch.redirect_prompt = Some((acct, hash));
+            state.batch.redirect_to.clear();
+            Task::none()
+        }
+        Message::RedirectCancel => {
+            state.batch.redirect_prompt = None;
+            state.batch.redirect_to.clear();
+            Task::none()
+        }
+        Message::RedirectToInput(v) => {
+            state.batch.redirect_to = v;
+            Task::none()
+        }
+        Message::RedirectConfirm(acct, hash, to) => {
+            state.batch.redirect_prompt = None;
+            state.batch.redirect_to.clear();
+            if to.trim().is_empty() {
+                state.error = Some(state.l().redirect_ph.into());
+                return Task::none();
+            }
+            // 正文可能未缓存：Cmd::Redirect 内部会转 Reader 现取，
+            // 取回后 UI 依 redirect_pending 以 RedirectNow 续发
+            state.batch.redirect_pending = Some((acct, hash, to.clone()));
+            state.send(acct, Cmd::Redirect { hash, to });
+            Task::none()
+        }
+        Message::RedirectNow(acct, hash, to) => {
+            state.batch.redirect_pending = None;
+            state.send(acct, Cmd::RedirectNow { hash, to });
+            Task::none()
+        }
         Message::ExportFolderRequest(acct, folder) => {
             // 导出当前文件夹全部邮件为 .eml：先弹目录选择，回填后后台写文件
             let hashes: Vec<i64> = state

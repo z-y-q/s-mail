@@ -696,6 +696,23 @@ impl ServiceInner {
                 let backend = &**backend;
                 self.apply_rules_folder(backend, store, folder);
             }
+            Cmd::Redirect { hash, to } => {
+                // 正文已缓存：立刻重投。未缓存：转 Reader 现取（服务循环内联
+                // fetch_body 会与 IDLE 连接争锁死锁——m22 实测），取件完成经
+                // BodyLoaded 事件由 UI 以 RedirectNow 续发
+                if self.body_path(hash).exists() {
+                    self.redirect_cmd(store, hash, to);
+                } else {
+                    let _ = self.read_tx.send(hash);
+                    self.emit(Event::Status(self.tr(
+                        "正在拉取原信，稍后代转…",
+                        "Fetching original message, redirect will follow…",
+                    )));
+                }
+            }
+            Cmd::RedirectNow { hash, to } => {
+                self.redirect_cmd(store, hash, to);
+            }
         }
         false
     }

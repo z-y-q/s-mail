@@ -88,6 +88,9 @@ fn ts() -> State {
             move_open: false,
             pending_delete: false,
             move_picker: None,
+            redirect_prompt: None,
+            redirect_to: String::new(),
+            redirect_pending: None,
         },
         folder_edit: FolderEdit {
             new_folder: None,

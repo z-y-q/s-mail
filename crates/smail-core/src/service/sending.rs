@@ -138,6 +138,96 @@ impl ServiceInner {
         }
     }
 
+    /// 代转（Redirect，RFC 5322）：原信字节原样重投，仅前置 Resent-Date/
+    /// Resent-From/Resent-To/Resent-Message-Id——收件人看到原文原头
+    ///（From 是原作者），回复会回到原作者。与「转发」（重新包装正文）
+    /// 和「作为附件转发」（message/rfc822 内嵌）的区别在此。
+    /// 防头注入：收件人含 CR/LF 就地报错（先校验后使用）
+    pub(crate) fn redirect_cmd(&self, store: &Store, hash: i64, to: String) {
+        let _ = store;
+        let to = to.trim().to_string();
+        if to.is_empty() || to.contains('\r') || to.contains('\n') {
+            self.emit(Event::Status(
+                self.tr("代转收件人无效", "Invalid redirect recipient"),
+            ));
+            return;
+        }
+        let Ok(bytes) = std::fs::read(self.body_path(hash)) else {
+            self.emit(Event::Status(self.tr(
+                "代转失败：原信正文未缓存",
+                "Redirect failed: original message not cached",
+            )));
+            return;
+        };
+        let from = self.cfg.identity.clone();
+        let reverse = self.cfg.imap.username.clone();
+        let mid = format!(
+            "<redirect.{}.{}@s-mail>",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+            reverse
+        );
+        let mut mail = String::with_capacity(bytes.len() + 256);
+        mail.push_str(&format!(
+            "Resent-Date: {}\r\nResent-From: {}\r\nResent-To: <{}>\r\nResent-Message-Id: {}\r\n",
+            Self::rfc2822_now_utc(),
+            from,
+            to,
+            mid
+        ));
+        mail.push_str(&String::from_utf8_lossy(&bytes));
+        match self.smtp_sender() {
+            Ok(sender) => {
+                match sender.send_raw(&reverse, std::slice::from_ref(&to), mail.as_bytes()) {
+                    Ok(()) => {
+                        self.emit(Event::Status(self.trf(
+                            "已代转给 {}",
+                            "Redirected to {}",
+                            &[&to],
+                        )));
+                    }
+                    Err(e) => self.emit(Event::Error(e.to_string())),
+                }
+            }
+            Err(e) => self.emit(Event::Error(e)),
+        }
+    }
+
+    /// IMF（RFC 5322）日期：UTC 生成（规范合法，客户端按本地时区显示）。
+    /// 不引时区库——星期/月名常量表 + 民用历算法（与 UI 侧 unix_to_local 同源）
+    fn rfc2822_now_utc() -> String {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let days = secs / 86400;
+        let rem = secs % 86400;
+        let (h, mi, s) = (rem / 3600, rem % 3600 / 60, rem % 60);
+        let z = days as i64 + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z.rem_euclid(146_097);
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+        let mut y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        if m <= 2 {
+            y += 1;
+        }
+        const WD: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+        const MO: [&str; 12] = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        format!(
+            "{}, {d:02} {} {y} {h:02}:{mi:02}:{s:02} +0000",
+            WD[(days % 7) as usize],
+            MO[(m - 1) as usize]
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn try_send(
         &self,

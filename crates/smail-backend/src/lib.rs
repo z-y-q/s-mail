@@ -893,9 +893,14 @@ impl SmtpSender {
     pub fn send_raw(&self, from: &str, recipients: &[String], bytes: &[u8]) -> Result<()> {
         use lettre::address::{Address, Envelope};
         use lettre::Transport;
-        let sender: Address = from
-            .parse()
-            .map_err(|e| BackendError::InvalidMailFormat(format!("发件人 {from:?} 无效: {e}")))?;
+        // 裸用户名（本地测试服务器账号 "test" 这类）补 localhost 域——
+        // 信封反向路径只用于退信路由，不影响投递与显示
+        let sender: Address = match from.parse() {
+            Ok(a) => a,
+            Err(_) => format!("{from}@localhost").parse().map_err(|e| {
+                BackendError::InvalidMailFormat(format!("发件人 {from:?} 无效: {e}"))
+            })?,
+        };
         let to: Vec<Address> = recipients
             .iter()
             .map(|r| {

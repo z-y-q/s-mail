@@ -1450,6 +1450,11 @@ fn context_menu_row(
                 "作为附件转发".into(),
                 Message::ForwardAsAttachment(acct, hash)
             ),
+            // 代转：原信原样重投（Resent-*），正文/头不动
+            item(
+                state.l().redirect_menu.into(),
+                Message::RedirectPrompt(acct, hash)
+            ),
             (is_sent).then(|| item("再次发送".into(), Message::Resend(acct, hash))),
             item(star_label, Message::ToggleStar(acct, hash, !flagged)),
             item("标为未读".into(), Message::MarkUnread(acct, hash)),

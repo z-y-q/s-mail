@@ -215,6 +215,16 @@ pub(crate) enum Message {
         done: usize,
         total: usize,
     },
+    /// 右键「代转」：读信区弹出收件人输入行
+    RedirectPrompt(usize, i64),
+    /// 代转收件人输入
+    RedirectToInput(String),
+    /// 代转确认：原信加 Resent-* 头重投
+    RedirectConfirm(usize, i64, String),
+    /// 代转续发：Reader 已取回正文（BodyLoaded 后触发）
+    RedirectNow(usize, i64, String),
+    /// 取消代转输入
+    RedirectCancel,
     NewFolderOpen(usize),
     NewFolderInput(String),
     NewFolderConfirm,
