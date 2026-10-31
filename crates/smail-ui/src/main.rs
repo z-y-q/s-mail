@@ -330,8 +330,10 @@ pub(crate) enum Message {
     ComposePreviewReady(crate::state::ParsedMd),
     // ---- HTML 原样渲染（macOS 网页视图；其余平台按钮不出现） ----
     /// 阅读器工具栏开关（抽取消毒正文 → 子视图装载）
+    #[cfg(target_os = "macos")]
     ToggleHtmlRender(usize, i64),
     /// 主窗原生句柄回填（ns_view 指针；0=失败）
+    #[cfg(target_os = "macos")]
     HtmlHandlesReady(u64),
     /// 右键行打开菜单（acct, hash）
     ContextMenuOpen(usize, i64),

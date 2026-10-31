@@ -95,6 +95,8 @@ pub(crate) fn close(state: &mut State) {
         state.html.source = None;
         state.html.synced = None;
         state.html.pending_open = false;
+        state.html.handles_ready = false;
+        state.html.raw_ns_view = None;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -156,31 +158,24 @@ fn hide(state: &mut State) {
 
 /// 捕获主窗原生句柄（window::run 异步回调；指针以 u64 运送——RawWindowHandle
 /// 非 Send，整数 transport 是合法跨线程形态，重建只发生在主线程）
+#[cfg(target_os = "macos")]
 pub(crate) fn ensure_handles(state: &mut State) -> Task<Message> {
-    #[cfg(target_os = "macos")]
-    {
-        if state.html.handles_ready {
-            return Task::none();
-        }
-        let Some(id) = state.main_window else {
-            state.html.on = false;
-            state.error = Some("主窗未就绪，无法开启原样渲染".into());
-            return Task::none();
-        };
-        iced::window::run(id, |w| match w.window_handle() {
-            Ok(h) => match h.as_raw() {
-                wry::raw_window_handle::RawWindowHandle::AppKit(k) => k.ns_view.as_ptr() as u64,
-                _ => 0,
-            },
-            Err(_) => 0,
-        })
-        .map(Message::HtmlHandlesReady)
+    if state.html.handles_ready {
+        return Task::none();
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = state;
-        Task::none()
-    }
+    let Some(id) = state.main_window else {
+        state.html.on = false;
+        state.error = Some("主窗未就绪，无法开启原样渲染".into());
+        return Task::none();
+    };
+    iced::window::run(id, |w| match w.window_handle() {
+        Ok(h) => match h.as_raw() {
+            wry::raw_window_handle::RawWindowHandle::AppKit(k) => k.ns_view.as_ptr() as u64,
+            _ => 0,
+        },
+        Err(_) => 0,
+    })
+    .map(Message::HtmlHandlesReady)
 }
 
 /// 句柄回填：指针 0=失败；否则建视图（挂起时）并同步几何

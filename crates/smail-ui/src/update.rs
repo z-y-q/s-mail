@@ -402,7 +402,9 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             crate::webview::sync_bounds(state);
             Task::none()
         }
+        #[cfg(target_os = "macos")]
         Message::HtmlHandlesReady(ns_view) => crate::webview::handles_ready(state, ns_view),
+        #[cfg(target_os = "macos")]
         Message::ToggleHtmlRender(acct, hash) => crate::webview::toggle(state, acct, hash),
         // ---------------- 邮件拖拽移动（状态机见 drag.rs） ----------------
         Message::DragPress(acct, hash, click) => {
@@ -714,10 +716,8 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             } else if state.main_window == Some(id) {
                 // 主窗被关：网页子视图挂在旧窗上随之失效——先丢（否则子视图
-                // 指向已销毁的父窗），句柄一并作废（重开后由下次开关重取）
+                // 指向已销毁的父窗），句柄与挂起态一并复位（重开后由下次开关重取）
                 crate::webview::close(state);
-                state.html.handles_ready = false;
-                state.html.raw_ns_view = None;
                 // 重新打开（应用托盘常驻，主窗必须随时可用）
                 state.main_window = None;
                 let (new_id, task) = iced::window::open(iced::window::Settings {

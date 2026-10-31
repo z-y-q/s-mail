@@ -272,23 +272,29 @@ pub(crate) struct State {
     pub(crate) webview: Option<wry::WebView>,
 }
 
-/// 原样渲染会话状态（平台无关部分；非 macOS 无入口按钮，字段恒为初始值）
+/// 原样渲染会话状态（`on`/`source`/`pane` 跨平台读；其余字段只在 macOS
+/// 网页视图路径读写，一并门禁——非 macOS 构建里它们无人引用，CI 会拦）
 pub(crate) struct HtmlView {
     /// 开关（阅读 HTML 邮件时显示；切换非 HTML 邮件自动失效回 markdown）
     pub(crate) on: bool,
     /// 当前信的消毒 HTML（Extract 任务回填；None=未就绪/非 HTML）
     pub(crate) source: Option<String>,
-    /// 远程图片许可（默认禁——与 markdown 视图的「显示图片」同一隐私语义）
-    pub(crate) load_remote: bool,
     /// 阅读窗正文区几何（探针每帧回填，取最后一个登记）
     pub(crate) pane: crate::drag::PaneRects,
+    /// 远程图片许可（默认禁——与 markdown 视图的「显示图片」同一隐私语义）
+    #[cfg(target_os = "macos")]
+    pub(crate) load_remote: bool,
     /// 已同步给网页视图的几何（避免每帧重复 set_bounds）
+    #[cfg(target_os = "macos")]
     pub(crate) synced: Option<[f32; 4]>,
     /// 原生窗口句柄已捕获（window::run 异步回填，创建子视图的前置）
+    #[cfg(target_os = "macos")]
     pub(crate) handles_ready: bool,
     /// 句柄未就绪时的挂起打开（HtmlHandlesReady 到场后补创建）
+    #[cfg(target_os = "macos")]
     pub(crate) pending_open: bool,
     /// 主窗内容视图指针（window::run 回调期提取；0/None=未捕获）
+    #[cfg(target_os = "macos")]
     pub(crate) raw_ns_view: Option<u64>,
 }
 
@@ -297,11 +303,16 @@ impl HtmlView {
         Self {
             on: false,
             source: None,
-            load_remote: false,
             pane: crate::drag::new_pane_rects(),
+            #[cfg(target_os = "macos")]
+            load_remote: false,
+            #[cfg(target_os = "macos")]
             synced: None,
+            #[cfg(target_os = "macos")]
             handles_ready: false,
+            #[cfg(target_os = "macos")]
             pending_open: false,
+            #[cfg(target_os = "macos")]
             raw_ns_view: None,
         }
     }
