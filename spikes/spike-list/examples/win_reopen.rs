@@ -65,7 +65,9 @@ fn update(state: &mut State, msg: Msg) -> iced::Task<Msg> {
                 if state.closed_a.is_none() && now - t >= Duration::from_secs(3) {
                     println!("[spike] 关闭 A（进入零窗口）");
                     state.closed_a = Some(now);
-                    let Some(id) = state.win_a else { return iced::Task::none() };
+                    let Some(id) = state.win_a else {
+                        return iced::Task::none();
+                    };
                     state.win_a = None;
                     return iced::window::close(id);
                 }
