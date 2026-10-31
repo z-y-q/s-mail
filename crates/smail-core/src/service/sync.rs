@@ -206,6 +206,7 @@ impl ServiceInner {
             &[&folder],
         )));
         let probe = backend.probe_folder(folder).ok();
+        let fetch_started = Instant::now();
         let envelopes = match backend.fetch_envelopes(folder) {
             Ok(e) => e,
             Err(e) => {
@@ -349,12 +350,14 @@ impl ServiceInner {
             folder: folder.to_string(),
             rows,
         });
-        // 状态行文件夹名本地化（顶栏不再出现「INBOX：46 封」中英混排）
+        // 状态行文件夹名本地化（顶栏不再出现「INBOX：46 封」中英混排）。
+        // 同步耗时进状态行：万封大邮箱的带宽/耗时肉眼可见（优化决策靠数据）
         let fname = self.localized_folder_name(folder);
+        let elapsed_ms = fetch_started.elapsed().as_millis();
         self.emit(Event::Status(self.trf(
-            "{}：{} 封（新 {}）",
-            "{}: {} messages ({} new)",
-            &[&fname, &envelopes.len(), &new_count],
+            "{}：{} 封（新 {}，{} ms）",
+            "{}: {} messages ({} new, {} ms)",
+            &[&fname, &envelopes.len(), &new_count, &elapsed_ms],
         )));
         None
     }
