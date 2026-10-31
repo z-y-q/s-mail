@@ -178,6 +178,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         for (key, label) in [
             ("__smart_unread__", state.l().smart_unread),
             ("__smart_flagged__", state.l().smart_flagged),
+            ("__smart_vip__", state.l().smart_vip),
         ] {
             let smart_cur = state.nav.cur.as_ref().map(|(_, c)| c == key) == Some(true);
             sidebar = sidebar.push(
@@ -485,6 +486,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             }
             Some((_, f)) if f == "__smart_flagged__" => {
                 format!("{} / {}", state.l().smart_hdr, state.l().smart_flagged)
+            }
+            Some((_, f)) if f == "__smart_vip__" => {
+                format!("{} / {}", state.l().smart_hdr, state.l().smart_vip)
             }
             Some((a, f)) => {
                 // 列表头也显示本地化文件夹名（与侧栏一致）
@@ -1112,8 +1116,15 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     };
                     let cb = select_checkbox(state, acct, r.envelope_hash);
                     // Mail.app 式三行布局：发件人(粗)+日期 / 主题 / 正文预览。
-                    // 预览取正文前 ~48 字（正文索引后回填，未索引的行留空）
-                    let from_name = crate::from_display_name(&r.from_addr);
+                    // 预览取正文前 ~48 字（正文索引后回填，未索引的行留空）。
+                    // VIP 发件人名前缀 ◆（与旗标星互不干扰）
+                    let sender = crate::addr_of(&r.from_addr);
+                    let is_vip = state.prefs.vip.iter().any(|v| v == &sender);
+                    let from_name = format!(
+                        "{}{}",
+                        if is_vip { "◆ " } else { "" },
+                        crate::from_display_name(&r.from_addr)
+                    );
                     let preview: String = {
                         let mut p: String = r.preview.chars().take(60).collect();
                         if r.preview.chars().count() > 60 {
@@ -1512,6 +1523,23 @@ fn context_menu_row(c: &MenuCtx<'_>) -> Element<'static, Message> {
                     Message::IgnoreThread(subject_key)
                 }
             ),
+            // VIP 发件人（按发件人地址；列表◆标记+VIP 智能视图）
+            {
+                let sender = crate::addr_of(from_addr);
+                let is_vip = state.prefs.vip.iter().any(|v| v == &sender);
+                item(
+                    if is_vip {
+                        state.l().vip_remove.into()
+                    } else {
+                        state.l().vip_add.into()
+                    },
+                    if is_vip {
+                        Message::VipRemove(sender)
+                    } else {
+                        Message::VipAdd(sender)
+                    },
+                )
+            },
             // 旗标颜色循环（本地属性；色名进右键项一眼可见）
             item(
                 {

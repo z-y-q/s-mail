@@ -116,6 +116,8 @@ pub(crate) struct Prefs {
     pub(crate) muted: Vec<String>,
     /// 忽略的会话规范主题键（列表隐藏+通知跳过；ui.json 持久化）
     pub(crate) ignored: Vec<String>,
+    /// VIP 发件人地址（智能视图+列表◆标记；ui.json 持久化）
+    pub(crate) vip: Vec<String>,
     /// 本地旗标颜色（键=邮件 hash 字符串，值=色名；IMAP 无色旗标，本地属性）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -437,6 +439,7 @@ impl State {
                         last_view: None,
                         muted: bp.muted,
                         ignored: bp.ignored,
+                        vip: bp.vip,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: accounts2,
@@ -603,6 +606,7 @@ impl State {
                         last_view: None,
                         muted: vec![],
                         ignored: bp.ignored,
+                        vip: bp.vip,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: vec![],
@@ -725,6 +729,7 @@ impl State {
             columns: Some((self.sidebar_w, self.list_w)),
             muted: self.prefs.muted.clone(),
             ignored: self.prefs.ignored.clone(),
+            vip: self.prefs.vip.clone(),
             flag_colors: self.prefs.flag_colors.clone(),
         }
     }
@@ -749,8 +754,8 @@ impl State {
     }
 
     /// 智能邮箱聚合：跨账号跨文件夹按谓词收集行（本地索引直读，离线可用）。
-    /// key：`__smart_unread__`（全部未读）/ `__smart_flagged__`（全部星标）；
-    /// 结果按时间降序
+    /// key：`__smart_unread__`（全部未读）/ `__smart_flagged__`（全部星标）/
+    /// `__smart_vip__`（VIP 发件人）；结果按时间降序
     pub(crate) fn smart_fill(&mut self, key: &str) {
         let folders: Vec<(usize, String)> = self
             .nav
@@ -761,9 +766,11 @@ impl State {
         let mut all: Vec<RowEntry> = vec![];
         for (a, fp) in &folders {
             for (acct, r) in self.local_folder_rows(*a, fp) {
+                let from = crate::addr_of(&r.from_addr);
                 let hit = match key {
                     "__smart_unread__" => !r.seen,
                     "__smart_flagged__" => r.flagged,
+                    "__smart_vip__" => self.prefs.vip.iter().any(|v| v == &from),
                     _ => false,
                 };
                 if hit {
@@ -1106,6 +1113,7 @@ pub(crate) struct BootPrefs {
     pub(crate) win: Option<[f32; 4]>,
     pub(crate) muted: Vec<String>,
     pub(crate) ignored: Vec<String>,
+    pub(crate) vip: Vec<String>,
     /// 本地旗标颜色（键=hash 字符串）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -1130,6 +1138,7 @@ pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
         win: prefs.win,
         muted: prefs.muted,
         ignored: prefs.ignored,
+        vip: prefs.vip,
         flag_colors: prefs.flag_colors,
     }
 }

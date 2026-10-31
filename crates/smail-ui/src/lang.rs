@@ -76,6 +76,8 @@ pub(crate) struct UiPrefs {
     pub(crate) muted: Vec<String>,
     /// 忽略的会话规范主题键（列表隐藏；新邮件不通知）
     pub(crate) ignored: Vec<String>,
+    /// VIP 发件人地址（智能视图+列表标记）
+    pub(crate) vip: Vec<String>,
     /// 本地旗标颜色（键=hash 字符串，值=色名）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -90,6 +92,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         columns: None,
         muted: vec![],
         ignored: vec![],
+        vip: vec![],
         flag_colors: std::collections::HashMap::new(),
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
@@ -137,6 +140,12 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect();
         }
+        if let Some(a) = v.get("vip").and_then(|x| x.as_array()) {
+            prefs.vip = a
+                .iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect();
+        }
         if let Some(obj) = v.get("flag_colors").and_then(|x| x.as_object()) {
             for (k, val) in obj {
                 if let Some(color) = val.as_str() {
@@ -158,6 +167,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "columns": p.columns.map(|(s, l)| serde_json::json!([s, l])),
         "muted": p.muted,
         "ignored": p.ignored,
+        "vip": p.vip,
         "flag_colors": p.flag_colors,
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
@@ -215,6 +225,10 @@ pub(crate) struct Lex {
     pub(crate) smart_hdr: &'static str,
     pub(crate) smart_unread: &'static str,
     pub(crate) smart_flagged: &'static str,
+    pub(crate) smart_vip: &'static str,
+    /// 右键菜单：加入/移出 VIP 发件人
+    pub(crate) vip_add: &'static str,
+    pub(crate) vip_remove: &'static str,
     pub(crate) drafts_n: &'static str, // {n}
     pub(crate) folder_inbox: &'static str,
     pub(crate) folder_sent: &'static str,
@@ -493,6 +507,7 @@ pub(crate) const ZH: Lex = Lex {
     smart_hdr: "智能邮箱",
     smart_unread: "未读邮件",
     smart_flagged: "星标邮件",
+    smart_vip: "VIP",
     mark_all_read: "全部已读",
     apply_rules: "应用规则",
     expand_all: "展开全部",
@@ -540,6 +555,8 @@ pub(crate) const ZH: Lex = Lex {
     redirect_menu: "代转…",
     redirect_ph: "代转收件人地址",
     redirect_send: "代转发送",
+    vip_add: "加入 VIP 发件人",
+    vip_remove: "移出 VIP 发件人",
     clear: "✕ 清除",
     no_dest: "没有其他文件夹（可在侧栏新建）",
     perm_delete: "永久删除",
@@ -758,6 +775,7 @@ pub(crate) const EN: Lex = Lex {
     smart_hdr: "Smart",
     smart_unread: "Unread",
     smart_flagged: "Flagged",
+    smart_vip: "VIP",
     mark_all_read: "Mark all read",
     apply_rules: "Apply rules",
     expand_all: "Expand all",
@@ -805,6 +823,8 @@ pub(crate) const EN: Lex = Lex {
     redirect_menu: "Redirect…",
     redirect_ph: "Redirect to address",
     redirect_send: "Redirect",
+    vip_add: "Add to VIP senders",
+    vip_remove: "Remove from VIP senders",
     clear: "✕ Clear",
     no_dest: "No other folders (create one in the sidebar)",
     perm_delete: "Delete forever",
@@ -1040,6 +1060,7 @@ mod tests {
             columns: Some((240.0, 420.0)),
             muted: vec!["spam@x.com".into()],
             ignored: vec!["周报".into()],
+            vip: vec!["boss@x.com".into()],
             flag_colors: std::collections::HashMap::new(),
         };
         save_prefs(&dir, &p);
@@ -1049,6 +1070,7 @@ mod tests {
         assert_eq!(p.columns, Some((240.0, 420.0)), "列宽记忆往返");
         assert_eq!(p.muted, vec!["spam@x.com".to_string()], "静音列表往返");
         assert_eq!(p.ignored, vec!["周报".to_string()], "忽略会话列表往返");
+        assert_eq!(p.vip, vec!["boss@x.com".to_string()], "VIP 列表往返");
         // 默认（无偏好文件）：中文 + 跟随系统
         std::fs::remove_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&dir).unwrap();

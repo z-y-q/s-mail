@@ -220,6 +220,9 @@ pub(crate) enum Message {
     /// 忽略/取消忽略会话（参数=规范主题键）
     IgnoreThread(String),
     UnignoreThread(String),
+    /// 右键：加入/移出 VIP 发件人（参数=发件人地址）
+    VipAdd(String),
+    VipRemove(String),
     /// 循环切换本地旗标颜色（无→红→橙→绿→蓝→紫→灰→无）
     CycleFlagColor(usize, i64),
     /// 右键「代转」：读信区弹出收件人输入行

@@ -150,7 +150,10 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.reading = None;
                 state.nav.folder_loading = false;
                 state.send(acct, Cmd::ListOutbox);
-            } else if folder == "__smart_unread__" || folder == "__smart_flagged__" {
+            } else if folder == "__smart_unread__"
+                || folder == "__smart_flagged__"
+                || folder == "__smart_vip__"
+            {
                 // 智能邮箱虚拟视图：跨账号聚合本地索引，无服务端往返
                 state.nav.cur = Some((acct, folder.clone()));
                 state.selected = None;
@@ -882,6 +885,8 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::BatchExportDone { .. }
         | Message::IgnoreThread(..)
         | Message::UnignoreThread(..)
+        | Message::VipAdd(..)
+        | Message::VipRemove(..)
         | Message::CycleFlagColor(..)
         | Message::RedirectPrompt(..)
         | Message::RedirectToInput(..)

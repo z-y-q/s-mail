@@ -276,6 +276,10 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                 state.rows.retain(|(_, r)| match key {
                     "__smart_unread__" => !r.seen,
                     "__smart_flagged__" => r.flagged,
+                    "__smart_vip__" => {
+                        let from = crate::addr_of(&r.from_addr);
+                        state.prefs.vip.iter().any(|v| v == &from)
+                    }
                     _ => true,
                 });
             }

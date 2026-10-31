@@ -556,6 +556,34 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             Task::none()
         }
+        Message::VipAdd(sender) => {
+            if !state.prefs.vip.iter().any(|v| v == &sender) {
+                state.prefs.vip.push(sender.clone());
+            }
+            state.rebuild_display();
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                format!("已加入 VIP：{sender}（侧栏「VIP」视图聚合）"),
+            );
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
+        Message::VipRemove(sender) => {
+            state.prefs.vip.retain(|v| v != &sender);
+            // 正在看 VIP 视图时移出：立即重聚合防幽灵行
+            if state.cur_is_smart()
+                && state.nav.cur.as_ref().map(|(_, c)| c == "__smart_vip__") == Some(true)
+            {
+                state.smart_fill("__smart_vip__");
+            }
+            state.rebuild_display();
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                format!("已移出 VIP：{sender}"),
+            );
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
         Message::CycleFlagColor(acct, hash) => {
             // 色板循环：无 → 红 → 橙 → 绿 → 蓝 → 紫 → 灰 → 无
             const FLAG_COLORS: [&str; 6] = ["red", "orange", "green", "blue", "purple", "gray"];
