@@ -198,6 +198,16 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             Task::none()
         }
+        Message::ToolbarToggle(id) => {
+            // 显隐切换：在隐藏表中则移出（显示），否则加入（隐藏）
+            if let Some(pos) = state.prefs.hidden_toolbar.iter().position(|h| h == &id) {
+                state.prefs.hidden_toolbar.remove(pos);
+            } else {
+                state.prefs.hidden_toolbar.push(id);
+            }
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
         Message::ToggleUiTheme => {
             // 手动切换后不再跟随系统（Agency：用户显式选择优先）
             state.prefs.theme_follow = false;

@@ -1137,12 +1137,48 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         .width(Length::Fill)
         .style(theme::reader_meta);
 
+    // 自定义工具栏：顶栏按钮显隐开关（点按钮切换，灰=已隐藏）
+    const TB_ITEMS: [(&str, &str); 9] = [
+        ("compose", "写信"),
+        ("threads", "会话/平铺"),
+        ("expand", "展开折叠"),
+        ("layout", "布局"),
+        ("search", "搜索"),
+        ("refresh", "刷新"),
+        ("theme", "主题"),
+        ("lang", "语言"),
+        ("settings", "设置"),
+    ];
+    let mut tb_row = row![text(state.l().toolbar_hdr).size(13)].spacing(6);
+    for (id, label) in TB_ITEMS {
+        let hidden = state.prefs.hidden_toolbar.iter().any(|h| h == id);
+        let style = move |t: &iced::Theme, st: iced::widget::button::Status| {
+            if hidden {
+                theme::ghost_button(t, st)
+            } else {
+                theme::outline_button(t, st)
+            }
+        };
+        let text_label = format!("{label}{}", if hidden { "（隐）" } else { "" });
+        tb_row = tb_row.push(
+            button(text(text_label).size(11))
+                .on_press(Message::ToolbarToggle(id.into()))
+                .padding([2, 6])
+                .style(style),
+        );
+    }
+    let tb_card = container(tb_row)
+        .padding(8)
+        .width(Length::Fill)
+        .style(theme::reader_meta);
+
     let mut page = column![page_header, form_card].spacing(20).max_width(640);
     if !first_run {
         page = page.push(list_col);
         page = page.push(contacts_col);
         page = page.push(templates_col);
         page = page.push(undo_card);
+        page = page.push(tb_card);
         page = page.push(stats_col);
     }
     page = page.push(ai_col);

@@ -79,8 +79,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     } else {
         Space::new().width(0).into()
     };
-    let topbar = container(
-        row![
+    // 顶栏按钮显隐（自定义工具栏；hidden_toolbar 存按钮 id，设置页配置）
+    let tb_hidden = |id: &str| state.prefs.hidden_toolbar.iter().any(|h| h == id);
+    let mut tb = row![];
+    if !tb_hidden("compose") {
+        tb = tb.push(
             button(text(state.l().compose_new).size(13))
                 .on_press_maybe(if state.account_names.is_empty() {
                     None
@@ -89,7 +92,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 })
                 .padding([5, 12])
                 .style(theme::accent_button),
-            // 应用名不进顶栏：窗口标题/程序坞已有身份，能不显示的就不显示
+        );
+    }
+    // 应用名不进顶栏：窗口标题/程序坞已有身份，能不显示的就不显示
+    if !tb_hidden("threads") {
+        tb = tb.push(
             button(
                 // 显示当前模式（点击切换）：「会话视图 ⇄ 平铺视图」一眼自明
                 text(if state.nav.threaded {
@@ -97,14 +104,19 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 } else {
                     state.l().view_flat
                 })
-                .size(13)
+                .size(13),
             )
             .on_press(Message::ToggleThreading)
             .padding([4, 8])
             .style(theme::ghost_button),
-            // 会话视图下才有意义：全部展开/折叠当前邮箱的会话
-            expand_collapse,
-            // 布局切换（三栏 ⇄ 列表+底部预览；▤=三栏 ▥=底部）
+        );
+    }
+    // 会话视图下才有意义：全部展开/折叠当前邮箱的会话
+    if !tb_hidden("expand") {
+        tb = tb.push(expand_collapse);
+    }
+    if !tb_hidden("layout") {
+        tb = tb.push(
             button(
                 text(if state.prefs.layout == 0 {
                     "▤"
@@ -116,43 +128,53 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .on_press(Message::ToggleLayout)
             .padding([4, 8])
             .style(theme::ghost_button),
-            text_input_search(state),
+        );
+    }
+    if !tb_hidden("search") {
+        tb = tb.push(text_input_search(state));
+    }
+    if !tb_hidden("refresh") {
+        tb = tb.push(
             button(text("↻").size(13))
                 .on_press(Message::ManualRefresh)
                 .padding([4, 8])
                 .style(theme::ghost_button),
-            text(status_line.clone())
-                .size(11)
-                .style(theme::secondary_text),
-            // 撤销发送横幅：倒计时+撤销按钮（窗口关闭前一直可见）
-            if let Some(u) = &state.undo_send {
-                let left = u
-                    .until
-                    .saturating_duration_since(std::time::Instant::now())
-                    .as_secs();
-                let banner: Element<Message> = row![
-                    text(format!(
-                        "{} {}s",
-                        if state.l().undo_banner.is_empty() {
-                            ""
-                        } else {
-                            state.l().undo_banner
-                        },
-                        left
-                    ))
-                    .size(12),
-                    button(text(state.l().undo_btn).size(12))
-                        .on_press(Message::UndoSendClicked)
-                        .padding([2, 8])
-                        .style(theme::accent_button),
-                ]
-                .spacing(6)
-                .into();
-                banner
-            } else {
-                Space::new().width(0).into()
-            },
-            Space::new().width(Length::Fill),
+        );
+    }
+    tb = tb.push(
+        text(status_line.clone())
+            .size(11)
+            .style(theme::secondary_text),
+    );
+    // 撤销发送横幅：倒计时+撤销按钮（窗口关闭前一直可见）
+    if let Some(u) = &state.undo_send {
+        let left = u
+            .until
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs();
+        tb = tb.push(
+            row![
+                text(format!(
+                    "{} {}s",
+                    if state.l().undo_banner.is_empty() {
+                        ""
+                    } else {
+                        state.l().undo_banner
+                    },
+                    left
+                ))
+                .size(12),
+                button(text(state.l().undo_btn).size(12))
+                    .on_press(Message::UndoSendClicked)
+                    .padding([2, 8])
+                    .style(theme::accent_button),
+            ]
+            .spacing(6),
+        );
+    }
+    tb = tb.push(Space::new().width(Length::Fill));
+    if !tb_hidden("theme") {
+        tb = tb.push(
             button(
                 text(if matches!(state.prefs.ui_theme, iced::Theme::Dark) {
                     "☀"
@@ -164,19 +186,25 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .on_press(Message::ToggleUiTheme)
             .padding([4, 8])
             .style(theme::ghost_button),
+        );
+    }
+    if !tb_hidden("lang") {
+        tb = tb.push(
             button(text(state.prefs.lang.toggle_label()).size(13))
                 .on_press(Message::ToggleLang)
                 .padding([4, 8])
                 .style(theme::ghost_button),
+        );
+    }
+    if !tb_hidden("settings") {
+        tb = tb.push(
             button(text(state.l().add_account).size(13))
                 .on_press(Message::SetupOpen)
                 .padding([4, 8])
                 .style(theme::ghost_button),
-        ]
-        .spacing(10)
-        .padding([8, 14]),
-    )
-    .style(theme::toolbar_bg);
+        );
+    }
+    let topbar = container(tb.spacing(10).padding([8, 14])).style(theme::toolbar_bg);
 
     // 侧栏：按账号分组（macOS Mail 式：重底色 + 圆角选中）
     let mut sidebar = column![].spacing(1).padding(10);

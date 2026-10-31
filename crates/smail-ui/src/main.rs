@@ -241,6 +241,8 @@ pub(crate) enum Message {
     UndoSecsPick(u64),
     /// 布局切换（三栏 ⇄ 列表+底部预览）
     ToggleLayout,
+    /// 设置页：顶栏按钮显隐切换（参数=按钮 id）
+    ToolbarToggle(String),
     /// vCard 导入/导出（通讯录区；参数=所选文件路径）
     VcardImportPick,
     VcardImportPicked(String),

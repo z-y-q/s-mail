@@ -90,6 +90,8 @@ pub(crate) struct UiPrefs {
     pub(crate) undo_secs: u64,
     /// 布局模式（0=三栏，1=列表+底部预览）
     pub(crate) layout: u8,
+    /// 顶栏隐藏的按钮 id（自定义工具栏；可选 id 见 TB_* 常量）
+    pub(crate) hidden_toolbar: Vec<String>,
     /// 本地旗标颜色（键=hash 字符串，值=色名）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -108,6 +110,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         templates: vec![],
         undo_secs: 10,
         layout: 0,
+        hidden_toolbar: vec![],
         flag_colors: std::collections::HashMap::new(),
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
@@ -174,6 +177,12 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         if let Some(n) = v.get("layout").and_then(|x| x.as_u64()) {
             prefs.layout = n as u8;
         }
+        if let Some(a) = v.get("hidden_toolbar").and_then(|x| x.as_array()) {
+            prefs.hidden_toolbar = a
+                .iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect();
+        }
         if let Some(obj) = v.get("flag_colors").and_then(|x| x.as_object()) {
             for (k, val) in obj {
                 if let Some(color) = val.as_str() {
@@ -199,6 +208,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "templates": p.templates,
         "undo_secs": p.undo_secs,
         "layout": p.layout,
+        "hidden_toolbar": p.hidden_toolbar,
         "flag_colors": p.flag_colors,
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
@@ -279,6 +289,8 @@ pub(crate) struct Lex {
     /// vCard 导入导出按钮
     pub(crate) vcard_import: &'static str,
     pub(crate) vcard_export: &'static str,
+    /// 设置页自定义工具栏区
+    pub(crate) toolbar_hdr: &'static str,
     /// 右键菜单：加入/移出 VIP 发件人
     pub(crate) vip_add: &'static str,
     pub(crate) vip_remove: &'static str,
@@ -575,6 +587,7 @@ pub(crate) const ZH: Lex = Lex {
     stats_n: "{n} 封",
     vcard_import: "导入 vCard",
     vcard_export: "导出 vCard",
+    toolbar_hdr: "顶栏按钮（点按切换显隐）",
     undo_hdr: "撤销发送（发送后 N 秒内可撤销）",
     mark_all_read: "全部已读",
     apply_rules: "应用规则",
@@ -858,6 +871,7 @@ pub(crate) const EN: Lex = Lex {
     stats_n: "{n} mails",
     vcard_import: "Import vCard",
     vcard_export: "Export vCard",
+    toolbar_hdr: "Toolbar buttons (click to show/hide)",
     undo_hdr: "Undo send (revoke within N seconds)",
     mark_all_read: "Mark all read",
     apply_rules: "Apply rules",
@@ -1150,6 +1164,7 @@ mod tests {
             }],
             undo_secs: 20,
             layout: 0,
+            hidden_toolbar: vec![],
             flag_colors: std::collections::HashMap::new(),
         };
         save_prefs(&dir, &p);
