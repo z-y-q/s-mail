@@ -765,6 +765,67 @@ impl ServiceInner {
                     });
                 }
             }
+            Cmd::ImportVcard(path) => {
+                let items = match std::fs::read_to_string(&path) {
+                    Ok(txt) => parse_vcard(&txt),
+                    Err(e) => {
+                        self.emit(Event::Status(self.trf(
+                            "vCard 读取失败：{}",
+                            "Failed to read vCard: {}",
+                            &[&e],
+                        )));
+                        return false;
+                    }
+                };
+                let n = items.len();
+                if let Err(e) = store.upsert_contacts_batch(&items) {
+                    self.emit(Event::Status(self.trf(
+                        "通讯录写入失败：{}",
+                        "Failed to write contacts: {}",
+                        &[&e],
+                    )));
+                    return false;
+                }
+                let rows = store.list_contacts_full().unwrap_or_default();
+                self.emit(Event::ContactsFull(rows));
+                self.emit(Event::Status(self.trf(
+                    "vCard 导入完成：{} 条",
+                    "vCard import done: {} contacts",
+                    &[&n],
+                )));
+            }
+            Cmd::ExportVcard(path) => {
+                let rows = store.list_contacts_full().unwrap_or_default();
+                let mut out = String::new();
+                for c in &rows {
+                    let name = if c.name.is_empty() {
+                        c.email.clone()
+                    } else {
+                        c.name.clone()
+                    };
+                    out.push_str("BEGIN:VCARD\r\nVERSION:3.0\r\n");
+                    out.push_str(&format!("FN:{}\r\n", vcard_escape(&name)));
+                    out.push_str(&format!("N:{};;;\r\n", vcard_escape(&name)));
+                    out.push_str(&format!("EMAIL;TYPE=INTERNET:{}\r\n", c.email));
+                    out.push_str("END:VCARD\r\n");
+                }
+                match std::fs::write(&path, out) {
+                    Ok(()) => {
+                        self.emit(Event::Status(self.trf(
+                            "vCard 导出完成：{} 条 → {}",
+                            "vCard export done: {} contacts → {}",
+                            &[&rows.len(), &path],
+                        )));
+                    }
+                    Err(e) => {
+                        self.emit(Event::Status(self.trf(
+                            "vCard 写出失败：{}",
+                            "Failed to write vCard: {}",
+                            &[&e],
+                        )));
+                    }
+                }
+            }
             Cmd::Redirect { hash, to } => {
                 // 正文已缓存：立刻重投。未缓存：转 Reader 现取（服务循环内联
                 // fetch_body 会与 IDLE 连接争锁死锁——m22 实测），取件完成经
@@ -977,4 +1038,54 @@ impl ServiceInner {
             self.emit_folder_counts(store);
         }
     }
+}
+
+/// vCard 3.0 文本解析（最小集）：提取每个 VCARD 块的 (email, name)。
+/// FN 优先做名字，缺省用 EMAIL 本地部；EMAIL 行容忍参数前缀（EMAIL;TYPE=...:）
+fn parse_vcard(txt: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut name = String::new();
+    let mut email = String::new();
+    let mut inside = false;
+    for raw in txt.lines() {
+        let line = raw.trim_end_matches('\r').trim();
+        let upper = line.to_uppercase();
+        if upper.starts_with("BEGIN:VCARD") {
+            inside = true;
+            name.clear();
+            email.clear();
+            continue;
+        }
+        if upper.starts_with("END:VCARD") {
+            if inside && !email.is_empty() {
+                if name.is_empty() {
+                    name = email.split('@').next().unwrap_or(&email).to_string();
+                }
+                out.push((email.clone(), name.clone()));
+            }
+            inside = false;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if upper.starts_with("FN:") {
+            name = line[3..].trim().to_string();
+        } else if upper.starts_with("EMAIL") {
+            if let Some(idx) = line.find(':') {
+                let v = line[idx + 1..].trim();
+                if !v.is_empty() && email.is_empty() {
+                    email = v.to_string();
+                }
+            }
+        }
+    }
+    out
+}
+
+/// vCard 文本值转义（反斜杠/分号/逗号）
+fn vcard_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
 }

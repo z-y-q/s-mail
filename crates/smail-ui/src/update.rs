@@ -899,6 +899,10 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::UndoSendClicked
         | Message::UndoSendExpire(..)
         | Message::UndoSecsPick(..)
+        | Message::VcardImportPick
+        | Message::VcardImportPicked(..)
+        | Message::VcardExportPick
+        | Message::VcardExportPicked(..)
         | Message::ScheduleToggle
         | Message::ScheduleInput(..)
         | Message::ScheduleConfirm

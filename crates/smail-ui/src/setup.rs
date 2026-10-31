@@ -768,16 +768,28 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         }
     }
 
-    // 通讯录（收信自动收集；按账号分组展示 + 删除）
+    // 通讯录（收信自动收集；按账号分组展示 + 删除 + vCard 导入导出）
     let mut contacts_col = column![
         text(state.l().contacts_hdr)
             .size(13)
             .font(theme::ui_font(iced::font::Weight::Semibold)),
-        iced::widget::text_input("搜索通讯录", &state.contact_search)
-            .on_input(Message::ContactSearchInput)
-            .size(12)
-            .width(200)
-            .padding(4),
+        row![
+            iced::widget::text_input("搜索通讯录", &state.contact_search)
+                .on_input(Message::ContactSearchInput)
+                .size(12)
+                .width(200)
+                .padding(4),
+            Space::new().width(Length::Fill),
+            button(text(state.l().vcard_import).size(11))
+                .on_press(Message::VcardImportPick)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+            button(text(state.l().vcard_export).size(11))
+                .on_press(Message::VcardExportPick)
+                .padding([2, 8])
+                .style(theme::ghost_button),
+        ]
+        .spacing(6),
     ]
     .spacing(4);
     if state.contacts_full.is_empty() {

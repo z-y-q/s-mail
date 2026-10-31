@@ -7,7 +7,7 @@ use crate::{
 };
 use iced::widget::text_editor;
 use iced::Task;
-use smail_core::SessionCmd;
+use smail_core::{Cmd, SessionCmd};
 
 /// 消息组的统一入口（分发器按 or-pattern 委托；模式与处理体自 update.rs 原样搬运）
 pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
@@ -106,6 +106,44 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
         Message::UndoSecsPick(secs) => {
             state.prefs.undo_secs = secs;
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
+        // ---- vCard 导入/导出（通讯录区） ----
+        Message::VcardImportPick => Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .set_title("选择 vCard 文件")
+                    .add_filter("vCard", &["vcf", "vcard"])
+                    .pick_file()
+                    .await
+                    .map(|f| f.path().to_string_lossy().to_string())
+            },
+            |p| Message::VcardImportPicked(p.unwrap_or_default()),
+        ),
+        Message::VcardImportPicked(path) => {
+            if path.is_empty() {
+                return Task::none();
+            }
+            state.send(0, Cmd::ImportVcard(path));
+            Task::none()
+        }
+        Message::VcardExportPick => Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .set_title("vCard 保存到")
+                    .set_file_name("contacts.vcf")
+                    .add_filter("vCard", &["vcf"])
+                    .save_file()
+                    .await
+                    .map(|f| f.path().to_string_lossy().to_string())
+            },
+            |p| Message::VcardExportPicked(p.unwrap_or_default()),
+        ),
+        Message::VcardExportPicked(path) => {
+            if path.is_empty() {
+                return Task::none();
+            }
+            state.send(0, Cmd::ExportVcard(path));
             Task::none()
         }
         Message::SetupPreset(p) => {

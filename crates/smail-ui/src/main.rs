@@ -239,6 +239,11 @@ pub(crate) enum Message {
     UndoSendExpire(usize, i64),
     /// 设置页：撤销发送窗口时长选择（0=关）
     UndoSecsPick(u64),
+    /// vCard 导入/导出（通讯录区；参数=所选文件路径）
+    VcardImportPick,
+    VcardImportPicked(String),
+    VcardExportPick,
+    VcardExportPicked(String),
     // ---- 定时发送（hold 通道；send_at=用户指定时刻） ----
     ScheduleToggle,
     ScheduleInput(String),

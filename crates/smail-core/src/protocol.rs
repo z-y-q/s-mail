@@ -61,6 +61,10 @@ pub enum Cmd {
     },
     /// 撤销延后投递：直接删该行（仅 status='hold' 有效，pending 删不掉）
     DiscardOutbox(i64),
+    /// vCard 导入：解析文件逐条 upsert 通讯录，完成后广播 ContactsFull
+    ImportVcard(String),
+    /// vCard 导出：全部通讯录写成 vCard 3.0 文件，状态行报条数
+    ExportVcard(String),
     SaveDraft {
         id: Option<i64>,
         to: String,
