@@ -18,9 +18,12 @@
 //!
 //! 非 macOS 平台：依赖不引入，全部函数为空实现（按钮入口在视图层一并隐藏）。
 
+#[cfg(target_os = "macos")]
 use iced::Task;
 
-use crate::{Message, State};
+#[cfg(target_os = "macos")]
+use crate::Message;
+use crate::State;
 
 /// 切换原样渲染开关（阅读器工具栏按钮；非 macOS 无入口）
 #[cfg(target_os = "macos")]
