@@ -116,6 +116,8 @@ pub(crate) struct Prefs {
     pub(crate) muted: Vec<String>,
     /// 忽略的会话规范主题键（列表隐藏+通知跳过；ui.json 持久化）
     pub(crate) ignored: Vec<String>,
+    /// 本地旗标颜色（键=邮件 hash 字符串，值=色名；IMAP 无色旗标，本地属性）
+    pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
 
 /// 导航与视图状态（文件夹/搜索/列表显示/分页）——State 拆分第二组
@@ -435,6 +437,7 @@ impl State {
                         last_view: None,
                         muted: bp.muted,
                         ignored: bp.ignored,
+                        flag_colors: bp.flag_colors,
                     },
                     accounts: accounts2,
                     cfg_path: cfg_path2,
@@ -600,6 +603,7 @@ impl State {
                         last_view: None,
                         muted: vec![],
                         ignored: bp.ignored,
+                        flag_colors: bp.flag_colors,
                     },
                     accounts: vec![],
                     cfg_path: cfg_path.clone(),
@@ -721,6 +725,7 @@ impl State {
             columns: Some((self.sidebar_w, self.list_w)),
             muted: self.prefs.muted.clone(),
             ignored: self.prefs.ignored.clone(),
+            flag_colors: self.prefs.flag_colors.clone(),
         }
     }
 
@@ -1101,6 +1106,8 @@ pub(crate) struct BootPrefs {
     pub(crate) win: Option<[f32; 4]>,
     pub(crate) muted: Vec<String>,
     pub(crate) ignored: Vec<String>,
+    /// 本地旗标颜色（键=hash 字符串）
+    pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
 
 pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
@@ -1123,6 +1130,7 @@ pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
         win: prefs.win,
         muted: prefs.muted,
         ignored: prefs.ignored,
+        flag_colors: prefs.flag_colors,
     }
 }
 

@@ -80,6 +80,32 @@ fn gold() -> Color {
     Color::from_rgb(1.0, 0.72, 0.15)
 }
 
+/// 旗标色名 → 显示色（无此色名返回 None=默认金星标）
+pub fn flag_color(name: &str) -> Option<Color> {
+    match name {
+        "red" => Some(Color::from_rgb(1.0, 0.27, 0.23)),
+        "orange" => Some(Color::from_rgb(1.0, 0.58, 0.0)),
+        "green" => Some(Color::from_rgb(0.20, 0.78, 0.35)),
+        "blue" => Some(Color::from_rgb(0.0, 0.48, 1.0)),
+        "purple" => Some(Color::from_rgb(0.68, 0.37, 0.98)),
+        "gray" => Some(Color::from_rgb(0.55, 0.55, 0.58)),
+        _ => None,
+    }
+}
+
+/// 色名 → 中文名（状态行/菜单显示用）
+pub fn flag_color_zh(name: &str) -> &'static str {
+    match name {
+        "red" => "红",
+        "orange" => "橙",
+        "green" => "绿",
+        "blue" => "蓝",
+        "purple" => "紫",
+        "gray" => "灰",
+        _ => "无",
+    }
+}
+
 /// 主题感知成功色：深色用 systemGreen 亮变体（原浅色值在深底上发暗）
 fn success(t: &Theme) -> Color {
     match t {

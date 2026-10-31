@@ -882,6 +882,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::BatchExportDone { .. }
         | Message::IgnoreThread(..)
         | Message::UnignoreThread(..)
+        | Message::CycleFlagColor(..)
         | Message::RedirectPrompt(..)
         | Message::RedirectToInput(..)
         | Message::RedirectNow(..)

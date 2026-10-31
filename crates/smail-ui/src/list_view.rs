@@ -914,11 +914,21 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         .get(&r.envelope_hash)
                         .copied()
                         .unwrap_or(false);
+                    // 本地旗标色：有色名时覆盖默认金星标
+                    let flag_color = state
+                        .prefs
+                        .flag_colors
+                        .get(&r.envelope_hash.to_string())
+                        .cloned();
+                    let star_color = flag_color
+                        .as_deref()
+                        .and_then(theme::flag_color)
+                        .unwrap_or_else(theme::star_color);
                     let star_txt: Element<Message> = if r.flagged {
                         text("★")
                             .size(13)
-                            .style(|_t| text::Style {
-                                color: Some(theme::star_color()),
+                            .style(move |_t| text::Style {
+                                color: Some(star_color),
                             })
                             .into()
                     } else {
@@ -1003,11 +1013,19 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     }
                 }
                 DispKind::ThreadChild => {
+                    let child_color = state
+                        .prefs
+                        .flag_colors
+                        .get(&r.envelope_hash.to_string())
+                        .cloned()
+                        .as_deref()
+                        .and_then(theme::flag_color)
+                        .unwrap_or_else(theme::star_color);
                     let star_txt: Element<Message> = if r.flagged {
                         text("★")
                             .size(11)
-                            .style(|_t| text::Style {
-                                color: Some(theme::star_color()),
+                            .style(move |_t| text::Style {
+                                color: Some(child_color),
                             })
                             .into()
                     } else {
@@ -1069,11 +1087,19 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 }
                 DispKind::Flat => {
                     let dot = if r.seen { "" } else { "●" };
+                    let flat_color = state
+                        .prefs
+                        .flag_colors
+                        .get(&r.envelope_hash.to_string())
+                        .cloned()
+                        .as_deref()
+                        .and_then(theme::flag_color)
+                        .unwrap_or_else(theme::star_color);
                     let star_txt: Element<Message> = if r.flagged {
                         text("★")
                             .size(13)
-                            .style(|_t| text::Style {
-                                color: Some(theme::star_color()),
+                            .style(move |_t| text::Style {
+                                color: Some(flat_color),
                             })
                             .into()
                     } else {
@@ -1485,6 +1511,19 @@ fn context_menu_row(c: &MenuCtx<'_>) -> Element<'static, Message> {
                 } else {
                     Message::IgnoreThread(subject_key)
                 }
+            ),
+            // 旗标颜色循环（本地属性；色名进右键项一眼可见）
+            item(
+                {
+                    let cur = state
+                        .prefs
+                        .flag_colors
+                        .get(&hash.to_string())
+                        .map(|n| theme::flag_color_zh(n))
+                        .unwrap_or("无");
+                    format!("旗标颜色（当前：{cur}）")
+                },
+                Message::CycleFlagColor(acct, hash)
             ),
             (is_sent).then(|| item("再次发送".into(), Message::Resend(acct, hash))),
             item(star_label, Message::ToggleStar(acct, hash, !flagged)),

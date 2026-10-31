@@ -556,6 +556,29 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             Task::none()
         }
+        Message::CycleFlagColor(acct, hash) => {
+            // 色板循环：无 → 红 → 橙 → 绿 → 蓝 → 紫 → 灰 → 无
+            const FLAG_COLORS: [&str; 6] = ["red", "orange", "green", "blue", "purple", "gray"];
+            let key = hash.to_string();
+            let next = match state.prefs.flag_colors.get(&key).map(String::as_str) {
+                Some(cur) => match FLAG_COLORS.iter().position(|c| c == &cur) {
+                    Some(i) if i + 1 < FLAG_COLORS.len() => FLAG_COLORS[i + 1],
+                    _ => {
+                        state.prefs.flag_colors.remove(&key);
+                        state.rebuild_display();
+                        crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+                        state.statuses.insert(acct, "旗标颜色已清除".into());
+                        return Task::none();
+                    }
+                },
+                None => FLAG_COLORS[0],
+            };
+            state.prefs.flag_colors.insert(key, next.to_string());
+            state.rebuild_display();
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            state.statuses.insert(acct, format!("旗标颜色：{next}"));
+            Task::none()
+        }
         Message::UnignoreThread(key) => {
             state.prefs.ignored.retain(|i| i != &key);
             state.rebuild_display();

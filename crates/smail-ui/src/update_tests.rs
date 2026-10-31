@@ -45,6 +45,7 @@ fn ts() -> State {
             last_view: None,
             muted: vec![],
             ignored: vec![],
+            flag_colors: Default::default(),
         },
         session: None,
         oauth_prompt: None,

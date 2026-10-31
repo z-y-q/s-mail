@@ -76,6 +76,8 @@ pub(crate) struct UiPrefs {
     pub(crate) muted: Vec<String>,
     /// 忽略的会话规范主题键（列表隐藏；新邮件不通知）
     pub(crate) ignored: Vec<String>,
+    /// 本地旗标颜色（键=hash 字符串，值=色名）
+    pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
 
 pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
@@ -88,6 +90,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         columns: None,
         muted: vec![],
         ignored: vec![],
+        flag_colors: std::collections::HashMap::new(),
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
         return prefs;
@@ -134,6 +137,13 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect();
         }
+        if let Some(obj) = v.get("flag_colors").and_then(|x| x.as_object()) {
+            for (k, val) in obj {
+                if let Some(color) = val.as_str() {
+                    prefs.flag_colors.insert(k.clone(), color.to_string());
+                }
+            }
+        }
     }
     prefs
 }
@@ -148,6 +158,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "columns": p.columns.map(|(s, l)| serde_json::json!([s, l])),
         "muted": p.muted,
         "ignored": p.ignored,
+        "flag_colors": p.flag_colors,
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
 }
@@ -1029,6 +1040,7 @@ mod tests {
             columns: Some((240.0, 420.0)),
             muted: vec!["spam@x.com".into()],
             ignored: vec!["周报".into()],
+            flag_colors: std::collections::HashMap::new(),
         };
         save_prefs(&dir, &p);
         let p = load_prefs(&dir);
