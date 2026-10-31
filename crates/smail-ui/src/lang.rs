@@ -339,6 +339,10 @@ pub(crate) struct Lex {
     pub(crate) sync_interval_hint: &'static str,
     pub(crate) err_sync_interval: &'static str,
     pub(crate) export_btn: &'static str,
+    /// 批量条：导出勾选邮件为 .eml
+    pub(crate) batch_export: &'static str,
+    /// 批量导出时未勾选任何邮件的提示
+    pub(crate) batch_export_empty: &'static str,
     pub(crate) rules_btn: &'static str,
     pub(crate) rules_hdr: &'static str,
     pub(crate) rules_add: &'static str,
@@ -600,6 +604,8 @@ pub(crate) const ZH: Lex = Lex {
     sync_interval_hint: "切文件夹时超过该间隔才重拉服务器；新邮件推送（IDLE）不受影响，收信始终实时",
     err_sync_interval: "同步间隔无效（需正整数秒）",
     export_btn: "导出全部",
+    batch_export: "导出选中",
+    batch_export_empty: "先勾选邮件再批量导出",
     rules_btn: "规则",
     rules_hdr: "过滤规则（新邮件自动执行）",
     rules_add: "＋ 添加规则",
@@ -859,6 +865,8 @@ pub(crate) const EN: Lex = Lex {
     sync_interval_hint: "Folders older than this are re-fetched on open; IDLE push is unaffected — new mail still arrives instantly",
     err_sync_interval: "Invalid interval (positive integer seconds)",
     export_btn: "Export all",
+    batch_export: "Export selected",
+    batch_export_empty: "Select messages first, then export",
     rules_btn: "Rules",
     rules_hdr: "Filter rules (run on new mail)",
     rules_add: "＋ Add rule",

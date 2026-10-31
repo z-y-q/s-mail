@@ -876,6 +876,9 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::Resend(..)
         | Message::ExportFolderRequest(..)
         | Message::ExportFolderPicked(..)
+        | Message::BatchExportSelected
+        | Message::BatchExportPicked(..)
+        | Message::BatchExportDone { .. }
         | Message::ForwardAttachmentsReady(..)
         | Message::AskDelete(..)
         | Message::CancelDelete

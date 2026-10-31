@@ -1556,6 +1556,11 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
                 .on_press(Message::AskBatchDelete)
                 .padding([2, 8])
                 .style(theme::ghost_button),
+            // 批量导出勾选邮件为 .eml（目录选择后后台写出）
+            button(text(state.l().batch_export).size(13))
+                .on_press(Message::BatchExportSelected)
+                .padding([2, 8])
+                .style(theme::ghost_button),
             Space::new().width(Length::Fill),
             button(
                 text(if state.ai.busy == Some(crate::ai::BusyKind::Organize) {

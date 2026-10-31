@@ -206,6 +206,15 @@ pub(crate) enum Message {
     AskBatchDelete,
     BatchDeleteConfirm,
     BatchDeleteCancel,
+    /// 批量导出勾选邮件为 .eml（先弹目录选择）
+    BatchExportSelected,
+    /// 目录已选：按勾选清单批量写出
+    BatchExportPicked(Vec<(usize, i64)>, Option<std::path::PathBuf>),
+    /// 批量导出完成（成功数 / 总数）
+    BatchExportDone {
+        done: usize,
+        total: usize,
+    },
     NewFolderOpen(usize),
     NewFolderInput(String),
     NewFolderConfirm,

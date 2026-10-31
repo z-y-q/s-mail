@@ -475,6 +475,74 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::BatchExportSelected => {
+            // 批量导出勾选邮件：勾选集（跨账号，按各自 slug 找正文缓存）
+            // → 目录选择 → BatchExportPicked 后台批量写出
+            if state.batch.selection.is_empty() {
+                state.error = Some(state.l().batch_export_empty.into());
+                return Task::none();
+            }
+            let pairs: Vec<(usize, i64)> = state
+                .batch
+                .selection
+                .iter()
+                .map(|(a, h)| (*a, *h))
+                .collect();
+            Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .set_title("选择导出目录")
+                        .pick_folder()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                move |dir| Message::BatchExportPicked(pairs, dir),
+            )
+        }
+        Message::BatchExportPicked(pairs, Some(dir)) => {
+            let data_root = state.data_root.clone();
+            let slugs: Vec<String> = state.accounts.iter().map(|a| a.slug.clone()).collect();
+            let dir2 = dir.clone();
+            let total = pairs.len();
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let mut done = 0usize;
+                        for (acct, hash) in &pairs {
+                            let slug = slugs.get(*acct).cloned().unwrap_or_default();
+                            let Ok(bytes) = std::fs::read(
+                                data_root
+                                    .join(&slug)
+                                    .join("bodies")
+                                    .join(format!("{hash}.eml")),
+                            ) else {
+                                continue;
+                            };
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            if std::fs::write(dir2.join(format!("{ts}_{hash}.eml")), &bytes).is_ok()
+                            {
+                                done += 1;
+                            }
+                        }
+                        (done, total)
+                    })
+                    .await
+                    .unwrap_or((0, total))
+                },
+                move |(done, total)| Message::BatchExportDone { done, total },
+            )
+        }
+        Message::BatchExportPicked(_, None) => Task::none(),
+        Message::BatchExportDone { done, total } => {
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                format!("批量导出完成：{done}/{total} 封"),
+            );
+            Task::none()
+        }
         Message::ExportFolderRequest(acct, folder) => {
             // 导出当前文件夹全部邮件为 .eml：先弹目录选择，回填后后台写文件
             let hashes: Vec<i64> = state
