@@ -350,3 +350,15 @@ pub fn reader_meta(t: &Theme) -> container::Style {
         ..Default::default()
     }
 }
+
+/// 统一滚动条：细轨 6px + 嵌入式留缝 4px（iced 默认 10px 且整体叠在
+/// 内容上——窄列表里滚动条直接压字）。所有 scrollable 调用点统一走它
+pub(crate) fn scroller() -> iced::widget::scrollable::Direction {
+    iced::widget::scrollable::Direction::Vertical(
+        iced::widget::scrollable::Scrollbar::new()
+            .width(6)
+            .scroller_width(6)
+            .margin(1)
+            .spacing(4),
+    )
+}

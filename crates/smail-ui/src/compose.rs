@@ -482,6 +482,7 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
                     )
                     .map(Message::LinkClicked),
                 )
+                .direction(theme::scroller())
                 .height(Length::Fill),
             )
             .height(400)
@@ -563,6 +564,7 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         .spacing(8)
         .padding(16),
     )
+    .direction(theme::scroller())
     .into()
 }
 

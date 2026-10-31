@@ -517,7 +517,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             );
         }
         reader_col = reader_col.push(
-            container(scrollable(picks).height(120))
+            container(scrollable(picks).direction(theme::scroller()).height(120))
                 .padding(6)
                 .style(theme::reader_meta),
         );
@@ -603,13 +603,21 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
                 }),
             state.html.pane.clone(),
         );
-        container(column![scrollable(reader_col).height(Length::Shrink), pane].spacing(8))
-            .padding(16)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        container(
+            column![
+                scrollable(reader_col)
+                    .direction(theme::scroller())
+                    .height(Length::Shrink),
+                pane
+            ]
+            .spacing(8),
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     } else {
-        container(scrollable(reader_col.push(body_view)))
+        container(scrollable(reader_col.push(body_view)).direction(theme::scroller()))
             .padding(16)
             .width(Length::Fill)
             .height(Length::Fill)

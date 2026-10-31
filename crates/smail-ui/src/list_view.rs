@@ -49,7 +49,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
 
     // 会话视图下才有意义：全部展开/折叠当前邮箱的会话。
     // 单个状态感知按钮——有已展开的会话显示「折叠全部」，否则「展开全部」；
-    // 平铺/搜索/统一收件箱/草稿/发件箱视图下是死按钮，直接隐藏
+    // 平铺/搜索/统一收件箱/草稿/发件箱视图下是死按钮，直接隐藏；
+    // 且当前列表里没有任何多封会话时也隐藏（全是单封时展开/折叠无视觉效果，
+    // 按钮出现却无效正是「没用」反馈的根因）
     let cur_view = state.nav.cur.as_ref().map(|(_, c)| c.as_str());
     let thread_capable = state.nav.threaded
         && !state.nav.in_search
@@ -58,7 +60,11 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             cur_view,
             Some("__drafts__") | Some("__outbox__") | Some("__all_inbox__")
         );
-    let expand_collapse: Element<Message> = if thread_capable {
+    let has_multi_thread = state
+        .mail_display
+        .iter()
+        .any(|d| matches!(&d.kind, crate::DispKind::ThreadRoot { count, .. } if *count > 1));
+    let expand_collapse: Element<Message> = if thread_capable && has_multi_thread {
         let any_expanded = state.expanded.values().any(|v| *v);
         let (label, msg) = if any_expanded {
             (state.l().collapse_all, Message::CollapseAllThreads)
@@ -445,7 +451,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         }
         sidebar = sidebar.push(Space::new().height(8));
     }
-    let sidebar = container(scrollable(sidebar))
+    let sidebar = container(scrollable(sidebar).direction(theme::scroller()))
         .width(state.sidebar_w)
         .height(Length::Fill)
         .style(theme::sidebar_bg);
@@ -1236,6 +1242,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
 
     let mail_list = container(
         scrollable(list)
+            .direction(theme::scroller())
             .id(iced::widget::Id::new(MAIL_LIST_ID))
             .height(Length::Fill)
             .on_scroll(|vp: scrollable::Viewport| {
@@ -1367,11 +1374,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-/// 拖拽分割条：5px 窄条，按下启动全局拖拽（列宽实时跟随光标）
+/// 拖拽分割条：8px 可抓取 + 悬停变左右箭头光标（macOS 分栏拖拽的
+/// 必备可供性——此前 5px 无光标提示，用户既找不到也想不到能拖）
 fn split_handle(kind: crate::SplitKind) -> Element<'static, Message> {
     mouse_area(
         container(Space::new().width(Length::Fill))
-            .width(5)
+            .width(8)
             .height(Length::Fill)
             .style(|t| container::Style {
                 background: Some(theme::hover_tint(t).into()),
@@ -1379,6 +1387,7 @@ fn split_handle(kind: crate::SplitKind) -> Element<'static, Message> {
             }),
     )
     .on_press(Message::SplitPress(kind))
+    .interaction(iced::mouse::Interaction::ResizingHorizontally)
     .into()
 }
 
@@ -1621,7 +1630,7 @@ fn batch_bar(state: &State) -> Element<'_, Message> {
             );
         }
         col = col.push(
-            container(scrollable(picks).height(110))
+            container(scrollable(picks).direction(theme::scroller()).height(110))
                 .padding(4)
                 .style(theme::reader_meta),
         );

@@ -1020,17 +1020,20 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
             .style(theme::secondary_text),
     );
 
-    container(scrollable(
-        container(page)
-            .width(Length::Fill)
-            .center_x(Length::Fill)
-            .padding(iced::Padding {
-                top: 16.0,
-                right: 0.0,
-                bottom: 24.0,
-                left: 0.0,
-            }),
-    ))
+    container(
+        scrollable(
+            container(page)
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .padding(iced::Padding {
+                    top: 16.0,
+                    right: 0.0,
+                    bottom: 24.0,
+                    left: 0.0,
+                }),
+        )
+        .direction(theme::scroller()),
+    )
     .width(Length::Fill)
     .height(Length::Fill)
     .padding(24)
