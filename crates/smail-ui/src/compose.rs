@@ -565,10 +565,12 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
             .into();
     }
 
-    // 正文区：编辑态 = 工具栏 + 编辑器；预览态 = markdown 排版视图
-    // （与阅读窗同一渲染管线，收发两侧观感一致）
-    let body_area: Element<Message> = if c.preview {
-        match &c.preview_md {
+    // 正文区：
+    // - 分屏所见即所得（preview=true）：编辑器在上持续可写，渲染视图在下
+    //   实时刷新（每次编辑重解析 markdown）——写什么看什么，无需手动切换
+    // - 编辑态：工具栏 + 编辑器 + 提示行
+    let preview_pane: Option<Element<Message>> = if c.preview {
+        Some(match &c.preview_md {
             Some(md) => container(
                 scrollable(
                     iced::widget::markdown::view(
@@ -586,21 +588,32 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
                 .direction(theme::scroller())
                 .height(Length::Fill),
             )
-            .height(400)
+            .height(240)
             .width(Length::Fill)
+            .style(|t| container::Style {
+                border: iced::Border {
+                    width: 1.0,
+                    color: theme::hover_tint(t),
+                    radius: iced::border::Radius::default(),
+                },
+                ..Default::default()
+            })
             .into(),
             None => container(
                 text(state.l().img_loading.to_string())
                     .size(13)
                     .style(theme::secondary_text),
             )
-            .height(400)
+            .height(240)
             .width(Length::Fill)
             .center(Length::Fill)
             .into(),
-        }
+        })
     } else {
-        column![
+        None
+    };
+    let body_area: Element<Message> = {
+        let editor_col = column![
             // 占位提示：text_editor 没有占位符 API，空正文时在上方给一行引导
             (c.body.text().is_empty()).then(|| {
                 text(state.l().body_ph.to_string())
@@ -609,13 +622,18 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
             }),
             text_editor(&c.body)
                 .on_action(Message::ComposeBodyEdit)
-                .height(400),
-            text(state.l().compose_hints.to_string())
-                .size(11)
-                .style(theme::secondary_text),
+                .height(if c.preview { 200 } else { 400 }),
+            (!c.preview).then(|| {
+                text(state.l().compose_hints.to_string())
+                    .size(11)
+                    .style(theme::secondary_text)
+            }),
         ]
-        .spacing(2)
-        .into()
+        .spacing(2);
+        match preview_pane {
+            Some(pane) => column![editor_col, pane].spacing(4).into(),
+            None => editor_col.into(),
+        }
     };
 
     let mut col = column![header.padding([8, 16])].spacing(0);

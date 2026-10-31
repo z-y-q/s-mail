@@ -169,9 +169,30 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             Task::none()
         }
         Message::ComposeBodyEdit(action) => {
-            if let Some(c) = &mut state.compose {
-                c.autosave_at = Some(std::time::Instant::now());
-                c.body.perform(action);
+            let (preview, body) = match &mut state.compose {
+                Some(c) => {
+                    c.autosave_at = Some(std::time::Instant::now());
+                    c.body.perform(action);
+                    (c.preview, c.body.text())
+                }
+                None => return Task::none(),
+            };
+            // 分屏所见即所得：编辑即重解析（渲染面板实时刷新；空正文清面板）
+            if preview {
+                if body.trim().is_empty() {
+                    if let Some(c) = &mut state.compose {
+                        c.preview_md = None;
+                    }
+                    return Task::none();
+                }
+                return Task::perform(
+                    async move {
+                        crate::state::ParsedMd(Arc::new(std::sync::Mutex::new(Some(
+                            iced::widget::markdown::Content::parse(&body),
+                        ))))
+                    },
+                    Message::ComposePreviewReady,
+                );
             }
             Task::none()
         }
@@ -191,6 +212,17 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 selection: Some(crate::compose::offset_to_position(&new_text, sa)),
             });
             c.autosave_at = Some(std::time::Instant::now());
+            // 分屏态：格式化后渲染面板即时刷新（所见即所得的格式化即时生效）
+            if c.preview && !new_text.trim().is_empty() {
+                return Task::perform(
+                    async move {
+                        crate::state::ParsedMd(Arc::new(std::sync::Mutex::new(Some(
+                            iced::widget::markdown::Content::parse(&new_text),
+                        ))))
+                    },
+                    Message::ComposePreviewReady,
+                );
+            }
             Task::none()
         }
         Message::ComposePreviewToggle => {
