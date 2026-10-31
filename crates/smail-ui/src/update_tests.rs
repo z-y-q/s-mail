@@ -44,6 +44,7 @@ fn ts() -> State {
             win_save_at: None,
             last_view: None,
             muted: vec![],
+            ignored: vec![],
         },
         session: None,
         oauth_prompt: None,

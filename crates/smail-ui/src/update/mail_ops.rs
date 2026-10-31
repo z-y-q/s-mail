@@ -544,6 +544,28 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             );
             Task::none()
         }
+        Message::IgnoreThread(key) => {
+            if !state.prefs.ignored.iter().any(|i| i == &key) {
+                state.prefs.ignored.push(key.clone());
+            }
+            state.rebuild_display();
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                "已忽略此会话（新邮件不再提醒，右键可取消）".into(),
+            );
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
+        Message::UnignoreThread(key) => {
+            state.prefs.ignored.retain(|i| i != &key);
+            state.rebuild_display();
+            state.statuses.insert(
+                state.nav.cur.as_ref().map(|(a, _)| *a).unwrap_or(0),
+                "已取消忽略，会话回到列表".into(),
+            );
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
         Message::RedirectPrompt(acct, hash) => {
             state.batch.redirect_prompt = Some((acct, hash));
             state.batch.redirect_to.clear();

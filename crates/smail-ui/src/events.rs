@@ -340,6 +340,10 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             folder,
             hash,
         } => {
+            // 忽略的会话：不通知（列表也已隐藏）
+            if crate::thread_ignored(&state.prefs.ignored, &subject) {
+                return Task::none();
+            }
             // 通知跳转：事件自带 folder/hash（旧版靠 rows 反查——非当前
             // 文件夹的新邮件不在 rows 里会降级为无跳转通知）
             crate::notify::notify_mail(

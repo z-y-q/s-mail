@@ -48,14 +48,20 @@ fn row_matches(f: ListFilter, seen: bool, flagged: bool) -> bool {
 /// 排序仅改变会话间/行间顺序（会话内保持时间升序）
 pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
     let cur_acct = state.nav.cur.as_ref().map(|(a, _)| *a);
+    // 忽略会话过滤：会话键命中忽略集的行不进显示（右键「取消忽略」可恢复）
+    let ignored = |subject: &str| crate::thread_ignored(&state.prefs.ignored, subject);
     let is_drafts = !state.nav.in_search
         && state.nav.cur.as_ref().map(|(_, c)| c == "__drafts__") == Some(true);
     if is_drafts {
         vec![]
     } else if state.nav.threaded && !state.nav.in_search && !state.nav.viewing_unified {
         let acct = cur_acct.unwrap_or(0);
-        let flat: Vec<smail_store::MessageRow> =
-            state.rows.iter().map(|(_, r)| r.clone()).collect();
+        let flat: Vec<smail_store::MessageRow> = state
+            .rows
+            .iter()
+            .map(|(_, r)| r.clone())
+            .filter(|r| !ignored(&r.subject))
+            .collect();
         let mut v = Vec::new();
         // 组结构（根 + 展开的子行）——升序时按组反转，
         // 直接 reverse 整个列表会把子行翻到根前面（显示错乱）
@@ -105,7 +111,10 @@ pub(crate) fn build_mail_display(state: &State) -> Vec<MailDisp> {
         let mut v: Vec<MailDisp> = state
             .rows
             .iter()
-            .filter(|(_, r)| !apply_filter || row_matches(state.nav.list_filter, r.seen, r.flagged))
+            .filter(|(_, r)| {
+                (!apply_filter || row_matches(state.nav.list_filter, r.seen, r.flagged))
+                    && !ignored(&r.subject)
+            })
             .map(|(a, r)| MailDisp {
                 acct: *a,
                 row: r.clone(),

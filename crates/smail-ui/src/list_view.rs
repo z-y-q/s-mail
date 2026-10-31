@@ -990,15 +990,16 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         Message::ThreadRootClicked(acct, r.envelope_hash, *latest),
                     ));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(
+                        list = list.push(context_menu_row(&crate::list_view::MenuCtx {
                             state,
                             acct,
-                            r.envelope_hash,
-                            r.flagged,
-                            &r.from_addr,
-                            smail_core::folder_kind(&r.folder),
-                            &r.folder,
-                        ));
+                            hash: r.envelope_hash,
+                            flagged: r.flagged,
+                            from_addr: &r.from_addr,
+                            subject: &r.subject,
+                            folder_kind: smail_core::folder_kind(&r.folder),
+                            folder_path: &r.folder,
+                        }));
                     }
                 }
                 DispKind::ThreadChild => {
@@ -1054,15 +1055,16 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         Message::RowSelected(acct, r.envelope_hash),
                     ));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(
+                        list = list.push(context_menu_row(&crate::list_view::MenuCtx {
                             state,
                             acct,
-                            r.envelope_hash,
-                            r.flagged,
-                            &r.from_addr,
-                            smail_core::folder_kind(&r.folder),
-                            &r.folder,
-                        ));
+                            hash: r.envelope_hash,
+                            flagged: r.flagged,
+                            from_addr: &r.from_addr,
+                            subject: &r.subject,
+                            folder_kind: smail_core::folder_kind(&r.folder),
+                            folder_path: &r.folder,
+                        }));
                     }
                 }
                 DispKind::Flat => {
@@ -1148,15 +1150,16 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         Message::RowSelected(acct, r.envelope_hash),
                     ));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
-                        list = list.push(context_menu_row(
+                        list = list.push(context_menu_row(&crate::list_view::MenuCtx {
                             state,
                             acct,
-                            r.envelope_hash,
-                            r.flagged,
-                            &r.from_addr,
-                            smail_core::folder_kind(&r.folder),
-                            &r.folder,
-                        ));
+                            hash: r.envelope_hash,
+                            flagged: r.flagged,
+                            from_addr: &r.from_addr,
+                            subject: &r.subject,
+                            folder_kind: smail_core::folder_kind(&r.folder),
+                            folder_path: &r.folder,
+                        }));
                     }
                 }
             }
@@ -1407,18 +1410,31 @@ fn wrap_row_menu<'a>(
         .into()
 }
 
-/// 右键菜单行：动作与阅读页操作条同源（点击后关菜单再转发）。
-/// 发件人相关（复制地址/加入通讯录/附件转发/静音）对齐 Apple Mail 邮件菜单；
-/// 「再次发送」仅在已发送文件夹显示
-fn context_menu_row(
-    state: &State,
+/// 右键菜单行上下文（8 个散参聚合，避开 clippy 参数数门禁）
+struct MenuCtx<'a> {
+    state: &'a State,
     acct: usize,
     hash: i64,
     flagged: bool,
-    from_addr: &str,
+    from_addr: &'a str,
+    subject: &'a str,
     folder_kind: smail_core::FolderKind,
-    folder_path: &str,
-) -> Element<'static, Message> {
+    folder_path: &'a str,
+}
+
+/// 右键菜单行：动作与阅读页操作条同源（点击后关菜单再转发）。
+/// 发件人相关（复制地址/加入通讯录/附件转发/静音）对齐 Apple Mail 邮件菜单；
+/// 「再次发送」仅在已发送文件夹显示
+fn context_menu_row(c: &MenuCtx<'_>) -> Element<'static, Message> {
+    // 解构到局部名：函数体保持既有写法不动
+    let state = c.state;
+    let acct = c.acct;
+    let hash = c.hash;
+    let flagged = c.flagged;
+    let from_addr = c.from_addr;
+    let subject = c.subject;
+    let folder_kind = c.folder_kind;
+    let folder_path = c.folder_path;
     let item = |label: String, msg: Message| -> Element<'static, Message> {
         button(container(text(label).size(13)).width(Length::Fill))
             .on_press(Message::ContextMenuPick(Box::new(msg)))
@@ -1441,6 +1457,8 @@ fn context_menu_row(
         format!("静音此发件人（{sender_addr}）")
     };
     let cur_folder = state.nav.cur.as_ref().map(|(_, f)| f.clone());
+    let subject_key = crate::subject_key(subject);
+    let thread_ignored = state.prefs.ignored.iter().any(|i| i == &subject_key);
     container(
         column![
             item("↩ 回复".into(), Message::Reply(acct, hash)),
@@ -1454,6 +1472,19 @@ fn context_menu_row(
             item(
                 state.l().redirect_menu.into(),
                 Message::RedirectPrompt(acct, hash)
+            ),
+            // 忽略/取消忽略此会话（按规范主题键）
+            item(
+                if thread_ignored {
+                    "取消忽略此会话".into()
+                } else {
+                    "忽略此会话".into()
+                },
+                if thread_ignored {
+                    Message::UnignoreThread(subject_key)
+                } else {
+                    Message::IgnoreThread(subject_key)
+                }
             ),
             (is_sent).then(|| item("再次发送".into(), Message::Resend(acct, hash))),
             item(star_label, Message::ToggleStar(acct, hash, !flagged)),

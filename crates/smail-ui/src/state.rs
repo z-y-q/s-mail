@@ -114,6 +114,8 @@ pub(crate) struct Prefs {
     pub(crate) last_view: Option<(String, String)>,
     /// 静音的发件人地址（新邮件通知跳过；ui.json 持久化）
     pub(crate) muted: Vec<String>,
+    /// 忽略的会话规范主题键（列表隐藏+通知跳过；ui.json 持久化）
+    pub(crate) ignored: Vec<String>,
 }
 
 /// 导航与视图状态（文件夹/搜索/列表显示/分页）——State 拆分第二组
@@ -402,8 +404,7 @@ impl State {
 
     pub(crate) fn boot() -> (Self, Task<Message>) {
         let (cfg_path, data_root) = paths();
-        let (boot_theme, boot_follow, boot_lang, boot_ai_ack, boot_win, boot_muted) =
-            boot_prefs(&data_root);
+        let bp = boot_prefs(&data_root);
         let boot_last_view = crate::lang::load_prefs(&data_root).last_view;
         let boot_cols = crate::lang::load_prefs(&data_root).columns;
         // 主窗几何（daemon 模式：boot 任务里显式 open 主窗）
@@ -426,13 +427,14 @@ impl State {
                 let accounts2 = accounts.clone();
                 let state = State {
                     prefs: Prefs {
-                        ui_theme: boot_theme,
-                        theme_follow: boot_follow,
-                        lang: boot_lang,
+                        ui_theme: bp.theme,
+                        theme_follow: bp.follow,
+                        lang: bp.lang,
                         win_geom: None,
                         win_save_at: None,
                         last_view: None,
-                        muted: boot_muted,
+                        muted: bp.muted,
+                        ignored: bp.ignored,
                     },
                     accounts: accounts2,
                     cfg_path: cfg_path2,
@@ -522,8 +524,8 @@ impl State {
                     webview: None,
                 };
                 let mut state = state;
-                state.prefs.win_geom = boot_win;
-                state.ai.ack = boot_ai_ack;
+                state.prefs.win_geom = bp.win;
+                state.ai.ack = bp.ai_ack;
                 state.cmd_tx = state.session.as_ref().map(|s| s.cmd_tx.clone());
                 state.read_txs = state
                     .session
@@ -590,13 +592,14 @@ impl State {
 
                 let state = State {
                     prefs: Prefs {
-                        ui_theme: boot_theme,
-                        theme_follow: boot_follow,
-                        lang: boot_lang,
+                        ui_theme: bp.theme,
+                        theme_follow: bp.follow,
+                        lang: bp.lang,
                         win_geom: None,
                         win_save_at: None,
                         last_view: None,
                         muted: vec![],
+                        ignored: bp.ignored,
                     },
                     accounts: vec![],
                     cfg_path: cfg_path.clone(),
@@ -686,8 +689,8 @@ impl State {
                     webview: None,
                 };
                 let mut state = state;
-                state.prefs.win_geom = boot_win;
-                state.ai.ack = boot_ai_ack;
+                state.prefs.win_geom = bp.win;
+                state.ai.ack = bp.ai_ack;
                 // 无配置引导屏也要有主窗（daemon 模式窗口由 boot 显式打开）
                 let (_main_id, open_task) = iced::window::open(iced::window::Settings {
                     size: win_size,
@@ -717,6 +720,7 @@ impl State {
             last_view: self.prefs.last_view.clone(),
             columns: Some((self.sidebar_w, self.list_w)),
             muted: self.prefs.muted.clone(),
+            ignored: self.prefs.ignored.clone(),
         }
     }
 
@@ -1088,16 +1092,18 @@ pub(crate) fn ui_theme_from_env() -> Theme {
 
 /// 启动主题/语言：环境变量 > ui.json 手动选择 > 跟随系统。
 /// （选过主题后不再跟随系统——手动选择优先，与顶栏切换语义一致）
-pub(crate) fn boot_prefs(
-    data_root: &std::path::Path,
-) -> (
-    Theme,
-    bool,
-    crate::lang::Lang,
-    bool,
-    Option<[f32; 4]>,
-    Vec<String>,
-) {
+/// boot_prefs 的返回聚合（避免 7 元组触发 clippy 类型复杂度门禁）
+pub(crate) struct BootPrefs {
+    pub(crate) theme: Theme,
+    pub(crate) follow: bool,
+    pub(crate) lang: crate::lang::Lang,
+    pub(crate) ai_ack: bool,
+    pub(crate) win: Option<[f32; 4]>,
+    pub(crate) muted: Vec<String>,
+    pub(crate) ignored: Vec<String>,
+}
+
+pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
     let prefs = crate::lang::load_prefs(data_root);
     let env_set = std::env::var_os("SMAIL_THEME").is_some();
     let theme = if env_set {
@@ -1109,14 +1115,15 @@ pub(crate) fn boot_prefs(
             None => ui_theme_from_env(),
         }
     };
-    (
+    BootPrefs {
         theme,
-        !env_set && prefs.dark.is_none(),
-        prefs.lang,
-        prefs.ai_ack,
-        prefs.win,
-        prefs.muted,
-    )
+        follow: !env_set && prefs.dark.is_none(),
+        lang: prefs.lang,
+        ai_ack: prefs.ai_ack,
+        win: prefs.win,
+        muted: prefs.muted,
+        ignored: prefs.ignored,
+    }
 }
 
 pub(crate) fn paths() -> (PathBuf, PathBuf) {

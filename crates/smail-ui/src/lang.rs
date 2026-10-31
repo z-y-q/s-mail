@@ -74,6 +74,8 @@ pub(crate) struct UiPrefs {
     pub(crate) columns: Option<(f32, f32)>,
     /// 静音的发件人地址（新邮件通知跳过）
     pub(crate) muted: Vec<String>,
+    /// 忽略的会话规范主题键（列表隐藏；新邮件不通知）
+    pub(crate) ignored: Vec<String>,
 }
 
 pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
@@ -85,6 +87,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         last_view: None,
         columns: None,
         muted: vec![],
+        ignored: vec![],
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
         return prefs;
@@ -125,6 +128,12 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect();
         }
+        if let Some(a) = v.get("ignored").and_then(|x| x.as_array()) {
+            prefs.ignored = a
+                .iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect();
+        }
     }
     prefs
 }
@@ -138,6 +147,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "last_view": p.last_view.as_ref().map(|(a, f)| serde_json::json!([a, f])),
         "columns": p.columns.map(|(s, l)| serde_json::json!([s, l])),
         "muted": p.muted,
+        "ignored": p.ignored,
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
 }
@@ -1018,6 +1028,7 @@ mod tests {
             last_view: None,
             columns: Some((240.0, 420.0)),
             muted: vec!["spam@x.com".into()],
+            ignored: vec!["周报".into()],
         };
         save_prefs(&dir, &p);
         let p = load_prefs(&dir);
@@ -1025,6 +1036,7 @@ mod tests {
         assert_eq!(p.dark, Some(true));
         assert_eq!(p.columns, Some((240.0, 420.0)), "列宽记忆往返");
         assert_eq!(p.muted, vec!["spam@x.com".to_string()], "静音列表往返");
+        assert_eq!(p.ignored, vec!["周报".to_string()], "忽略会话列表往返");
         // 默认（无偏好文件）：中文 + 跟随系统
         std::fs::remove_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&dir).unwrap();

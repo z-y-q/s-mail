@@ -217,6 +217,9 @@ pub(crate) enum Message {
         done: usize,
         total: usize,
     },
+    /// 忽略/取消忽略会话（参数=规范主题键）
+    IgnoreThread(String),
+    UnignoreThread(String),
     /// 右键「代转」：读信区弹出收件人输入行
     RedirectPrompt(usize, i64),
     /// 代转收件人输入
@@ -939,6 +942,37 @@ pub(crate) fn from_display_name(from_addr: &str) -> String {
     } else {
         name
     }
+}
+
+/// 会话规范主题键：剥掉 Re:/Fw:/Fwd:/回复:/转发: 前缀（循环剥净），
+/// 去空白后小写——同链邮件（不管嵌几层回复/转发）归一到同一键。
+/// 忽略会话按此键匹配
+pub(crate) fn subject_key(subject: &str) -> String {
+    let mut s = subject.trim().to_string();
+    loop {
+        let lower = s.to_lowercase();
+        let stripped = ["re:", "fw:", "fwd:", "回复：", "转发:", "回复:", "转发:"]
+            .iter()
+            .find_map(|p| {
+                lower
+                    .starts_with(p)
+                    .then(|| s[p.len()..].trim().to_string())
+            });
+        match stripped {
+            Some(next) if !next.is_empty() => s = next,
+            _ => break,
+        }
+    }
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// 会话是否被忽略（按规范主题键查忽略集）
+pub(crate) fn thread_ignored(ignored: &[String], subject: &str) -> bool {
+    let k = subject_key(subject);
+    ignored.iter().any(|i| i == &k)
 }
 
 /// "名字 <a@b>" → "a@b"；无尖括号原样（复制地址/入通讯录用）
