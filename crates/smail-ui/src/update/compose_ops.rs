@@ -400,6 +400,19 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::TemplateInsert(idx) => {
+            // 模板正文贴到光标处（Paste 语义；空模板下标越界即无操作）
+            let Some(body) = state.prefs.templates.get(idx).map(|t| t.body.clone()) else {
+                return Task::none();
+            };
+            if let Some(c) = &mut state.compose {
+                c.body.perform(iced::widget::text_editor::Action::Edit(
+                    iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(body)),
+                ));
+                c.confirm_discard = true; // 有内容了，Esc 需先确认丢弃
+            }
+            Task::none()
+        }
         Message::ComposeDiscardConfirm => {
             // 丢弃：不存草稿直接关写信窗
             close_compose_window(state)

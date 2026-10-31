@@ -29,6 +29,78 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             crate::webview::set_shown(state, true);
             Task::none()
         }
+        // ---- 邮件模板管理（设置页；持久化进 ui.json） ----
+        Message::TemplateNew => {
+            state.template_edit = Some(crate::state::TemplateDraft {
+                editing: None,
+                name: String::new(),
+                body: iced::widget::text_editor::Content::new(),
+            });
+            Task::none()
+        }
+        Message::TemplateEditOpen(idx) => {
+            if let Some(t) = state.prefs.templates.get(idx) {
+                let mut body = iced::widget::text_editor::Content::new();
+                body.perform(iced::widget::text_editor::Action::Edit(
+                    iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(t.body.clone())),
+                ));
+                state.template_edit = Some(crate::state::TemplateDraft {
+                    editing: Some(idx),
+                    name: t.name.clone(),
+                    body,
+                });
+            }
+            Task::none()
+        }
+        Message::TemplateNameInput(v) => {
+            if let Some(d) = &mut state.template_edit {
+                d.name = v;
+            }
+            Task::none()
+        }
+        Message::TemplateBodyEdit(action) => {
+            if let Some(d) = &mut state.template_edit {
+                d.body.perform(action);
+            }
+            Task::none()
+        }
+        Message::TemplateSave => {
+            let Some(d) = state.template_edit.take() else {
+                return Task::none();
+            };
+            let name = d.name.trim().to_string();
+            if name.is_empty() {
+                state.error = Some("模板名称不能为空".into());
+                state.template_edit = Some(d);
+                return Task::none();
+            }
+            let body = d.body.text();
+            match d.editing {
+                Some(idx) => {
+                    if let Some(t) = state.prefs.templates.get_mut(idx) {
+                        t.name = name;
+                        t.body = body;
+                    }
+                }
+                None => {
+                    state
+                        .prefs
+                        .templates
+                        .push(crate::lang::TemplateCfg { name, body });
+                }
+            }
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
+        Message::TemplateDelete(idx) => {
+            state.prefs.templates.remove(idx);
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
+        Message::TemplateCancel => {
+            state.template_edit = None;
+            Task::none()
+        }
         Message::SetupPreset(p) => {
             if let Screen::Setup(f) = &mut state.screen {
                 f.preset = p;

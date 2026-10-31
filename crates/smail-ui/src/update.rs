@@ -887,6 +887,14 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::UnignoreThread(..)
         | Message::VipAdd(..)
         | Message::VipRemove(..)
+        | Message::TemplateNew
+        | Message::TemplateEditOpen(..)
+        | Message::TemplateNameInput(..)
+        | Message::TemplateBodyEdit(..)
+        | Message::TemplateSave
+        | Message::TemplateDelete(..)
+        | Message::TemplateCancel
+        | Message::TemplateInsert(..)
         | Message::CycleFlagColor(..)
         | Message::RedirectPrompt(..)
         | Message::RedirectToInput(..)

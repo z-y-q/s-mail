@@ -59,6 +59,12 @@ impl Lang {
     }
 }
 
+/// 邮件模板（撰写窗一键插入；随 ui.json 持久化）
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct TemplateCfg {
+    pub(crate) name: String,
+    pub(crate) body: String,
+}
 /// 偏好文件（lang + theme 手动选择；theme_follow 不落盘——跟随系统每次启动重判）
 #[derive(Debug)]
 pub(crate) struct UiPrefs {
@@ -78,6 +84,8 @@ pub(crate) struct UiPrefs {
     pub(crate) ignored: Vec<String>,
     /// VIP 发件人地址（智能视图+列表标记）
     pub(crate) vip: Vec<String>,
+    /// 邮件模板（撰写窗一键插入；应用级，跨账号）
+    pub(crate) templates: Vec<crate::lang::TemplateCfg>,
     /// 本地旗标颜色（键=hash 字符串，值=色名）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -93,6 +101,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         muted: vec![],
         ignored: vec![],
         vip: vec![],
+        templates: vec![],
         flag_colors: std::collections::HashMap::new(),
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
@@ -146,6 +155,13 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect();
         }
+        if let Ok(list) = serde_json::from_value::<Vec<TemplateCfg>>(
+            v.get("templates")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        ) {
+            prefs.templates = list;
+        }
         if let Some(obj) = v.get("flag_colors").and_then(|x| x.as_object()) {
             for (k, val) in obj {
                 if let Some(color) = val.as_str() {
@@ -168,6 +184,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "muted": p.muted,
         "ignored": p.ignored,
         "vip": p.vip,
+        "templates": p.templates,
         "flag_colors": p.flag_colors,
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
@@ -226,6 +243,10 @@ pub(crate) struct Lex {
     pub(crate) smart_unread: &'static str,
     pub(crate) smart_flagged: &'static str,
     pub(crate) smart_vip: &'static str,
+    /// 设置页模板区
+    pub(crate) templates_hdr: &'static str,
+    pub(crate) template_new: &'static str,
+    pub(crate) template_name_ph: &'static str,
     /// 右键菜单：加入/移出 VIP 发件人
     pub(crate) vip_add: &'static str,
     pub(crate) vip_remove: &'static str,
@@ -508,6 +529,9 @@ pub(crate) const ZH: Lex = Lex {
     smart_unread: "未读邮件",
     smart_flagged: "星标邮件",
     smart_vip: "VIP",
+    templates_hdr: "邮件模板",
+    template_new: "＋ 新建模板",
+    template_name_ph: "模板名称",
     mark_all_read: "全部已读",
     apply_rules: "应用规则",
     expand_all: "展开全部",
@@ -776,6 +800,9 @@ pub(crate) const EN: Lex = Lex {
     smart_unread: "Unread",
     smart_flagged: "Flagged",
     smart_vip: "VIP",
+    templates_hdr: "Templates",
+    template_new: "＋ New template",
+    template_name_ph: "Template name",
     mark_all_read: "Mark all read",
     apply_rules: "Apply rules",
     expand_all: "Expand all",
@@ -1061,6 +1088,10 @@ mod tests {
             muted: vec!["spam@x.com".into()],
             ignored: vec!["周报".into()],
             vip: vec!["boss@x.com".into()],
+            templates: vec![crate::lang::TemplateCfg {
+                name: "周报".into(),
+                body: "本周进展：".into(),
+            }],
             flag_colors: std::collections::HashMap::new(),
         };
         save_prefs(&dir, &p);
@@ -1071,6 +1102,8 @@ mod tests {
         assert_eq!(p.muted, vec!["spam@x.com".to_string()], "静音列表往返");
         assert_eq!(p.ignored, vec!["周报".to_string()], "忽略会话列表往返");
         assert_eq!(p.vip, vec!["boss@x.com".to_string()], "VIP 列表往返");
+        assert_eq!(p.templates.len(), 1, "模板列表往返");
+        assert_eq!(p.templates[0].name, "周报");
         // 默认（无偏好文件）：中文 + 跟随系统
         std::fs::remove_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&dir).unwrap();

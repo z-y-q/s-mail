@@ -223,6 +223,16 @@ pub(crate) enum Message {
     /// 右键：加入/移出 VIP 发件人（参数=发件人地址）
     VipAdd(String),
     VipRemove(String),
+    // ---- 邮件模板（设置页管理；撰写窗插入） ----
+    TemplateNew,
+    TemplateEditOpen(usize),
+    TemplateNameInput(String),
+    TemplateBodyEdit(iced::widget::text_editor::Action),
+    TemplateSave,
+    TemplateDelete(usize),
+    TemplateCancel,
+    /// 撰写窗：把选中模板正文插到光标处（参数=模板下标）
+    TemplateInsert(usize),
     /// 循环切换本地旗标颜色（无→红→橙→绿→蓝→紫→灰→无）
     CycleFlagColor(usize, i64),
     /// 右键「代转」：读信区弹出收件人输入行

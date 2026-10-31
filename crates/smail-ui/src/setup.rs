@@ -842,6 +842,72 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         }
     }
 
+    // ---- 邮件模板（撰写窗一键插入；随 ui.json 持久化） ----
+    let mut templates_col = column![text(state.l().templates_hdr)
+        .size(13)
+        .font(theme::ui_font(iced::font::Weight::Semibold)),]
+    .spacing(4);
+    for (i, t) in state.prefs.templates.iter().enumerate() {
+        templates_col = templates_col.push(
+            row![
+                text(t.name.clone()).size(13),
+                Space::new().width(Length::Fill),
+                button(text(state.l().edit).size(11))
+                    .on_press(Message::TemplateEditOpen(i))
+                    .padding([1, 6])
+                    .style(theme::ghost_button),
+                button(text(state.l().delete_short).size(11))
+                    .on_press(Message::TemplateDelete(i))
+                    .padding([1, 6])
+                    .style(theme::ghost_button),
+            ]
+            .spacing(6),
+        );
+        templates_col = templates_col.push(
+            container(text(t.body.clone()).size(11).style(theme::secondary_text))
+                .width(Length::Fill),
+        );
+    }
+    templates_col = templates_col.push(
+        button(text(state.l().template_new).size(11))
+            .on_press(Message::TemplateNew)
+            .padding([2, 8])
+            .style(theme::ghost_button),
+    );
+    // 模板编辑面板（新建/编辑两态）
+    if let Some(d) = &state.template_edit {
+        templates_col = templates_col.push(
+            container(
+                column![
+                    text_input(state.l().template_name_ph, &d.name)
+                        .on_input(Message::TemplateNameInput)
+                        .size(13)
+                        .padding(4),
+                    iced::widget::text_editor(&d.body)
+                        .on_action(Message::TemplateBodyEdit)
+                        .height(120)
+                        .padding(4),
+                    row![
+                        button(text(state.l().save).size(13))
+                            .on_press(Message::TemplateSave)
+                            .padding([3, 12])
+                            .style(theme::accent_button),
+                        button(text(state.l().cancel).size(13))
+                            .on_press(Message::TemplateCancel)
+                            .padding([3, 10])
+                            .style(theme::ghost_button),
+                        Space::new().width(Length::Fill),
+                    ]
+                    .spacing(6),
+                ]
+                .spacing(6),
+            )
+            .padding(8)
+            .width(Length::Fill)
+            .style(theme::reader_meta),
+        );
+    }
+
     // ---- AI 助手（独立 ai.toml；执行边界见 smail-ai crate 注释） ----
     let mut ai_col = column![text(state.l().ai_section)
         .size(13)
@@ -1012,6 +1078,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
     if !first_run {
         page = page.push(list_col);
         page = page.push(contacts_col);
+        page = page.push(templates_col);
     }
     page = page.push(ai_col);
     page = page.push(

@@ -13,6 +13,7 @@ smail-store = { path = "../smail-store" }
 tokio = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
 mail-parser = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

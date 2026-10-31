@@ -6778,6 +6778,7 @@ dependencies = [
  "mac-notification-sys",
  "mail-parser",
  "rfd",
+ "serde",
  "serde_json",
  "smail-ai",
  "smail-core",

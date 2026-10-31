@@ -449,6 +449,27 @@ pub(crate) fn compose_view<'a>(state: &'a State, c: &'a Compose) -> Element<'a, 
         fmt_btn("引用", MdFmt::Quote, iced::font::Weight::Normal),
         fmt_btn("列表", MdFmt::Bullet, iced::font::Weight::Normal),
         fmt_btn("标题", MdFmt::Heading, iced::font::Weight::Normal),
+        // 模板一键插入：选中即把模板正文贴到光标处（模板在设置页管理）
+        {
+            let names: Vec<String> = state
+                .prefs
+                .templates
+                .iter()
+                .map(|t| t.name.clone())
+                .collect();
+            iced::widget::pick_list(names, None::<String>, move |picked: String| {
+                let idx = state
+                    .prefs
+                    .templates
+                    .iter()
+                    .position(|t| t.name == picked)
+                    .unwrap_or(usize::MAX);
+                Message::TemplateInsert(idx)
+            })
+            .placeholder("插入模板")
+            .text_size(11)
+            .padding([2, 6])
+        },
         Space::new().width(Length::Fill),
         button(
             text(if c.preview {
