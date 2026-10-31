@@ -159,6 +159,8 @@ pubring_path = "~/.s-mail/work/pgp/pub.asc"
 每个里程碑都有 headless 端到端测试（本地 dovecot + mock 基建，`spikes/spike-melib/`）：
 
 ```bash
+sh scripts/verify.sh        # 一键本地门禁：fmt + clippy(CI 逐字) + 测试 + 公告扫描 + perf + 体积
+                            # --fast 跳过 release 段；--e2e 加跑 dovecot 核心组（m4/m14/m19）
 sh spikes/spike-melib/imap-test/up.sh      # 本地 dovecot（rootless docker，含 Drafts）
 cargo test --workspace                     # 单元测试
 cargo run -p smail-core --example m5       # 多账号 e2e（m2~m15 各验证一个里程碑）
