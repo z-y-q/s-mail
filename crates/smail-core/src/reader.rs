@@ -224,6 +224,8 @@ impl ReaderCtx {
                 )));
                 return;
             }
+            // 大小回填（缓存字节≈原始邮件字节；列表大小列显示用）
+            store.set_message_size(hash, bytes.len() as i64).ok();
             store.mark_has_body(hash).ok();
             bytes
         };
@@ -484,6 +486,9 @@ pub(crate) fn to_row(env: &EnvelopeSummary, folder: &str) -> MessageRow {
         has_body: false,
         // 新信封正文未拉取：预览由 index_body 生成后回填
         preview: String::new(),
+        // melib Envelope 不暴露 RFC822.SIZE：大小由 Reader 拉正文后按缓存
+        // 字节数回填（读过的邮件显示，未读留 0 不显示）
+        size: 0,
     }
 }
 
@@ -728,6 +733,7 @@ fn reader_serves_cached_body_without_backend() {
         has_body: true,
         in_reply_to: String::new(),
         preview: String::new(),
+        size: 0,
     };
     store.upsert(&row).unwrap();
     let eml = b"From: a@b\r\nSubject: s\r\n\r\ncached body text\r\n";

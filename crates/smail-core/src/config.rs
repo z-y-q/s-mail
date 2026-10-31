@@ -506,6 +506,7 @@ mod rule_tests {
             has_body: false,
             in_reply_to: String::new(),
             preview: String::new(),
+            size: 0,
         }
     }
 

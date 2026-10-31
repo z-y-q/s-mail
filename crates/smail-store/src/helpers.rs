@@ -21,8 +21,9 @@ pub(crate) fn row_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
         has_body: r.get::<_, i64>(7)? != 0,
         flagged: r.get::<_, i64>(8)? != 0,
         in_reply_to: r.get::<_, String>(9)?,
-        // preview 列可缺（迁移前的 SELECT 未带列）：容忍读失败回退空串
+        // preview/size 列可缺（迁移前的 SELECT 未带列）：容忍读失败回退默认
         preview: r.get::<_, String>(10).unwrap_or_default(),
+        size: r.get::<_, i64>(11).unwrap_or(0),
     })
 }
 

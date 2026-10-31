@@ -973,6 +973,21 @@ pub(crate) fn civil_to_unix(y: i64, m: i64, d: i64, h: i64, mi: i64) -> i64 {
     days * 86400 + h * 3600 + mi * 60
 }
 
+/// 字节数 → 人类可读大小（988 B / 12.3 KB / 4.5 MB；0 显示空）
+pub(crate) fn format_size(bytes: i64) -> String {
+    if bytes <= 0 {
+        return String::new();
+    }
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let kb = bytes as f64 / 1024.0;
+    if kb < 1024.0 {
+        return format!("{kb:.1} KB");
+    }
+    format!("{:.1} MB", kb / 1024.0)
+}
+
 /// 解析 "YYYY-MM-DD HH:MM" → unix 秒（格式错返回 None）
 pub(crate) fn parse_schedule(s: &str) -> Option<i64> {
     let s = s.trim();

@@ -19,11 +19,12 @@ impl Store {
     pub fn upsert(&self, row: &MessageRow) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO messages(envelope_hash, folder, message_id, subject, from_addr,
-                                  date_unix, seen, flagged, has_body, in_reply_to)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                                  date_unix, seen, flagged, has_body, in_reply_to, size)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(envelope_hash) DO UPDATE SET
                 seen = excluded.seen,
-                flagged = excluded.flagged",
+                flagged = excluded.flagged,
+                size = excluded.size",
             (
                 row.envelope_hash,
                 &row.folder,
@@ -35,6 +36,7 @@ impl Store {
                 row.flagged as i64,
                 row.has_body as i64,
                 &row.in_reply_to,
+                row.size,
             ),
         )?;
         Ok(())
@@ -50,11 +52,12 @@ impl Store {
             {
                 let mut upsert = tx.prepare(
                     "INSERT INTO messages(envelope_hash, folder, message_id, subject, from_addr,
-                                          date_unix, seen, flagged, has_body, in_reply_to)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                                          date_unix, seen, flagged, has_body, in_reply_to, size)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                      ON CONFLICT(envelope_hash) DO UPDATE SET
                         seen = excluded.seen,
-                        flagged = excluded.flagged",
+                        flagged = excluded.flagged,
+                        size = excluded.size",
                 )?;
                 let mut fts_del = tx.prepare("DELETE FROM messages_fts WHERE rowid = ?1")?;
                 let mut fts_ins = tx.prepare(
@@ -72,6 +75,7 @@ impl Store {
                         row.flagged as i64,
                         row.has_body as i64,
                         &row.in_reply_to,
+                        row.size,
                     ))?;
                     fts_del.execute((row.envelope_hash,))?;
                     let headers = tokenize(&format!("{} {}", row.subject, row.from_addr));
@@ -125,6 +129,15 @@ impl Store {
         self.conn.execute(
             "UPDATE messages SET has_body = 1 WHERE envelope_hash = ?1",
             (hash,),
+        )?;
+        Ok(())
+    }
+
+    /// 邮件大小回填（正文缓存落地后按字节数更新；列表大小列显示用）
+    pub fn set_message_size(&self, hash: i64, size: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET size = ?1 WHERE envelope_hash = ?2",
+            (size, hash),
         )?;
         Ok(())
     }

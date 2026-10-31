@@ -21,6 +21,7 @@ fn row(hash: i64, seen: bool, flagged: bool) -> MessageRow {
         has_body: true,
         in_reply_to: String::new(),
         preview: format!("第{hash}封邮件的正文预览"),
+        size: 0,
     }
 }
 

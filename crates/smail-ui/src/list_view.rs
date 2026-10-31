@@ -1018,6 +1018,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     text(relative_date(*last_date))
                                         .size(11)
                                         .style(theme::secondary_text),
+                                    text(crate::format_size(r.size))
+                                        .size(10)
+                                        .style(theme::secondary_text),
                                 ],
                                 text(format!("{last_from}{tag}"))
                                     .size(11)
@@ -1094,6 +1097,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     Space::new().width(Length::Fill),
                                     text(relative_date(r.date_unix))
                                         .size(11)
+                                        .style(theme::secondary_text),
+                                    text(crate::format_size(r.size))
+                                        .size(10)
                                         .style(theme::secondary_text),
                                 ],
                                 text(format!("   {}", r.from_addr))
@@ -1190,6 +1196,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             Space::new().width(Length::Fill),
                             text(relative_date(r.date_unix))
                                 .size(11)
+                                .style(theme::secondary_text),
+                            text(crate::format_size(r.size))
+                                .size(10)
                                 .style(theme::secondary_text),
                         ],
                         row![text(format!("{dot}{}", r.subject))

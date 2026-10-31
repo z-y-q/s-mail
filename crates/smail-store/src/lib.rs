@@ -81,6 +81,8 @@ pub struct MessageRow {
     pub in_reply_to: String,
     /// 列表行正文预览（纯文本前 ~160 字符；正文索引时生成，新邮件为空）
     pub preview: String,
+    /// 邮件大小（RFC822.SIZE 字节；列表显示用）
+    pub size: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +347,15 @@ impl Store {
             );
             conn.pragma_update(None, "user_version", 12)?;
         }
+        // v13：messages.size——RFC822.SIZE（列表显示邮件大小）
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v < 13 {
+            let _ = conn.execute(
+                "ALTER TABLE messages ADD COLUMN size INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            conn.pragma_update(None, "user_version", 13)?;
+        }
         Ok(())
     }
 
@@ -492,6 +503,7 @@ mod vacuum_tests {
             has_body: false,
             in_reply_to: String::new(),
             preview: String::new(),
+            size: 0,
         };
         for i in 0..500 {
             row.envelope_hash = i;
@@ -563,6 +575,7 @@ mod tests {
             has_body: false,
             in_reply_to: String::new(),
             preview: String::new(),
+            size: 0,
         }
     }
 
