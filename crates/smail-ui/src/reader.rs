@@ -175,10 +175,10 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
             Message::SpamCurrent(*acct, hash),
             false
         ),
-        Space::new().width(Length::Fill),
     ]
     .spacing(4);
-    // 原样渲染开关（仅 HTML 邮件显示；非 macOS 无该功能）
+    // 原样渲染开关（仅 HTML 邮件显示；非 macOS 无该功能）。
+    // 排在弹性空隙前，与动作按钮同组（推到空隙后会贴窗口右缘被裁）
     #[cfg(target_os = "macos")]
     let organize_row = if reading.md.is_some() {
         organize_row.push(mk(
@@ -189,6 +189,7 @@ pub(crate) fn reader_view(state: &State) -> Element<'_, Message> {
     } else {
         organize_row
     };
+    let organize_row = organize_row.push(Space::new().width(Length::Fill));
     let actions = column![reply_row, organize_row].spacing(4);
 
     // 删除确认：废纸篓语义——普通文件夹=移废纸篓（温和文案），

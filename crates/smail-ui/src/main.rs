@@ -321,6 +321,10 @@ pub(crate) enum Message {
     /// 松开：未成拖拽→还原点击；成拖拽→按悬停目标投递移动
     /// （ButtonReleased 不带坐标，落点用最近一次 DragMoved 的光标位置）
     DragReleased,
+    /// 拖拽静默检视（秒拍）：释放事件被原生子视图吞掉时自动取消卡死的幽灵
+    DragTick,
+    /// 窗口失焦即取消拖拽（候选与进行中一并清）
+    DragCancel,
     // ---- 撰写富文本工具栏（markdown 标记 + 排版预览） ----
     /// 正文格式化（选中区间包裹/行首前缀；发送管线自动出 HTML 版）
     ComposeFormat(crate::compose::MdFmt),
@@ -577,17 +581,23 @@ fn subscription(state: &State) -> Subscription<Message> {
         Subscription::none()
     };
     // 邮件拖拽：按下即候选（还原点击需要松开时机），同模式全局鼠标流。
-    // Esc 取消走 KeyPressed 分支（keys.rs 层级链最浅层）
+    // Esc 取消走 KeyPressed 分支（keys.rs 层级链最浅层）；
+    // 秒拍兜底释放事件丢失（松手在原生子视图/窗外，幽灵卡死的根治），
+    // 失焦直接取消
     let drag_sub = if state.drag.is_some() {
-        iced::event::listen_with(|event, _status, _id| match event {
-            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                Some(Message::DragMoved(position))
-            }
-            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                Some(Message::DragReleased)
-            }
-            _ => None,
-        })
+        Subscription::batch([
+            iced::event::listen_with(|event, _status, _id| match event {
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                    Some(Message::DragMoved(position))
+                }
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::DragReleased),
+                iced::Event::Window(iced::window::Event::Unfocused) => Some(Message::DragCancel),
+                _ => None,
+            }),
+            iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::DragTick),
+        ])
     } else {
         Subscription::none()
     };

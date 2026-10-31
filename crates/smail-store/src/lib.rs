@@ -275,9 +275,15 @@ impl Store {
             // 首次建表：从现有发件人回填（recent_senders 同源）
             conn.execute_batch(
                 "INSERT OR IGNORE INTO contacts(email, name, updated_at)
-                 SELECT from_addr, '', MAX(date_unix) FROM messages
+                 SELECT
+                   lower(trim(substr(from_addr, instr(from_addr, '<') + 1,
+                     instr(from_addr, '>') - instr(from_addr, '<') - 1))),
+                   trim(substr(from_addr, 1, instr(from_addr, '<') - 1)),
+                   MAX(date_unix)
+                 FROM messages
                  WHERE from_addr != '' AND from_addr LIKE '%<%'
-                 GROUP BY from_addr;",
+                   AND instr(from_addr, '>') > instr(from_addr, '<') + 1
+                 GROUP BY 1;",
             )?;
             conn.pragma_update(None, "user_version", 7)?;
         }
@@ -306,8 +312,80 @@ impl Store {
             );
             conn.pragma_update(None, "user_version", 9)?;
         }
+        // v10：通讯录全形地址清洗 + 同址去重。v7 回填曾把「名字 <地址>」
+        // 整串存进 email（UNIQUE 按整串），与运行时收信收集的裸地址行
+        // 显示完全相同却各占一行——通讯录出现重复条目。迁移把全形行拆成
+        // 裸地址 + 名字（名字原为空时补入显示名），再按小写地址去重
+        //（保留 updated_at 最新一行）
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v < 10 {
+            Self::contacts_normalize(conn)?;
+            conn.pragma_update(None, "user_version", 10)?;
+        }
         Ok(())
     }
+
+    /// 通讯录清洗：全形「名字 <地址>」拆为裸地址（小写化，与运行时收集
+    /// 同一形态），显示名补入 name；随后按小写地址去重。整表读出在内存
+    /// 归并后重建（原地 UPDATE 会撞 email 的 UNIQUE——拆出的地址常与
+    /// 已有裸地址行相同，正是要合并的那对）。v10 迁移与测试共用
+    pub(crate) fn contacts_normalize(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+        let rows: Vec<(String, String, i64)> = {
+            let mut st =
+                conn.prepare("SELECT email, name, updated_at FROM contacts ORDER BY id")?;
+            let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            it.collect::<std::result::Result<Vec<_>, rusqlite::Error>>()?
+        };
+        // (email 小写裸地址, name, updated_at)：同址保留 updated_at 最大一行
+        //（并列时后 id 胜——扫描按 id 升序，>= 即后者覆盖）；名字非空才覆盖
+        let mut clean: Vec<(String, String, i64)> = Vec::new();
+        let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (email, name, updated_at) in rows {
+            let (addr, display) = split_full_form(&email, &name);
+            let addr = addr.to_lowercase();
+            match index.get(&addr) {
+                Some(&i) => {
+                    let slot = &mut clean[i];
+                    if updated_at >= slot.2 {
+                        if !display.is_empty() {
+                            slot.1 = display;
+                        }
+                        slot.2 = updated_at;
+                    } else if slot.1.is_empty() && !display.is_empty() {
+                        slot.1 = display;
+                    }
+                }
+                None => {
+                    index.insert(addr.clone(), clean.len());
+                    clean.push((addr, display, updated_at));
+                }
+            }
+        }
+        conn.execute("DELETE FROM contacts", [])?;
+        let mut ins =
+            conn.prepare("INSERT INTO contacts(email, name, updated_at) VALUES (?1, ?2, ?3)")?;
+        for (email, name, updated_at) in &clean {
+            ins.execute((email, name, updated_at))?;
+        }
+        Ok(())
+    }
+}
+
+/// 「名字 <地址>」→（裸地址, 显示名）；非全形原样返回
+fn split_full_form(email: &str, name: &str) -> (String, String) {
+    if let (Some(a), Some(b)) = (email.find('<'), email.rfind('>')) {
+        if b > a + 1 {
+            let display = email[..a].trim().to_string();
+            let addr = email[a + 1..b].trim().to_string();
+            let name = if name.is_empty() {
+                display
+            } else {
+                name.to_string()
+            };
+            return (addr, name);
+        }
+    }
+    (email.trim().to_string(), name.to_string())
 }
 
 /// SQLITE_BUSY 判定（journal_mode 变更撞锁时不走 busy handler 的立即返回）
@@ -638,6 +716,38 @@ mod tests {
         assert!(emails.contains(&"1299675389@qq.com"), "{emails:?}");
         // 名字非空才覆盖：后到的同名变体不把已有名字洗掉
         assert!(full.iter().all(|c| !c.name.is_empty()), "{full:?}");
+    }
+
+    /// 通讯录清洗：v7 回填存过全形「名字 <地址>」整串，与运行时收集的
+    /// 裸地址行显示相同却各占一行（截图走查实锤的重复条目）。
+    /// contacts_normalize 必须拆出裸地址、补显示名、按小写去重
+    #[test]
+    fn contacts_normalize_splits_full_form_and_dedupes() {
+        let s = mem("contacts-fullform");
+        // 模拟污染现场：v7 回填的两行全形 + 运行时收集的两行裸地址
+        s.conn
+            .execute(
+                "INSERT INTO contacts(email, name, updated_at) VALUES
+             ('Parallels <announce@m.parallels.com>', '', 100),
+             ('1299675389 <1299675389@qq.com>', '', 200),
+             ('announce@m.parallels.com', 'Parallels', 500),
+             ('1299675389@qq.com', '', 300)",
+                [],
+            )
+            .unwrap();
+        Store::contacts_normalize(&s.conn).unwrap();
+        let full = s.list_contacts_full().unwrap();
+        assert_eq!(full.len(), 2, "四行收敛为两行：{full:?}");
+        for c in &full {
+            assert!(!c.email.contains('<'), "email 必须是裸地址：{c:?}");
+            assert_eq!(c.email, c.email.to_lowercase(), "小写归一：{c:?}");
+        }
+        let by_email: std::collections::HashMap<_, _> =
+            full.iter().map(|c| (c.email.as_str(), c)).collect();
+        let parallels = by_email.get("announce@m.parallels.com").unwrap();
+        assert_eq!(parallels.name, "Parallels", "名字保留");
+        // 同地址多行保留 updated_at 最新（收集行 500 > 回填行 100/200）
+        assert_eq!(parallels.updated_at, 500, "{parallels:?}");
     }
 
     /// 同步探测记录：写入/读取/覆盖往返一致（同步短路的依据数据）

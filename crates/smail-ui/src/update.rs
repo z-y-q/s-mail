@@ -437,6 +437,7 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
             };
             drag.cursor = Some(p);
+            drag.last_move = Some(std::time::Instant::now());
             if !drag.active && crate::drag::beyond_drag_threshold(press, p) {
                 drag.active = true;
             }
@@ -472,6 +473,24 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                     Message::MoveToDest(drag.src.acct, drag.src.hash, t.path),
                 );
             }
+            Task::none()
+        }
+        Message::DragTick => {
+            // 释放事件丢失兜底：进行中的拖拽静默超时即取消（真拖拽鼠标持续在动，
+            // 候选态不参与——按住不动再松开仍是合法点击）
+            let stale_drag = state
+                .drag
+                .as_ref()
+                .map(|d| d.active && crate::drag::stale(d.last_move))
+                .unwrap_or(false);
+            if stale_drag {
+                state.drag = None;
+            }
+            Task::none()
+        }
+        Message::DragCancel => {
+            // 窗口失焦：拖拽语义已在别的应用/子视图上，候选与进行中一并清
+            state.drag = None;
             Task::none()
         }
         // ---------------- 行右键菜单 ----------------

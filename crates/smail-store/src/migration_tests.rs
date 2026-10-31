@@ -111,7 +111,7 @@ fn migration_v0_to_v7_complete() {
         .conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 9, "应升级到 v9");
+    assert_eq!(v, 10, "应升级到 v10");
 
     // v1：flagged 字段存在且默认值正确
     let flagged: i64 = store
@@ -191,11 +191,15 @@ fn migration_v0_to_v7_complete() {
         .query_row("SELECT COUNT(*) FROM contacts", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 1, "应回填 1 个联系人");
-    let email: String = store
+    let (email, name): (String, String) = store
         .conn
-        .query_row("SELECT email FROM contacts WHERE id = 1", [], |r| r.get(0))
+        .query_row("SELECT email, name FROM contacts", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .unwrap();
-    assert_eq!(email, "张三 <test@x.com>");
+    // v7 回填存裸地址（v10 起与运行时收集同形态；全形行曾与收集行重复）
+    assert_eq!(email, "test@x.com");
+    assert_eq!(name, "张三");
 
     std::fs::remove_file(&path).unwrap();
 }
@@ -244,7 +248,7 @@ fn migration_v3_to_v7_partial() {
         .conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 9);
+    assert_eq!(v, 10);
 
     // v4：pending_flags 表应创建
     store
@@ -279,7 +283,7 @@ fn migration_idempotence() {
         .unwrap()
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v1, 9);
+    assert_eq!(v1, 10);
 
     // 第二次打开：应幂等（不重复执行迁移）
     let _ = super::Store::open(&path).unwrap();
@@ -287,7 +291,7 @@ fn migration_idempotence() {
         .unwrap()
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v2, 9);
+    assert_eq!(v2, 10);
 
     // contacts 表不应重复回填（幂等性）
     let count: i64 = Connection::open(&path)

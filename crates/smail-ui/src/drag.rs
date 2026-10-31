@@ -91,6 +91,16 @@ pub(crate) struct MailDrag {
     pub(crate) hover: Option<DropTarget>,
     /// 原点击消息：未成拖拽时松开即还原为普通点击
     pub(crate) click: std::boxed::Box<crate::Message>,
+    /// 最近一次移动时刻（释放事件被原生子视图吞掉时，静默超时兜底取消）
+    pub(crate) last_move: Option<std::time::Instant>,
+}
+
+/// 拖拽静默判定：active 态下超过该时长没有任何 CursorMoved 视为释放事件
+/// 已丢失（真拖拽鼠标持续在动），自动取消——幽灵浮层不再卡在半路
+pub(crate) fn stale(last_move: Option<std::time::Instant>) -> bool {
+    last_move
+        .map(|t| t.elapsed() > std::time::Duration::from_millis(1500))
+        .unwrap_or(false)
 }
 
 impl MailDrag {
@@ -113,6 +123,7 @@ impl MailDrag {
             active: false,
             hover: None,
             click: Box::new(click),
+            last_move: None,
         }
     }
 }
@@ -432,5 +443,13 @@ mod tests {
         assert_eq!(truncate_chars("abcdef", 3), "abc…");
         let long = "🦀".repeat(40);
         assert_eq!(truncate_chars(&long, 32).chars().count(), 33);
+    }
+
+    #[test]
+    fn stale_detects_silent_drag() {
+        assert!(!stale(None), "从未移动过（候选期）不算静默拖拽——候选不超时");
+        assert!(!stale(Some(std::time::Instant::now())), "刚移动过");
+        let old = std::time::Instant::now() - std::time::Duration::from_secs(5);
+        assert!(stale(Some(old)), "静默超阈值");
     }
 }
