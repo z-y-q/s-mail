@@ -207,6 +207,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             ("__smart_unread__", state.l().smart_unread),
             ("__smart_flagged__", state.l().smart_flagged),
             ("__smart_vip__", state.l().smart_vip),
+            ("__smart_attach__", state.l().smart_attach),
         ] {
             let smart_cur = state.nav.cur.as_ref().map(|(_, c)| c == key) == Some(true);
             sidebar = sidebar.push(
@@ -517,6 +518,9 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             }
             Some((_, f)) if f == "__smart_vip__" => {
                 format!("{} / {}", state.l().smart_hdr, state.l().smart_vip)
+            }
+            Some((_, f)) if f == "__smart_attach__" => {
+                format!("{} / {}", state.l().smart_hdr, state.l().smart_attach)
             }
             Some((a, f)) => {
                 // 列表头也显示本地化文件夹名（与侧栏一致）

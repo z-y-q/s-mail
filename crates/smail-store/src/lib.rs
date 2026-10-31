@@ -83,6 +83,8 @@ pub struct MessageRow {
     pub preview: String,
     /// 邮件大小（RFC822.SIZE 字节；列表显示用）
     pub size: i64,
+    /// 附件数（Reader 解析后回填；附件浏览视图判定）
+    pub att_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -356,6 +358,15 @@ impl Store {
             );
             conn.pragma_update(None, "user_version", 13)?;
         }
+        // v14：messages.att_count——附件数（Reader 解析后回填；附件浏览视图）
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v < 14 {
+            let _ = conn.execute(
+                "ALTER TABLE messages ADD COLUMN att_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            conn.pragma_update(None, "user_version", 14)?;
+        }
         Ok(())
     }
 
@@ -504,6 +515,7 @@ mod vacuum_tests {
             in_reply_to: String::new(),
             preview: String::new(),
             size: 0,
+            att_count: 0,
         };
         for i in 0..500 {
             row.envelope_hash = i;
@@ -576,6 +588,7 @@ mod tests {
             in_reply_to: String::new(),
             preview: String::new(),
             size: 0,
+            att_count: 0,
         }
     }
 

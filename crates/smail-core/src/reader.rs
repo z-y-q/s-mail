@@ -238,6 +238,10 @@ impl ReaderCtx {
             store.index_body(hash, &body).ok(); // 加密邮件正文不进全文索引（安全默认）
         }
         let attachments = extract_attachments(&parse_bytes);
+        // 附件计数回填（附件浏览视图判定；读过的邮件才计数）
+        store
+            .set_attachment_count(hash, attachments.len() as i64)
+            .ok();
         let (to_addrs, cc_addrs) = extract_recipients(&parse_bytes);
         let unsubscribe = extract_unsubscribe(&parse_bytes);
         let inline_images = extract_inline_images(&parse_bytes);
@@ -489,6 +493,7 @@ pub(crate) fn to_row(env: &EnvelopeSummary, folder: &str) -> MessageRow {
         // melib Envelope 不暴露 RFC822.SIZE：大小由 Reader 拉正文后按缓存
         // 字节数回填（读过的邮件显示，未读留 0 不显示）
         size: 0,
+        att_count: 0,
     }
 }
 
@@ -734,6 +739,7 @@ fn reader_serves_cached_body_without_backend() {
         in_reply_to: String::new(),
         preview: String::new(),
         size: 0,
+        att_count: 0,
     };
     store.upsert(&row).unwrap();
     let eml = b"From: a@b\r\nSubject: s\r\n\r\ncached body text\r\n";

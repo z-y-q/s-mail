@@ -790,7 +790,7 @@ impl State {
 
     /// 智能邮箱聚合：跨账号跨文件夹按谓词收集行（本地索引直读，离线可用）。
     /// key：`__smart_unread__`（全部未读）/ `__smart_flagged__`（全部星标）/
-    /// `__smart_vip__`（VIP 发件人）；结果按时间降序
+    /// `__smart_vip__`（VIP 发件人）/ `__smart_attach__`（有附件）；时间降序
     pub(crate) fn smart_fill(&mut self, key: &str) {
         let folders: Vec<(usize, String)> = self
             .nav
@@ -806,6 +806,7 @@ impl State {
                     "__smart_unread__" => !r.seen,
                     "__smart_flagged__" => r.flagged,
                     "__smart_vip__" => self.prefs.vip.iter().any(|v| v == &from),
+                    "__smart_attach__" => r.att_count > 0,
                     _ => false,
                 };
                 if hit {

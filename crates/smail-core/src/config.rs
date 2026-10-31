@@ -507,6 +507,7 @@ mod rule_tests {
             in_reply_to: String::new(),
             preview: String::new(),
             size: 0,
+            att_count: 0,
         }
     }
 

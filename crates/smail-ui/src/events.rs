@@ -280,6 +280,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                         let from = crate::addr_of(&r.from_addr);
                         state.prefs.vip.iter().any(|v| v == &from)
                     }
+                    "__smart_attach__" => r.att_count > 0,
                     _ => true,
                 });
             }

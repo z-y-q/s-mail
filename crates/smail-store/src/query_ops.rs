@@ -99,7 +99,7 @@ impl Store {
     pub fn get(&self, hash: i64) -> rusqlite::Result<Option<MessageRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT envelope_hash, folder, message_id, subject, from_addr,
-                    date_unix, seen, has_body, flagged, in_reply_to, preview, size
+                    date_unix, seen, has_body, flagged, in_reply_to, preview, size, att_count
              FROM messages WHERE envelope_hash = ?1",
         )?;
         let mut rows = stmt.query_map([hash], row_from)?;
@@ -109,7 +109,7 @@ impl Store {
     pub fn list_folder(&self, folder: &str, limit: u32) -> rusqlite::Result<Vec<MessageRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT envelope_hash, folder, message_id, subject, from_addr,
-                    date_unix, seen, has_body, flagged, in_reply_to, preview, size
+                    date_unix, seen, has_body, flagged, in_reply_to, preview, size, att_count
              FROM messages WHERE folder = ?1
              ORDER BY date_unix DESC LIMIT ?2",
         )?;

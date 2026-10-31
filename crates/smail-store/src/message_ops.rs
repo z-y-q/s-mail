@@ -142,6 +142,15 @@ impl Store {
         Ok(())
     }
 
+    /// 附件计数回填（Reader 解析正文后更新；附件浏览视图判定）
+    pub fn set_attachment_count(&self, hash: i64, n: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET att_count = ?1 WHERE envelope_hash = ?2",
+            (n, hash),
+        )?;
+        Ok(())
+    }
+
     /// 已知邮件的本地 flags（同步 diff 用：返回 (hash → (seen, flagged))）。
     /// 替代旧 known_hashes：服务器 flags 回传需要与本地比对，顺手也省了二次查询
     pub fn known_flags(&self, folder: &str) -> rusqlite::Result<HashMap<i64, (bool, bool)>> {

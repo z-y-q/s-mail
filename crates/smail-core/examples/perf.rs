@@ -54,6 +54,7 @@ fn row(i: usize) -> MessageRow {
         in_reply_to: String::new(),
         preview: format!("第{i}号发票与报销通知的正文预览，用于压测列表渲染行高与滚动流畅度。"),
         size: 2048 + (i % 90) as i64 * 137,
+        att_count: if i.is_multiple_of(7) { 1 } else { 0 },
     }
 }
 

@@ -250,6 +250,8 @@ pub(crate) struct Lex {
     pub(crate) smart_unread: &'static str,
     pub(crate) smart_flagged: &'static str,
     pub(crate) smart_vip: &'static str,
+    /// 智能视图：有附件
+    pub(crate) smart_attach: &'static str,
     /// 设置页模板区
     pub(crate) templates_hdr: &'static str,
     pub(crate) template_new: &'static str,
@@ -546,6 +548,7 @@ pub(crate) const ZH: Lex = Lex {
     smart_unread: "未读邮件",
     smart_flagged: "星标邮件",
     smart_vip: "VIP",
+    smart_attach: "附件",
     templates_hdr: "邮件模板",
     template_new: "＋ 新建模板",
     template_name_ph: "模板名称",
@@ -824,6 +827,7 @@ pub(crate) const EN: Lex = Lex {
     smart_unread: "Unread",
     smart_flagged: "Flagged",
     smart_vip: "VIP",
+    smart_attach: "Attachments",
     templates_hdr: "Templates",
     template_new: "＋ New template",
     template_name_ph: "Template name",

@@ -128,6 +128,7 @@ mod tests {
             has_body: false,
             preview: String::new(),
             size: 0,
+            att_count: 0,
         }
     }
 
