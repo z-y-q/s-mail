@@ -22,30 +22,23 @@ use iced::Task;
 
 use crate::{Message, State};
 
-/// 切换原样渲染开关（阅读器工具栏按钮）
+/// 切换原样渲染开关（阅读器工具栏按钮；非 macOS 无入口）
+#[cfg(target_os = "macos")]
 pub(crate) fn toggle(state: &mut State, acct: usize, hash: i64) -> Task<Message> {
-    #[cfg(target_os = "macos")]
-    {
-        state.html.on = !state.html.on;
-        if !state.html.on {
-            close(state);
-            return Task::none();
-        }
-        // 开：同步抽取+消毒正文（本地缓存 .eml，毫秒级；Resend 同模式），
-        // 随后创建/装载网页视图
-        state.html.load_remote = false;
-        if let Err(e) = apply(state, acct, hash) {
-            state.html.on = false;
-            state.error = Some(e);
-            return Task::none();
-        }
-        ensure_handles(state)
+    state.html.on = !state.html.on;
+    if !state.html.on {
+        close(state);
+        return Task::none();
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (state, acct, hash);
-        Task::none()
+    // 开：同步抽取+消毒正文（本地缓存 .eml，毫秒级；Resend 同模式），
+    // 随后创建/装载网页视图
+    state.html.load_remote = false;
+    if let Err(e) = apply(state, acct, hash) {
+        state.html.on = false;
+        state.error = Some(e);
+        return Task::none();
     }
+    ensure_handles(state)
 }
 
 /// 阅读对象切换时刷新内容（BodyLoaded 回调；开关开着才动）
@@ -179,31 +172,24 @@ pub(crate) fn ensure_handles(state: &mut State) -> Task<Message> {
 }
 
 /// 句柄回填：指针 0=失败；否则建视图（挂起时）并同步几何
+#[cfg(target_os = "macos")]
 pub(crate) fn handles_ready(state: &mut State, ns_view: u64) -> Task<Message> {
-    #[cfg(target_os = "macos")]
-    {
-        state.html.handles_ready = true;
-        if ns_view == 0 {
+    state.html.handles_ready = true;
+    if ns_view == 0 {
+        close(state);
+        state.error = Some("无法获取主窗原生句柄，原样渲染不可用".into());
+        return Task::none();
+    }
+    state.html.raw_ns_view = Some(ns_view);
+    if state.html.pending_open && state.html.source.is_some() {
+        state.html.pending_open = false;
+        if let Err(e) = create(state) {
             close(state);
-            state.error = Some("无法获取主窗原生句柄，原样渲染不可用".into());
-            return Task::none();
+            state.error = Some(e);
         }
-        state.html.raw_ns_view = Some(ns_view);
-        if state.html.pending_open && state.html.source.is_some() {
-            state.html.pending_open = false;
-            if let Err(e) = create(state) {
-                close(state);
-                state.error = Some(e);
-            }
-            sync_bounds(state);
-        }
-        Task::none()
+        sync_bounds(state);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (state, ns_view);
-        Task::none()
-    }
+    Task::none()
 }
 
 /// 阅读窗几何变化后同步子视图边界（有变化才调系统接口）
