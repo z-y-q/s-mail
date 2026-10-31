@@ -179,12 +179,14 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             // 原样渲染开着：切信即换装（非 HTML 邮件自动回退 markdown 视图）
             crate::webview::apply_reading(state, acct, hash);
             // 代转挂起：正文已取回落缓存，续发重投（cmd 内部走已缓存的快路径）
-            if let Some((pa, ph, to)) = state
+            let redirect_due = state
                 .batch
                 .redirect_pending
-                .filter(|(a, h, _)| *a == acct && *h == hash)
-            {
-                state.batch.redirect_pending = None;
+                .as_ref()
+                .map(|(a, h, _)| *a == acct && *h == hash)
+                .unwrap_or(false);
+            if redirect_due {
+                let (pa, ph, to) = state.batch.redirect_pending.take().unwrap();
                 return Task::done(Message::RedirectNow(pa, ph, to));
             }
             if let Some(src) = md_src {
