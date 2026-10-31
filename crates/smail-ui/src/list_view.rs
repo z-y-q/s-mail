@@ -89,7 +89,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 })
                 .padding([5, 12])
                 .style(theme::accent_button),
-            text("s-mail").size(17),
+            // 应用名不进顶栏：窗口标题/程序坞已有身份，能不显示的就不显示
             button(
                 // 显示当前模式（点击切换）：「会话视图 ⇄ 平铺视图」一眼自明
                 text(if state.nav.threaded {

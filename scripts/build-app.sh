@@ -48,24 +48,26 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# 图标：用系统工具从程序化生成的 PNG 制作 icns（失败则跳过，用默认图标）
+# 图标：用系统工具从程序化生成的 PNG 制作 icns（失败则跳过，用默认图标）。
+# macOS 11+ 规范：圆角方块内容只占画布 ~82% 居中，四周留透明边距
 ICONSET="dist/AppIcon.iconset"
 mkdir -p "$ICONSET"
 if swift -e '
 import AppKit
 let size = CGFloat(1024)
 let img = NSImage(size: NSSize(width: size, height: size))
-img.lockFocus()
+let content = size * 0.824
+let origin = (size - content) / 2
 NSColor(calibratedRed: 0.0, green: 0.48, blue: 1.0, alpha: 1).setFill()
-NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: size, height: size), xRadius: size*0.22, yRadius: size*0.22).fill()
+NSBezierPath(roundedRect: NSRect(x: origin, y: origin, width: content, height: content), xRadius: content*0.22, yRadius: content*0.22).fill()
 let para = NSMutableParagraphStyle(); para.alignment = .center
 let attrs: [NSAttributedString.Key: Any] = [
-    .font: NSFont.systemFont(ofSize: size*0.55, weight: .semibold),
+    .font: NSFont.systemFont(ofSize: content*0.55, weight: .semibold),
     .foregroundColor: NSColor.white,
     .paragraphStyle: para,
 ]
 let s = NSAttributedString(string: "\u{2709}", attributes: attrs)
-s.draw(in: NSRect(x: 0, y: size*0.18, width: size, height: size*0.64))
+s.draw(in: NSRect(x: 0, y: origin + content*0.18, width: size, height: content*0.64))
 img.unlockFocus()
 guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
       let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
@@ -85,6 +87,12 @@ rm -rf "$ICONSET" dist/icon-1024.png
 
 echo "==> ad-hoc 签名"
 codesign --force --sign - "$APP"
+
+# 图标缓存刷新：应用首次注册后改图标，Dock/Finder 会一直显示缓存的
+# 通用图标（LaunchServices 不因包内容变化自动重绘）。touch 打散身份 +
+# 重启 Dock 是图标开发期的标准做法（无破坏性，Dock 一秒重建）
+touch "$APP"
+killall Dock >/dev/null 2>&1 || true
 
 echo "==> 完成：$APP"
 codesign --verify "$APP" && echo "    签名校验通过"
