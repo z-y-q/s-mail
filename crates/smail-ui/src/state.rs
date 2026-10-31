@@ -296,6 +296,9 @@ pub(crate) struct HtmlView {
     /// 主窗内容视图指针（window::run 回调期提取；0/None=未捕获）
     #[cfg(target_os = "macos")]
     pub(crate) raw_ns_view: Option<u64>,
+    /// 子视图当前显隐（缓存上次设定值，重复 setHidden 免掉）
+    #[cfg(target_os = "macos")]
+    pub(crate) shown: Option<bool>,
 }
 
 impl HtmlView {
@@ -314,6 +317,8 @@ impl HtmlView {
             pending_open: false,
             #[cfg(target_os = "macos")]
             raw_ns_view: None,
+            #[cfg(target_os = "macos")]
+            shown: None,
         }
     }
 }

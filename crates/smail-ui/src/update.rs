@@ -36,6 +36,8 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
     ) {
         state.error = None;
     }
+    // 原生网页视图的屏幕级显隐不变式（设置屏/错误横幅让位；缓存幂等）
+    crate::webview::sync_screen(state);
     match message {
         Message::ErrorDismiss => {
             state.error = None;

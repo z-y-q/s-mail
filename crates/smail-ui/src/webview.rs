@@ -56,6 +56,7 @@ pub(crate) fn apply_reading(state: &mut State, acct: usize, hash: i64) {
             state.html.source = None;
             if let Some(wv) = state.webview.as_ref() {
                 let _ = wv.set_visible(false);
+                state.html.shown = Some(false);
             }
             let _ = e;
         }
@@ -100,6 +101,45 @@ pub(crate) fn close(state: &mut State) {
     }
 }
 
+/// 显示/隐藏子视图（离开邮件屏时必须藏——原生子视图浮在一切 iced 画面之上，
+/// 不随界面切换消失；回邮件屏恢复并重新对齐几何）
+pub(crate) fn set_shown(state: &mut State, shown: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        if state.html.shown == Some(shown) {
+            return;
+        }
+        state.html.shown = Some(shown);
+        if let Some(wv) = state.webview.as_ref() {
+            let _ = wv.set_visible(shown);
+            if shown {
+                state.html.synced = None; // 强制重新对位
+                sync_bounds(state);
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (state, shown);
+    }
+}
+
+/// 屏幕级显隐不变式：网页视图只在「邮件屏 + 无全屏横幅 + 有阅读对象」时可见。
+/// 设置屏/错误横幅是整窗替换的 iced 画面，原生子视图必须让位
+#[cfg(target_os = "macos")]
+pub(crate) fn sync_screen(state: &mut State) {
+    let want = state.error.is_none()
+        && state.setup_hint.is_none()
+        && matches!(state.screen, crate::Screen::Mail)
+        && state.reading.is_some();
+    set_shown(state, want);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn sync_screen(state: &mut State) {
+    let _ = state;
+}
+
 /// 消毒正文抽取+装载（同步；失败返回用户可读原因）
 #[cfg(target_os = "macos")]
 fn apply(state: &mut State, acct: usize, hash: i64) -> Result<(), String> {
@@ -132,6 +172,7 @@ fn apply(state: &mut State, acct: usize, hash: i64) -> Result<(), String> {
         if let (Some(wv), Some(src)) = (state.webview.as_ref(), state.html.source.as_ref()) {
             wv.load_html(src).map_err(|e| e.to_string())?;
             let _ = wv.set_visible(true);
+            state.html.shown = Some(true);
         }
     } else if state.html.handles_ready {
         if let Err(e) = create(state) {
@@ -149,6 +190,7 @@ fn apply(state: &mut State, acct: usize, hash: i64) -> Result<(), String> {
 fn hide(state: &mut State) {
     if let Some(wv) = state.webview.as_ref() {
         let _ = wv.set_visible(false);
+        state.html.shown = Some(false);
     }
 }
 
@@ -313,5 +355,6 @@ fn create(state: &mut State) -> Result<(), String> {
         .build_as_child(&parent)
         .map_err(|e| format!("创建网页视图失败：{e}"))?;
     state.webview = Some(view);
+    state.html.shown = Some(true); // 新子视图默认可见，缓存对齐
     Ok(())
 }

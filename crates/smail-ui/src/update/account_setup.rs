@@ -14,6 +14,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
     match msg {
         Message::SetupOpen => {
             state.screen = Screen::Setup(SetupForm::new());
+            // 原生网页视图浮在一切画面之上：离开邮件屏必须藏（回来自动恢复）
+            crate::webview::set_shown(state, false);
             // 通讯录管理数据随设置屏拉取（按账号广播聚合）
             if let Some(tx) = &state.cmd_tx {
                 let _ = tx.send(SessionCmd::ContactsFull);
@@ -23,6 +25,8 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
         Message::SetupClose => {
             // 允许零账号逛主页（空状态引导添加）
             state.screen = Screen::Mail;
+            // 回邮件屏：恢复原样渲染视图并对齐几何
+            crate::webview::set_shown(state, true);
             Task::none()
         }
         Message::SetupPreset(p) => {
