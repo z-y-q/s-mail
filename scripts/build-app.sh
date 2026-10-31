@@ -49,25 +49,50 @@ PLIST
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # 图标：用系统工具从程序化生成的 PNG 制作 icns（失败则跳过，用默认图标）。
-# macOS 11+ 规范：圆角方块内容只占画布 ~82% 居中，四周留透明边距
+# macOS 11+ 规范：内容占画布 ~82% 居中，四周透明边距。
+# 图形：蓝渐变底 + 白信封（灰折盖 V 形）——一眼即邮件，字符字形（✉）
+# 在小尺寸下发虚且与「邮件」关联弱，弃用
 ICONSET="dist/AppIcon.iconset"
 mkdir -p "$ICONSET"
 if swift -e '
 import AppKit
 let size = CGFloat(1024)
 let img = NSImage(size: NSSize(width: size, height: size))
+img.lockFocus()
 let content = size * 0.824
 let origin = (size - content) / 2
-NSColor(calibratedRed: 0.0, green: 0.48, blue: 1.0, alpha: 1).setFill()
-NSBezierPath(roundedRect: NSRect(x: origin, y: origin, width: content, height: content), xRadius: content*0.22, yRadius: content*0.22).fill()
-let para = NSMutableParagraphStyle(); para.alignment = .center
-let attrs: [NSAttributedString.Key: Any] = [
-    .font: NSFont.systemFont(ofSize: content*0.55, weight: .semibold),
-    .foregroundColor: NSColor.white,
-    .paragraphStyle: para,
-]
-let s = NSAttributedString(string: "\u{2709}", attributes: attrs)
-s.draw(in: NSRect(x: 0, y: origin + content*0.18, width: size, height: content*0.64))
+
+// 底：蓝色渐变圆角方块（上浅下深）
+let bgRect = NSRect(x: origin, y: origin, width: content, height: content)
+let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: content*0.225, yRadius: content*0.225)
+NSGradient(starting: NSColor(calibratedRed: 0.12, green: 0.58, blue: 1.0, alpha: 1),
+           ending: NSColor(calibratedRed: 0.0, green: 0.38, blue: 0.86, alpha: 1))!
+    .draw(in: bgPath, angle: -90)
+
+// 信封主体：白色圆角矩形带投影
+let envW = content * 0.68
+let envH = content * 0.46
+let envRect = NSRect(x: (size - envW) / 2, y: (size - envH) / 2, width: envW, height: envH)
+let shadow = NSShadow()
+shadow.shadowColor = NSColor(calibratedWhite: 0, alpha: 0.30)
+shadow.shadowBlurRadius = content * 0.028
+shadow.shadowOffset = NSSize(width: 0, height: -content * 0.014)
+NSGraphicsContext.current?.saveGraphicsState()
+shadow.set()
+let envPath = NSBezierPath(roundedRect: envRect, xRadius: content*0.04, yRadius: content*0.04)
+NSColor.white.setFill()
+envPath.fill()
+NSGraphicsContext.current?.restoreGraphicsState()
+
+// 折盖：左上/右上角收拢到中线的 V 形（浅灰，信封的第二识别特征）
+let inset = content * 0.018
+let flap = NSBezierPath()
+flap.move(to: NSPoint(x: envRect.minX + inset, y: envRect.maxY - inset))
+flap.line(to: NSPoint(x: size / 2, y: envRect.midY - inset))
+flap.line(to: NSPoint(x: envRect.maxX - inset, y: envRect.maxY - inset))
+flap.close()
+NSColor(calibratedRed: 0.84, green: 0.87, blue: 0.91, alpha: 1).setFill()
+flap.fill()
 img.unlockFocus()
 guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
       let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
