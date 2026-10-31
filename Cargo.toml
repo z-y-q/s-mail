@@ -19,7 +19,9 @@ default-members = ["crates/*"]
 [workspace.package]
 version = "0.1.5"
 edition = "2021"
-rust-version = "1.87"
+# MSRV 2026-10-31 实测：1.87/1.88 被依赖抬穿（iced 0.14/encoding_rs/icu 需
+# 1.88，uuid 1.28 需 1.89），1.89 全仓 check 通过；CI msrv 作业钉住该值
+rust-version = "1.89"
 license = "GPL-3.0-or-later"
 publish = false
 

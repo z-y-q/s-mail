@@ -1,0 +1,14 @@
+# cargo-audit 豁免清单（cargo-audit 0.22 从本文件读取：.cargo/audit.toml）
+# 每条豁免必须带威胁模型理由与登记日期，依赖链升级后移除：
+#
+# - RUSTSEC-2023-0071（rsa 0.9 Marvin Attack）：上游无修复版本，引入链
+#   sequoia-openpgp 2.4.2（PGP 收发解密）。利用前提是攻击者可控的远程
+#   解密预言机；s-mail 只在本地交互式解密 PGP 邮件，无网络解密服务，
+#   不在该威胁模型内。sequoia 升级移除 rsa 依赖或上游发修复后移除本条。
+#   （登记：2026-10-31）
+# - RUSTSEC-2026-0387（crypto-bigint 0.5 常量时间缺陷）：修复在 0.7，
+#   semver 不兼容，依赖方 cx448/ecdsa（sequoia-openpgp 传递）尚未跟进。
+#   同为本地 PGP 解密场景，无远程攻击面。依赖链升级后移除本条。
+#   （登记：2026-10-31）
+[advisories]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0387"]

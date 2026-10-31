@@ -29,6 +29,28 @@ jobs:
           echo "imap/mod.rs 标记 $imap 处（需 5：expunge_mailbox + probe_mailbox + 三处映射缺失改 Err）；std_net.rs $net 处（需 1）"
           [ "$imap" -eq 5 ] && [ "$net" -eq 1 ]
 
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: RustSec 公告门禁（漏洞即红；豁免与威胁模型理由见 .cargo/audit.toml）
+        run: cargo audit
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@v2
+      - name: MSRV 编译检查（Cargo.toml 的 rust-version 声明必须兑现）
+        run: cargo check --workspace --exclude spike-fts --exclude spike-ime --exclude spike-list --exclude spike-melib
+
   test:
     strategy:
       matrix:
