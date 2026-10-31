@@ -104,6 +104,18 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .style(theme::ghost_button),
             // 会话视图下才有意义：全部展开/折叠当前邮箱的会话
             expand_collapse,
+            // 布局切换（三栏 ⇄ 列表+底部预览；▤=三栏 ▥=底部）
+            button(
+                text(if state.prefs.layout == 0 {
+                    "▤"
+                } else {
+                    "▥"
+                })
+                .size(13),
+            )
+            .on_press(Message::ToggleLayout)
+            .padding([4, 8])
+            .style(theme::ghost_button),
             text_input_search(state),
             button(text("↻").size(13))
                 .on_press(Message::ManualRefresh)
@@ -1454,12 +1466,32 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
         .height(Length::Fill)
     };
     stack![
-        column![
-            root,
-            row![sidebar, split_sidebar, mail_list, split_list, reader]
-        ]
-        .spacing(1)
-        .height(Length::Fill),
+        {
+            // 布局模式：0=三栏（侧栏|列表|阅读），1=两栏+底部预览（阅读 320px 高在列表下方）
+            let body: Element<'_, Message> = if state.prefs.layout == 1 {
+                column![
+                    row![sidebar, split_sidebar, mail_list],
+                    container(reader)
+                        .height(Length::Fixed(320.0))
+                        .width(Length::Fill)
+                        .style(|t| container::Style {
+                            border: iced::Border {
+                                width: 1.0,
+                                color: theme::hover_tint(t),
+                                radius: iced::border::Radius::default(),
+                            },
+                            ..Default::default()
+                        }),
+                ]
+                .height(Length::Fill)
+                .into()
+            } else {
+                row![sidebar, split_sidebar, mail_list, split_list, reader]
+                    .height(Length::Fill)
+                    .into()
+            };
+            column![root, body].spacing(1).height(Length::Fill)
+        },
         ghost,
     ]
     .into()

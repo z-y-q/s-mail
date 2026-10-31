@@ -193,6 +193,11 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.rebuild_display();
             Task::none()
         }
+        Message::ToggleLayout => {
+            state.prefs.layout = if state.prefs.layout == 0 { 1 } else { 0 };
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
         Message::ToggleUiTheme => {
             // 手动切换后不再跟随系统（Agency：用户显式选择优先）
             state.prefs.theme_follow = false;

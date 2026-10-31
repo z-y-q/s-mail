@@ -88,6 +88,8 @@ pub(crate) struct UiPrefs {
     pub(crate) templates: Vec<crate::lang::TemplateCfg>,
     /// 撤销发送窗口秒数（0=关；默认 10）
     pub(crate) undo_secs: u64,
+    /// 布局模式（0=三栏，1=列表+底部预览）
+    pub(crate) layout: u8,
     /// 本地旗标颜色（键=hash 字符串，值=色名）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -105,6 +107,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         vip: vec![],
         templates: vec![],
         undo_secs: 10,
+        layout: 0,
         flag_colors: std::collections::HashMap::new(),
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
@@ -168,6 +171,9 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         if let Some(n) = v.get("undo_secs").and_then(|x| x.as_u64()) {
             prefs.undo_secs = n;
         }
+        if let Some(n) = v.get("layout").and_then(|x| x.as_u64()) {
+            prefs.layout = n as u8;
+        }
         if let Some(obj) = v.get("flag_colors").and_then(|x| x.as_object()) {
             for (k, val) in obj {
                 if let Some(color) = val.as_str() {
@@ -192,6 +198,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "vip": p.vip,
         "templates": p.templates,
         "undo_secs": p.undo_secs,
+        "layout": p.layout,
         "flag_colors": p.flag_colors,
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
@@ -1142,6 +1149,7 @@ mod tests {
                 body: "本周进展：".into(),
             }],
             undo_secs: 20,
+            layout: 0,
             flag_colors: std::collections::HashMap::new(),
         };
         save_prefs(&dir, &p);

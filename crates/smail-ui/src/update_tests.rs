@@ -50,6 +50,7 @@ fn ts() -> State {
             vip: vec![],
             templates: vec![],
             undo_secs: 0,
+            layout: 0,
             flag_colors: Default::default(),
         },
         session: None,

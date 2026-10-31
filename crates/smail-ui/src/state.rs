@@ -122,6 +122,8 @@ pub(crate) struct Prefs {
     pub(crate) templates: Vec<crate::lang::TemplateCfg>,
     /// 撤销发送窗口秒数（0=关）
     pub(crate) undo_secs: u64,
+    /// 布局模式（0=三栏，1=列表+底部预览）
+    pub(crate) layout: u8,
     /// 本地旗标颜色（键=邮件 hash 字符串，值=色名；IMAP 无色旗标，本地属性）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -469,6 +471,7 @@ impl State {
                         vip: bp.vip,
                         templates: bp.templates,
                         undo_secs: bp.undo_secs,
+                        layout: bp.layout,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: accounts2,
@@ -641,6 +644,7 @@ impl State {
                         vip: bp.vip,
                         templates: bp.templates,
                         undo_secs: bp.undo_secs,
+                        layout: bp.layout,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: vec![],
@@ -769,6 +773,7 @@ impl State {
             vip: self.prefs.vip.clone(),
             templates: self.prefs.templates.clone(),
             undo_secs: self.prefs.undo_secs,
+            layout: self.prefs.layout,
             flag_colors: self.prefs.flag_colors.clone(),
         }
     }
@@ -1192,6 +1197,8 @@ pub(crate) struct BootPrefs {
     pub(crate) templates: Vec<crate::lang::TemplateCfg>,
     /// 撤销发送窗口秒数（0=关）
     pub(crate) undo_secs: u64,
+    /// 布局模式（0=三栏，1=底部预览）
+    pub(crate) layout: u8,
     /// 本地旗标颜色（键=hash 字符串）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -1219,6 +1226,7 @@ pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
         vip: prefs.vip,
         templates: prefs.templates,
         undo_secs: prefs.undo_secs,
+        layout: prefs.layout,
         flag_colors: prefs.flag_colors,
     }
 }
