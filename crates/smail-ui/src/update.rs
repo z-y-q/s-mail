@@ -23,6 +23,28 @@ mod account_setup;
 mod ai_ops;
 mod compose_ops;
 mod mail_ops;
+/// 把主窗带回前台：关了就重开，开着就还原聚焦（最小化先还原）。
+/// 托盘「打开 s-mail」、左键点托盘、通知点击三条路径共用。
+/// 旧实现走 System Events 的进程前台化：无障碍权限缺失时静默失败，
+/// 且无法让已关闭的窗口重现——「点托盘不出界面，要重启才行」的根因
+fn show_main_window(state: &mut State) -> Task<Message> {
+    match state.main_window {
+        Some(id) => Task::batch([
+            iced::window::minimize(id, false),
+            iced::window::gain_focus(id),
+        ]),
+        None => {
+            let (id, task) = iced::window::open(iced::window::Settings {
+                size: iced::Size::new(1280.0, 760.0),
+                min_size: Some(iced::Size::new(980.0, 560.0)),
+                ..Default::default()
+            });
+            state.main_window = Some(id);
+            task.map(move |_| Message::MainWindowOpened(id))
+        }
+    }
+}
+
 pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
     // 错误横幅 show-once：任何新的用户动作都冲掉上一条错误（滚动/主题等被动消息除外）
     if !matches!(
@@ -73,22 +95,12 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Tray(action) => match action {
             crate::tray::TrayAction::Open => {
-                // 通知跳转：macOS 通知点击 → 激活 app（走 tray Open 路径）
-                // → 有最近通知的邮件则跳转过去
+                // 先把主窗带回前台（关了就重开），再处理通知跳转
+                let show = show_main_window(state);
                 if let Some(click) = crate::notify::take_last() {
-                    return update(state, Message::NotificationClicked(click));
+                    return show.chain(update(state, Message::NotificationClicked(click)));
                 }
-                // iced 0.14 无窗口句柄；System Events 按进程名把自己拉到前台
-                #[cfg(target_os = "macos")]
-                let _ = std::process::Command::new("osascript")
-                    .arg("-e")
-                    .arg(
-                        "tell application \"System Events\" to set frontmost of first process whose name is \"s-mail\" to true",
-                    )
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
-                Task::none()
+                show
             }
             crate::tray::TrayAction::Quit => iced::exit(),
         },
@@ -755,18 +767,14 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
                 Task::none()
             } else if state.main_window == Some(id) {
-                // 主窗被关：网页子视图挂在旧窗上随之失效——先丢（否则子视图
-                // 指向已销毁的父窗），句柄与挂起态一并复位（重开后由下次开关重取）
+                // 主窗红叉：只关窗，应用驻留托盘（「打开 s-mail」随时重开）。
+                // 网页子视图挂在旧窗上随之失效——先丢（否则子视图指向已销毁
+                // 的父窗），句柄与挂起态一并复位。
+                // 旧实现关旧窗同时立刻开新窗：开窗撞上关窗回收，新窗可能
+                // 不可见——托盘点了不出界面的另一个根因
                 crate::webview::close(state);
-                // 重新打开（应用托盘常驻，主窗必须随时可用）
                 state.main_window = None;
-                let (new_id, task) = iced::window::open(iced::window::Settings {
-                    size: iced::Size::new(1280.0, 760.0),
-                    min_size: Some(iced::Size::new(980.0, 560.0)),
-                    ..Default::default()
-                });
-                state.main_window = Some(new_id);
-                task.map(move |_| Message::MainWindowOpened(new_id))
+                iced::window::close(id)
             } else {
                 Task::none()
             }

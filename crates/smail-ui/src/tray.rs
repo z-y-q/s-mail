@@ -2,8 +2,8 @@
 //!
 //! - Linux 需要 gtk/appindicator 运行时，暂不启用（依赖按平台限定，
 //!   Linux/Windows 不编译 tray-icon）
-//! - 「打开」与左键点击用 System Events 把自己进程拉到前台
-//!   （iced 0.14 无窗口句柄 API，gain_focus 需要窗口 Id 且单窗口 Id 不可知）
+//! - 「打开」与左键点击经 update 的 show_main_window：主窗在则聚焦还原，
+//!   关了则重开（main_window: Option<Id> 跟踪 + iced window API）
 //! - 托盘实例与菜单事件 handler 均为进程级全局，与 App 同生命周期
 
 use std::sync::mpsc::Receiver;
