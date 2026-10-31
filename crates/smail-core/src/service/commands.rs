@@ -686,6 +686,16 @@ impl ServiceInner {
                 let addrs = store.list_contacts_display(30).unwrap_or_default();
                 self.emit(Event::ContactsListed(addrs));
             }
+            Cmd::ApplyRules(ref folder) => {
+                let Conn::Up { backend, .. } = &mut *conn else {
+                    self.emit(Event::Status(
+                        self.tr("未连接，稍后重试", "Not connected, will retry later"),
+                    ));
+                    return false;
+                };
+                let backend = &**backend;
+                self.apply_rules_folder(backend, store, folder);
+            }
         }
         false
     }

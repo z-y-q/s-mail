@@ -548,6 +548,14 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                         .on_press(Message::MarkAllRead)
                         .padding([2, 8])
                         .style(theme::ghost_button),
+                    // 手动批量应用规则（真实文件夹视图；存量回放入口）。
+                    // 统一收件箱/智能视图是聚合伪视图，无文件夹语义
+                    (!state.nav.viewing_unified && !state.cur_is_smart()).then(|| {
+                        button(text(state.l().apply_rules).size(11))
+                            .on_press_maybe(cur_acct.map(Message::ApplyRulesFolder))
+                            .padding([2, 8])
+                            .style(theme::ghost_button)
+                    }),
                     button(text(format!("{key_label} {sort_label}")).size(11))
                         .on_press(Message::CycleSortKey)
                         .padding([2, 8])

@@ -352,6 +352,8 @@ pub(crate) enum Message {
     MailboxNext,
     /// 当前邮箱全部标为已读
     MarkAllRead,
+    /// 对当前文件夹全部存量邮件重放规则引擎（存量回放入口）
+    ApplyRulesFolder(usize),
     /// 排序维度循环：日期→发件人→主题
     CycleSortKey,
     /// 会话视图全局展开/折叠

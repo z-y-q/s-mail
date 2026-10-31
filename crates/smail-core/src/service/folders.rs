@@ -23,11 +23,73 @@ impl ServiceInner {
             backend.list_folders().ok();
             self.folders_ready.set(true);
         }
-        // 逐行扫规则 → 按规则索引分桶执行（批量 IMAP 往返）。
-        // continue_after=false（旧默认）：首条命中即停，每封只进一个桶；
-        // =true：同一封可叠加后续命中规则的动作（链式）
+        let (seen_n, flag_n, moved_n) = self.apply_rule_buckets(backend, store, folder, new_rows);
+        if seen_n + flag_n + moved_n > 0 {
+            self.emit(Event::Status(self.trf(
+                "规则：标已读 {}、星标 {}、移动 {}",
+                "Rules: {} marked read, {} starred, {} moved",
+                &[&seen_n, &flag_n, &moved_n],
+            )));
+        }
+    }
+
+    /// 手动批量应用：对指定文件夹全部存量邮件重放规则引擎。
+    /// 同步路径只打新邮件（已知邮件不重放），建规则前的存量永远吃不到——
+    /// 这里提供回放入口。执行后重发 FolderLoaded 让当前视图刷新
+    ///（移动/标记在库里已生效，重读即真值）
+    pub(crate) fn apply_rules_folder(
+        &self,
+        backend: &dyn MailBackend,
+        store: &Store,
+        folder: &str,
+    ) {
+        if self.cfg.rules.is_empty() {
+            self.emit(Event::Status(self.trf(
+                "没有已保存的规则（设置页账号下可建）",
+                "No saved rules (create them under the account in settings)",
+                &[],
+            )));
+            return;
+        }
+        let limit = self.folder_limit(folder).saturating_mul(4).max(500);
+        let rows = store.list_folder(folder, limit).unwrap_or_default();
+        if rows.is_empty() {
+            self.emit(Event::Status(self.trf(
+                "{}：没有邮件可应用规则",
+                "{}: no messages to apply rules to",
+                &[&folder],
+            )));
+            return;
+        }
+        let scanned = rows.len();
+        let (seen_n, flag_n, moved_n) = self.apply_rule_buckets(backend, store, folder, rows);
+        self.emit(Event::Status(self.trf(
+            "规则全量应用（{} 封扫描）：标已读 {}、星标 {}、移动 {}",
+            "Rules applied ({} scanned): {} marked read, {} starred, {} moved",
+            &[&scanned, &seen_n, &flag_n, &moved_n],
+        )));
+        let fresh = store
+            .list_folder(folder, self.folder_limit(folder))
+            .unwrap_or_default();
+        self.emit(Event::FolderLoaded {
+            folder: folder.to_string(),
+            rows: fresh,
+        });
+    }
+
+    /// 规则匹配分桶 + 动作批量执行（同步新邮件与手动全量回放共用）。
+    /// 返回（标已读、星标、移动）计数。
+    /// continue_after=false（旧默认）：首条命中即停，每封只进一个桶；
+    /// =true：同一封可叠加后续命中规则的动作（链式）
+    fn apply_rule_buckets(
+        &self,
+        backend: &dyn MailBackend,
+        store: &Store,
+        folder: &str,
+        rows: Vec<MessageRow>,
+    ) -> (usize, usize, usize) {
         let mut buckets: Vec<(usize, Vec<MessageRow>)> = Vec::new();
-        for row in new_rows {
+        for row in rows {
             for (ri, r) in self.cfg.rules.iter().enumerate() {
                 let folder_ok = r
                     .folder
@@ -104,13 +166,7 @@ impl ServiceInner {
                 }
             }
         }
-        if seen_n + flag_n + moved_n > 0 {
-            self.emit(Event::Status(self.trf(
-                "规则：标已读 {}、星标 {}、移动 {}",
-                "Rules: {} marked read, {} starred, {} moved",
-                &[&seen_n, &flag_n, &moved_n],
-            )));
-        }
+        (seen_n, flag_n, moved_n)
     }
 
     /// 离线优先：启动即从本地索引广播文件夹清单——侧栏不等服务器。

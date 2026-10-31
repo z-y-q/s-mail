@@ -683,6 +683,25 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             );
             Task::none()
         }
+        Message::ApplyRulesFolder(acct) => {
+            // 手动批量应用规则：当前真实文件夹全量重放（伪视图无文件夹语义）
+            let Some((a, folder)) = state.nav.cur.clone() else {
+                return Task::none();
+            };
+            if a != acct
+                || state.nav.in_search
+                || state.nav.viewing_unified
+                || state.cur_is_smart()
+                || folder == "__drafts__"
+                || folder == "__outbox__"
+            {
+                return Task::none();
+            }
+            let hint = format!("{}…", state.l().apply_rules);
+            state.statuses.insert(acct, hint);
+            state.send(acct, Cmd::ApplyRules(folder));
+            Task::none()
+        }
         Message::ExpandAllThreads => {
             state.expand_all_threads();
             Task::none()

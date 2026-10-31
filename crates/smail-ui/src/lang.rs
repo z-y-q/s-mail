@@ -187,6 +187,8 @@ pub(crate) struct Lex {
     pub(crate) empty_junk: &'static str,
     pub(crate) empty_junk_q: &'static str, // {n}
     pub(crate) mark_all_read: &'static str,
+    /// 手动批量应用规则（当前文件夹存量重放；引擎同步时只打新邮件）
+    pub(crate) apply_rules: &'static str,
     pub(crate) expand_all: &'static str,
     pub(crate) collapse_all: &'static str,
     pub(crate) smart_hdr: &'static str,
@@ -457,6 +459,7 @@ pub(crate) const ZH: Lex = Lex {
     smart_unread: "未读邮件",
     smart_flagged: "星标邮件",
     mark_all_read: "全部已读",
+    apply_rules: "应用规则",
     expand_all: "展开全部",
     collapse_all: "折叠全部",
     drafts_n: "草稿（{}）",
@@ -714,6 +717,7 @@ pub(crate) const EN: Lex = Lex {
     smart_unread: "Unread",
     smart_flagged: "Flagged",
     mark_all_read: "Mark all read",
+    apply_rules: "Apply rules",
     expand_all: "Expand all",
     collapse_all: "Collapse all",
     drafts_n: "Drafts ({})",

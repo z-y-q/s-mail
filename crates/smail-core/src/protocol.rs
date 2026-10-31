@@ -125,6 +125,9 @@ pub enum Cmd {
     },
     /// 最近联系人（compose 自动补全用）
     ListContacts,
+    /// 手动批量应用规则：对指定文件夹全部存量邮件重放规则引擎
+    ///（同步时只打新邮件，建规则前的存量靠这里回放）
+    ApplyRules(String),
 }
 
 #[derive(Debug, Clone)]
