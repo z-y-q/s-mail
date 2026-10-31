@@ -953,18 +953,19 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             ]
                             .spacing(2),
                         )
-                        .on_press(Message::DragPress(
-                            acct,
-                            r.envelope_hash,
-                            Box::new(Message::ThreadRootClicked(acct, r.envelope_hash, *latest,)),
-                        ))
                         .padding([6, 8])
                         .width(Length::Fill)
                         .style(move |t, st| theme::list_row(t, st, is_sel)),
                     ]
                     .spacing(2)
                     .into();
-                    list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
+                    // 点击语义走 wrap_row_menu 的按下登记（松开还原），button 不再挂点击
+                    list = list.push(wrap_row_menu(
+                        row_el,
+                        acct,
+                        r.envelope_hash,
+                        Message::ThreadRootClicked(acct, r.envelope_hash, *latest),
+                    ));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
                         list = list.push(context_menu_row(
                             state,
@@ -1017,18 +1018,18 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             ]
                             .spacing(1),
                         )
-                        .on_press(Message::DragPress(
-                            acct,
-                            r.envelope_hash,
-                            Box::new(Message::RowSelected(acct, r.envelope_hash)),
-                        ))
                         .padding([4, 10])
                         .width(Length::Fill)
                         .style(move |t, st| theme::list_row(t, st, is_sel)),
                     ]
                     .spacing(2)
                     .into();
-                    list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
+                    list = list.push(wrap_row_menu(
+                        row_el,
+                        acct,
+                        r.envelope_hash,
+                        Message::RowSelected(acct, r.envelope_hash),
+                    ));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
                         list = list.push(context_menu_row(
                             state,
@@ -1111,18 +1112,18 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     let row_el: Element<Message> = row![
                         cb,
                         button(container(lines).width(Length::Fill).padding([4, 0]),)
-                            .on_press(Message::DragPress(
-                                acct,
-                                r.envelope_hash,
-                                Box::new(Message::RowSelected(acct, r.envelope_hash)),
-                            ))
                             .padding([6, 8])
                             .width(Length::Fill)
                             .style(move |t, st| theme::list_row(t, st, is_sel)),
                     ]
                     .spacing(2)
                     .into();
-                    list = list.push(wrap_row_menu(row_el, acct, r.envelope_hash));
+                    list = list.push(wrap_row_menu(
+                        row_el,
+                        acct,
+                        r.envelope_hash,
+                        Message::RowSelected(acct, r.envelope_hash),
+                    ));
                     if state.context_menu == Some((acct, r.envelope_hash)) {
                         list = list.push(context_menu_row(
                             state,
@@ -1365,12 +1366,17 @@ fn split_handle(kind: crate::SplitKind) -> Element<'static, Message> {
 }
 
 /// 行右键包裹：右键打开该行的上下文菜单（左键行为不受影响）
+/// 行包装：左键按下登记拖拽候选（iced button 在松手瞬间才发 on_press，
+/// 拖拽手势的「按下」必须走 mouse_area——分割条同款时机）；右键开菜单。
+/// 未成拖拽时松开还原为 click（候选携带的原点击消息）
 fn wrap_row_menu<'a>(
     row_el: impl Into<Element<'a, Message>>,
     acct: usize,
     hash: i64,
+    click: Message,
 ) -> Element<'a, Message> {
     mouse_area(row_el.into())
+        .on_press(Message::DragPress(acct, hash, Box::new(click)))
         .on_right_press(Message::ContextMenuOpen(acct, hash))
         .into()
 }

@@ -287,9 +287,14 @@ fn create(state: &mut State) -> Result<(), String> {
         .with_back_forward_navigation_gestures(false)
         .with_accept_first_mouse(true)
         .with_background_color(bg)
-        // 视图内导航一律取消（初始 with_html 不走该回调）；链接由
-        // 初始化脚本截获后转系统浏览器（见下），iframe 追踪不会外弹
-        .with_navigation_handler(|_url| false)
+        // 视图内导航：只放行内部加载（with_html 的 loadHTMLString 在新版
+        // macOS 同样过 decidePolicyFor——一律 false 会把初始内容拦成空白）；
+        // 外部 http(s) 等全部取消，链接由点击脚本转系统浏览器（见下），
+        // iframe 追踪不会外弹
+        .with_navigation_handler(|url| {
+            let u = url.trim();
+            u.is_empty() || u.starts_with("about:") || u.starts_with("data:")
+        })
         .with_new_window_req_handler(|_url, _features| wry::NewWindowResponse::Deny)
         .with_initialization_script(
             r#"document.addEventListener('click', function (e) {
