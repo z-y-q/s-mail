@@ -233,6 +233,12 @@ pub(crate) enum Message {
     TemplateCancel,
     /// 撰写窗：把选中模板正文插到光标处（参数=模板下标）
     TemplateInsert(usize),
+    /// 撤销发送：删 hold 行 + 恢复撰写窗快照
+    UndoSendClicked,
+    /// 撤销窗口到期：清横幅（hold 行由 flush 自动释放真投）
+    UndoSendExpire(usize, i64),
+    /// 设置页：撤销发送窗口时长选择（0=关）
+    UndoSecsPick(u64),
     /// 循环切换本地旗标颜色（无→红→橙→绿→蓝→紫→灰→无）
     CycleFlagColor(usize, i64),
     /// 右键「代转」：读信区弹出收件人输入行

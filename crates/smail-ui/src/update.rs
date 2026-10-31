@@ -895,6 +895,9 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::TemplateDelete(..)
         | Message::TemplateCancel
         | Message::TemplateInsert(..)
+        | Message::UndoSendClicked
+        | Message::UndoSendExpire(..)
+        | Message::UndoSecsPick(..)
         | Message::CycleFlagColor(..)
         | Message::RedirectPrompt(..)
         | Message::RedirectToInput(..)

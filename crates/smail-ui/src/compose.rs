@@ -73,6 +73,36 @@ pub(crate) struct Compose {
     pub(crate) preview_md: Option<iced::widget::markdown::Content>,
 }
 
+/// 手动 Clone：preview_md（markdown::Content 无 Clone）置空——预览是瞬态
+/// 派生态，克隆方（撤销发送快照）恢复后按 false 重新预览
+impl Clone for Compose {
+    fn clone(&self) -> Self {
+        Compose {
+            preview: false,
+            preview_md: None,
+            ai_instruction: self.ai_instruction.clone(),
+            ai_busy: self.ai_busy,
+            ai_overwrite_ask: self.ai_overwrite_ask,
+            ai_pending: self.ai_pending.clone(),
+            ai_rewrite_mode: self.ai_rewrite_mode,
+            ai_prev: self.ai_prev.clone(),
+            autosave_at: self.autosave_at,
+            draft_id: self.draft_id,
+            account: self.account,
+            pgp_sign: self.pgp_sign,
+            pgp_encrypt: self.pgp_encrypt,
+            high_priority: self.high_priority,
+            confirm_discard: self.confirm_discard,
+            to: self.to.clone(),
+            cc: self.cc.clone(),
+            bcc: self.bcc.clone(),
+            subject: self.subject.clone(),
+            body: self.body.clone(),
+            attachments: self.attachments.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum ReplyKind {
     Reply,

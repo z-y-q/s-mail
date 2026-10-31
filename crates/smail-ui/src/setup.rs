@@ -1074,11 +1074,30 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         .width(Length::Fill)
         .style(theme::reader_meta);
 
+    // 撤销发送窗口（应用级偏好；写信点发送后 N 秒内可撤销，0=关）
+    let undo_row = row![
+        text(state.l().undo_hdr).size(13),
+        Space::new().width(Length::Fill),
+        iced::widget::pick_list(
+            vec![0u64, 10, 20, 30],
+            Some(state.prefs.undo_secs),
+            Message::UndoSecsPick,
+        )
+        .text_size(12)
+        .padding([3, 8]),
+    ]
+    .spacing(8);
+    let undo_card = container(undo_row)
+        .padding(8)
+        .width(Length::Fill)
+        .style(theme::reader_meta);
+
     let mut page = column![page_header, form_card].spacing(20).max_width(640);
     if !first_run {
         page = page.push(list_col);
         page = page.push(contacts_col);
         page = page.push(templates_col);
+        page = page.push(undo_card);
     }
     page = page.push(ai_col);
     page = page.push(

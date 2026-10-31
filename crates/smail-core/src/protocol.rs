@@ -43,6 +43,24 @@ pub enum Cmd {
         /// 高优先级（X-Priority: 1 / Importance: high；重试保留）
         high_priority: bool,
     },
+    /// 延后投递（撤销发送/定时发送共用）：入队 status='hold'，
+    /// 到 send_at（unix 秒）由 flush 转 pending 真投。id 由 UI 生成
+    /// （unix 纳秒），撤销按钮直接持此 id 删行
+    QueueHold {
+        id: i64,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        attachments: Vec<String>,
+        sign: bool,
+        encrypt: bool,
+        high_priority: bool,
+        send_at: i64,
+    },
+    /// 撤销延后投递：直接删该行（仅 status='hold' 有效，pending 删不掉）
+    DiscardOutbox(i64),
     SaveDraft {
         id: Option<i64>,
         to: String,

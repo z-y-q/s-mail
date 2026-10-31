@@ -247,3 +247,25 @@ jobs:
           sh spikes/spike-melib/imap-test/up-nomove.sh
           timeout 120 ./target/debug/examples/m21 60
           sh spikes/spike-melib/imap-test/down.sh
+      - name: m22 代转 e2e（Resent-* 重投 + 原头原体保留）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m22
+        run: |
+          sh spikes/spike-melib/imap-test/up.sh
+          python3 spikes/spike-melib/imap-test/mini_smtp.py 11525 &
+          sleep 1
+          rm -f /tmp/mini-smtp-mail.eml
+          timeout 120 ./target/debug/examples/m22 60
+          sh spikes/spike-melib/imap-test/down.sh
+      - name: m23 撤销发送 e2e（hold 到期才投 + 撤销行永不投）
+        env:
+          SMAIL_CONFIG: spikes/spike-melib/config.toml
+          SMAIL_HOME: /tmp/smail-ci-m23
+        run: |
+          sh spikes/spike-melib/imap-test/up.sh
+          python3 spikes/spike-melib/imap-test/mini_smtp.py 11525 &
+          sleep 1
+          rm -f /tmp/mini-smtp-mail.eml
+          timeout 120 ./target/debug/examples/m23 60
+          sh spikes/spike-melib/imap-test/down.sh

@@ -91,6 +91,8 @@ impl ServiceInner {
     }
 
     pub(crate) fn flush_outbox(&self, backend: &dyn MailBackend, store: &Store) {
+        // 延后投递到期释放（撤销发送/定时发送共用：hold → pending）
+        let _ = store.release_due_holds(crate::oauth::unix_now());
         if let Ok(n) = store.fail_exhausted_outbox() {
             if n > 0 {
                 self.emit(Event::Status(self.trf("{} 封发件重试穷尽，已标 failed（请检查收件人/附件后重发）", "{} outgoing message(s) exhausted retries, marked failed (check recipients/attachments and resend)", &[&n])));

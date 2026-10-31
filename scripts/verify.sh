@@ -105,13 +105,17 @@ if [ "$FAST" -eq 0 ]; then
 fi
 
 if [ "$E2E" -eq 1 ]; then
-    # 6. dovecot 本地 e2e 核心组（HTML 管线/移动/废纸篓三链路；完整矩阵在 CI）
+    # 6. dovecot 本地 e2e 核心组（HTML 管线/移动/废纸篓 + 撤销发送；完整矩阵在 CI）
     cargo build -q -p smail-core --examples || exit 1
     sh spikes/spike-melib/imap-test/up.sh >/dev/null 2>&1
-    for m in m4 m14 m19; do
+    python3 spikes/spike-melib/imap-test/mini_smtp.py 11525 >/dev/null 2>&1 &
+    MINI_PID=$!
+    sleep 1
+    for m in m4 m14 m19 m23; do
         home="/tmp/smail-verify-$m"
         rm -rf "$home"
         [ "$m" = "m4" ] && python3 spikes/spike-melib/imap-test/inject_html_mail.py >/dev/null && sleep 2
+        [ "$m" = "m23" ] && rm -f /tmp/mini-smtp-mail.eml
         if SMAIL_CONFIG=spikes/spike-melib/config.toml SMAIL_HOME="$home" \
             timeout 150 ./target/debug/examples/$m 60 >/dev/null 2>&1; then
             PASSED="$PASSED\n  ✅ e2e $m"
@@ -123,6 +127,7 @@ if [ "$E2E" -eq 1 ]; then
         fi
         rm -rf "$home"
     done
+    kill $MINI_PID 2>/dev/null
     sh spikes/spike-melib/imap-test/down.sh >/dev/null 2>&1
 fi
 

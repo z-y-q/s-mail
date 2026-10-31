@@ -698,6 +698,73 @@ impl ServiceInner {
                 let backend = &**backend;
                 self.apply_rules_folder(backend, store, folder);
             }
+            Cmd::QueueHold {
+                id,
+                to,
+                cc,
+                bcc,
+                subject,
+                body,
+                attachments,
+                sign,
+                encrypt,
+                high_priority,
+                send_at,
+            } => {
+                // PGP 邮件不走延后通道：try_send 构造完整 MIME 后走 raw，
+                // hold 行重发缺 PGP 组装上下文——直接照常发送并提示
+                if sign || encrypt {
+                    self.emit(Event::Status(self.tr(
+                        "PGP 邮件不支持延后发送，已直接发送",
+                        "PGP mail cannot be deferred; sent immediately",
+                    )));
+                    return self.handle_cmd(
+                        Cmd::SendMail {
+                            to,
+                            cc,
+                            bcc,
+                            subject,
+                            body,
+                            attachments,
+                            sign,
+                            encrypt,
+                            high_priority,
+                        },
+                        conn,
+                        store,
+                        current_folder,
+                        pending_sync,
+                    );
+                }
+                store
+                    .enqueue_hold_outbox(
+                        id,
+                        &to,
+                        &cc,
+                        &bcc,
+                        &subject,
+                        &body,
+                        &attachments,
+                        high_priority,
+                        send_at,
+                    )
+                    .ok();
+                if let Ok((p, f)) = store.outbox_counts() {
+                    self.emit(Event::OutboxPending {
+                        pending: p,
+                        failed: f,
+                    });
+                }
+            }
+            Cmd::DiscardOutbox(id) => {
+                store.outbox_remove(id).ok();
+                if let Ok((p, f)) = store.outbox_counts() {
+                    self.emit(Event::OutboxPending {
+                        pending: p,
+                        failed: f,
+                    });
+                }
+            }
             Cmd::Redirect { hash, to } => {
                 // 正文已缓存：立刻重投。未缓存：转 Reader 现取（服务循环内联
                 // fetch_body 会与 IDLE 连接争锁死锁——m22 实测），取件完成经

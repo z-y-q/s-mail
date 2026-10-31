@@ -120,6 +120,8 @@ pub(crate) struct Prefs {
     pub(crate) vip: Vec<String>,
     /// 邮件模板（撰写窗一键插入；ui.json 持久化）
     pub(crate) templates: Vec<crate::lang::TemplateCfg>,
+    /// 撤销发送窗口秒数（0=关）
+    pub(crate) undo_secs: u64,
     /// 本地旗标颜色（键=邮件 hash 字符串，值=色名；IMAP 无色旗标，本地属性）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -270,6 +272,8 @@ pub(crate) struct State {
     pub(crate) contact_search: String,
     /// 模板编辑面板（设置页；None=关闭）。editing=Some(idx) 为编辑既有模板
     pub(crate) template_edit: Option<TemplateDraft>,
+    /// 撤销发送挂起（None=无；顶栏倒计时+撤销按钮）
+    pub(crate) undo_send: Option<UndoSend>,
     /// 文件夹导出进行中：（账号, 文件夹, 目录）——picked 回填后后台写出
     pub(crate) export_folder: Option<(usize, String, std::path::PathBuf)>,
     /// 邮件提醒（到期发系统通知；内存态，重启丢失）
@@ -399,6 +403,16 @@ pub(crate) struct TemplateDraft {
     pub(crate) body: iced::widget::text_editor::Content,
 }
 
+/// 撤销发送挂起（hold 行已入队；到期前可撤销恢复撰写窗）
+pub(crate) struct UndoSend {
+    pub(crate) acct: usize,
+    /// hold 行 id（UI 生成的 unix 纳秒）
+    pub(crate) id: i64,
+    pub(crate) until: std::time::Instant,
+    /// 撤销时恢复撰写窗的快照
+    pub(crate) compose: Box<Compose>,
+}
+
 impl SplitKind {
     pub(crate) fn clamp_width(&self, w: f32) -> f32 {
         match self {
@@ -452,6 +466,7 @@ impl State {
                         ignored: bp.ignored,
                         vip: bp.vip,
                         templates: bp.templates,
+                        undo_secs: bp.undo_secs,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: accounts2,
@@ -530,6 +545,7 @@ impl State {
                     context_menu: None,
                     contact_search: String::new(),
                     template_edit: None,
+                    undo_send: None,
                     export_folder: None,
                     reminders: vec![],
                     local_stores: HashMap::new(),
@@ -621,6 +637,7 @@ impl State {
                         ignored: bp.ignored,
                         vip: bp.vip,
                         templates: bp.templates,
+                        undo_secs: bp.undo_secs,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: vec![],
@@ -699,6 +716,7 @@ impl State {
                     context_menu: None,
                     contact_search: String::new(),
                     template_edit: None,
+                    undo_send: None,
                     export_folder: None,
                     reminders: vec![],
                     local_stores: HashMap::new(),
@@ -746,6 +764,7 @@ impl State {
             ignored: self.prefs.ignored.clone(),
             vip: self.prefs.vip.clone(),
             templates: self.prefs.templates.clone(),
+            undo_secs: self.prefs.undo_secs,
             flag_colors: self.prefs.flag_colors.clone(),
         }
     }
@@ -1131,6 +1150,8 @@ pub(crate) struct BootPrefs {
     pub(crate) ignored: Vec<String>,
     pub(crate) vip: Vec<String>,
     pub(crate) templates: Vec<crate::lang::TemplateCfg>,
+    /// 撤销发送窗口秒数（0=关）
+    pub(crate) undo_secs: u64,
     /// 本地旗标颜色（键=hash 字符串）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -1157,6 +1178,7 @@ pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
         ignored: prefs.ignored,
         vip: prefs.vip,
         templates: prefs.templates,
+        undo_secs: prefs.undo_secs,
         flag_colors: prefs.flag_colors,
     }
 }

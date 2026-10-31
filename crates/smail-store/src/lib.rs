@@ -333,6 +333,16 @@ impl Store {
             );
             conn.pragma_update(None, "user_version", 11)?;
         }
+        // v12：outbox.send_at——延后投递时间戳（撤销发送/定时发送共用；
+        // status='hold' 的行到 send_at 才由 flush 转 pending 真投）
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if v < 12 {
+            let _ = conn.execute(
+                "ALTER TABLE outbox ADD COLUMN send_at INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            conn.pragma_update(None, "user_version", 12)?;
+        }
         Ok(())
     }
 

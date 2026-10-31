@@ -86,6 +86,8 @@ pub(crate) struct UiPrefs {
     pub(crate) vip: Vec<String>,
     /// 邮件模板（撰写窗一键插入；应用级，跨账号）
     pub(crate) templates: Vec<crate::lang::TemplateCfg>,
+    /// 撤销发送窗口秒数（0=关；默认 10）
+    pub(crate) undo_secs: u64,
     /// 本地旗标颜色（键=hash 字符串，值=色名）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -102,6 +104,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         ignored: vec![],
         vip: vec![],
         templates: vec![],
+        undo_secs: 10,
         flag_colors: std::collections::HashMap::new(),
     };
     let Ok(raw) = std::fs::read_to_string(data_root.join("ui.json")) else {
@@ -162,6 +165,9 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         ) {
             prefs.templates = list;
         }
+        if let Some(n) = v.get("undo_secs").and_then(|x| x.as_u64()) {
+            prefs.undo_secs = n;
+        }
         if let Some(obj) = v.get("flag_colors").and_then(|x| x.as_object()) {
             for (k, val) in obj {
                 if let Some(color) = val.as_str() {
@@ -185,6 +191,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "ignored": p.ignored,
         "vip": p.vip,
         "templates": p.templates,
+        "undo_secs": p.undo_secs,
         "flag_colors": p.flag_colors,
     });
     let _ = std::fs::write(data_root.join("ui.json"), obj.to_string());
@@ -247,6 +254,11 @@ pub(crate) struct Lex {
     pub(crate) templates_hdr: &'static str,
     pub(crate) template_new: &'static str,
     pub(crate) template_name_ph: &'static str,
+    /// 设置页撤销发送区
+    pub(crate) undo_hdr: &'static str,
+    /// 顶栏撤销发送横幅与按钮
+    pub(crate) undo_banner: &'static str,
+    pub(crate) undo_btn: &'static str,
     /// 右键菜单：加入/移出 VIP 发件人
     pub(crate) vip_add: &'static str,
     pub(crate) vip_remove: &'static str,
@@ -532,6 +544,9 @@ pub(crate) const ZH: Lex = Lex {
     templates_hdr: "邮件模板",
     template_new: "＋ 新建模板",
     template_name_ph: "模板名称",
+    undo_banner: "稍后发送，剩",
+    undo_btn: "撤销",
+    undo_hdr: "撤销发送（发送后 N 秒内可撤销）",
     mark_all_read: "全部已读",
     apply_rules: "应用规则",
     expand_all: "展开全部",
@@ -803,6 +818,9 @@ pub(crate) const EN: Lex = Lex {
     templates_hdr: "Templates",
     template_new: "＋ New template",
     template_name_ph: "Template name",
+    undo_banner: "Sending later,",
+    undo_btn: "Undo",
+    undo_hdr: "Undo send (revoke within N seconds)",
     mark_all_read: "Mark all read",
     apply_rules: "Apply rules",
     expand_all: "Expand all",
@@ -1092,6 +1110,7 @@ mod tests {
                 name: "周报".into(),
                 body: "本周进展：".into(),
             }],
+            undo_secs: 20,
             flag_colors: std::collections::HashMap::new(),
         };
         save_prefs(&dir, &p);
@@ -1104,6 +1123,7 @@ mod tests {
         assert_eq!(p.vip, vec!["boss@x.com".to_string()], "VIP 列表往返");
         assert_eq!(p.templates.len(), 1, "模板列表往返");
         assert_eq!(p.templates[0].name, "周报");
+        assert_eq!(p.undo_secs, 20, "撤销窗口往返");
         // 默认（无偏好文件）：中文 + 跟随系统
         std::fs::remove_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&dir).unwrap();

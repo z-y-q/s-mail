@@ -101,6 +101,11 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
             state.template_edit = None;
             Task::none()
         }
+        Message::UndoSecsPick(secs) => {
+            state.prefs.undo_secs = secs;
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
         Message::SetupPreset(p) => {
             if let Screen::Setup(f) = &mut state.screen {
                 f.preset = p;

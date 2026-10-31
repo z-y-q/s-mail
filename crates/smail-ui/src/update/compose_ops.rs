@@ -275,6 +275,57 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                     return Task::none();
                 }
                 let acct = c.account;
+                // 撤销快照：preview 缓存（markdown::Content 无 Clone）是瞬态
+                // 派生态，恢复时按 false 重新预览即可
+                let compose_snapshot = Compose {
+                    preview: false,
+                    preview_md: None,
+                    ..c.clone()
+                };
+                // 撤销发送：窗口期内邮件挂 hold（到点 flush 自动真投），
+                // 期间可撤销恢复撰写窗
+                if state.prefs.undo_secs > 0 {
+                    let id = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos() as i64)
+                        .unwrap_or(0);
+                    let send_at = id.div_euclid(1_000_000_000) + state.prefs.undo_secs as i64;
+                    state.send(
+                        acct,
+                        Cmd::QueueHold {
+                            id,
+                            to: c.to.clone(),
+                            cc: c.cc.clone(),
+                            bcc: c.bcc.clone(),
+                            subject: c.subject.clone(),
+                            body: c.body.text().to_string(),
+                            attachments: c.attachments.clone(),
+                            sign: c.pgp_sign,
+                            encrypt: c.pgp_encrypt,
+                            high_priority: c.high_priority,
+                            send_at,
+                        },
+                    );
+                    if let Some(draft_id) = c.draft_id {
+                        state.send(acct, Cmd::DeleteDraft(draft_id));
+                    }
+                    let until = std::time::Instant::now()
+                        + std::time::Duration::from_secs(state.prefs.undo_secs);
+                    let snapshot = Box::new(compose_snapshot);
+                    state.undo_send = Some(crate::state::UndoSend {
+                        acct,
+                        id,
+                        until,
+                        compose: snapshot,
+                    });
+                    let secs = state.prefs.undo_secs;
+                    return close_compose_window(state).chain(Task::perform(
+                        async move {
+                            std::thread::sleep(std::time::Duration::from_secs(secs));
+                        },
+                        move |_| Message::UndoSendExpire(acct, id),
+                    ));
+                }
                 state.send(
                     acct,
                     Cmd::SendMail {
@@ -294,6 +345,36 @@ pub(crate) fn handle(state: &mut State, msg: Message) -> Task<Message> {
                 }
                 state.statuses.insert(acct, "发送中…".into());
                 return close_compose_window(state);
+            }
+            Task::none()
+        }
+        Message::UndoSendClicked => {
+            let Some(u) = state.undo_send.take() else {
+                return Task::none();
+            };
+            // 撤销：删 hold 行 + 恢复撰写窗快照
+            state.send(u.acct, Cmd::DiscardOutbox(u.id));
+            state.compose = Some(*u.compose);
+            state.statuses.insert(u.acct, "已撤销发送".into());
+            if state.compose_window.is_none() {
+                let (win_id, task) = iced::window::open(iced::window::Settings {
+                    size: iced::Size::new(900.0, 640.0),
+                    min_size: Some(iced::Size::new(720.0, 480.0)),
+                    exit_on_close_request: false,
+                    ..Default::default()
+                });
+                state.compose_window = Some(win_id);
+                return task.map(move |_| Message::ComposeWindowOpened(win_id));
+            }
+            Task::none()
+        }
+        Message::UndoSendExpire(acct, id) => {
+            // 到期：hold 行由 flush 释放真投（横幅清掉即可）
+            if let Some(u) = &state.undo_send {
+                if u.acct == acct && u.id == id {
+                    state.undo_send = None;
+                    state.statuses.insert(acct, "邮件已发出".into());
+                }
             }
             Task::none()
         }

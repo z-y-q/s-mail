@@ -48,6 +48,49 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// 延后投递（撤销发送/定时发送共用）：status='hold'，到 send_at 才真投。
+    /// id 由调用方生成（unix 纳秒，撤销按钮直接持此 id 删行）
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_hold_outbox(
+        &self,
+        id: i64,
+        to: &str,
+        cc: &str,
+        bcc: &str,
+        subject: &str,
+        body: &str,
+        attachments: &[String],
+        priority: bool,
+        send_at: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO outbox(id, to_addr, cc, bcc, subject, body, attachments, priority, status, send_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'hold', ?9)",
+            (
+                id,
+                to,
+                cc,
+                bcc,
+                subject,
+                body,
+                attachments.join("\u{1}"),
+                priority as i64,
+                send_at,
+            ),
+        )?;
+        Ok(())
+    }
+
+    /// 到期的延后投递转 pending（flush 每轮开头调用；下一轮取走真投）
+    pub fn release_due_holds(&self, now: i64) -> usize {
+        self.conn
+            .execute(
+                "UPDATE outbox SET status='pending' WHERE status='hold' AND send_at <= ?1",
+                [now],
+            )
+            .unwrap_or(0)
+    }
+
     pub fn pending_outbox(&self) -> rusqlite::Result<Vec<OutboxRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, to_addr, cc, bcc, subject, body, attachments, priority, status, attempts, error \

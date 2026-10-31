@@ -112,6 +112,34 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             text(status_line.clone())
                 .size(11)
                 .style(theme::secondary_text),
+            // 撤销发送横幅：倒计时+撤销按钮（窗口关闭前一直可见）
+            if let Some(u) = &state.undo_send {
+                let left = u
+                    .until
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_secs();
+                let banner: Element<Message> = row![
+                    text(format!(
+                        "{} {}s",
+                        if state.l().undo_banner.is_empty() {
+                            ""
+                        } else {
+                            state.l().undo_banner
+                        },
+                        left
+                    ))
+                    .size(12),
+                    button(text(state.l().undo_btn).size(12))
+                        .on_press(Message::UndoSendClicked)
+                        .padding([2, 8])
+                        .style(theme::accent_button),
+                ]
+                .spacing(6)
+                .into();
+                banner
+            } else {
+                Space::new().width(0).into()
+            },
             Space::new().width(Length::Fill),
             button(
                 text(if matches!(state.prefs.ui_theme, iced::Theme::Dark) {
