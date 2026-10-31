@@ -208,6 +208,17 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             crate::lang::save_prefs(&state.data_root, &state.current_prefs());
             Task::none()
         }
+        Message::KeyBindInput(action, val) => {
+            // 空=恢复内建默认（删表项）；单字符才收（多字符粘贴截断首字符）
+            if val.is_empty() {
+                state.prefs.keys.remove(&action);
+            } else {
+                let ch: String = val.chars().take(1).collect();
+                state.prefs.keys.insert(action, ch);
+            }
+            crate::lang::save_prefs(&state.data_root, &state.current_prefs());
+            Task::none()
+        }
         Message::ToggleUiTheme => {
             // 手动切换后不再跟随系统（Agency：用户显式选择优先）
             state.prefs.theme_follow = false;

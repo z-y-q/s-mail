@@ -52,6 +52,7 @@ fn ts() -> State {
             undo_secs: 0,
             layout: 0,
             hidden_toolbar: vec![],
+            keys: Default::default(),
             flag_colors: Default::default(),
         },
         session: None,

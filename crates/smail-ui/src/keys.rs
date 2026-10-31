@@ -209,24 +209,39 @@ pub(crate) fn handle_key(state: &mut State, key: iced::keyboard::Key) -> Task<Me
             let Some((acct, hash)) = state.selected else {
                 return Task::none();
             };
-            match c.as_str() {
+            // 动作键解析：prefs.keys 覆盖表优先（设置页可改），空/缺省回内建
+            let bound = |action: &str, def: &'static str| -> String {
+                state
+                    .prefs
+                    .keys
+                    .get(action)
+                    .map(String::as_str)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(def)
+                    .to_string()
+            };
+            if c.as_str() == bound("archive", "e") {
                 // e：归档（Gmail/Apple Mail 惯例键位）
-                "e" => update(state, Message::ArchiveCurrent(acct, hash)),
+                update(state, Message::ArchiveCurrent(acct, hash))
+            } else if c.as_str() == bound("ai", "i") {
                 // i：AI 摘要（读信态；与其他字母键同一打字安全 gate）
-                "i" => update(state, Message::AiSummarize(acct, hash)),
-                "r" => update(state, Message::Reply(acct, hash)),
-                "a" => update(state, Message::ReplyAll(acct, hash)),
-                "f" => update(state, Message::Forward(acct, hash)),
-                "s" => {
-                    let flagged = state
-                        .rows
-                        .iter()
-                        .find(|(a, r)| *a == acct && r.envelope_hash == hash)
-                        .map(|(_, r)| r.flagged)
-                        .unwrap_or(false);
-                    update(state, Message::ToggleStar(acct, hash, !flagged))
-                }
-                _ => Task::none(),
+                update(state, Message::AiSummarize(acct, hash))
+            } else if c.as_str() == bound("reply", "r") {
+                update(state, Message::Reply(acct, hash))
+            } else if c.as_str() == bound("reply_all", "a") {
+                update(state, Message::ReplyAll(acct, hash))
+            } else if c.as_str() == bound("forward", "f") {
+                update(state, Message::Forward(acct, hash))
+            } else if c.as_str() == bound("star", "s") {
+                let flagged = state
+                    .rows
+                    .iter()
+                    .find(|(a, r)| *a == acct && r.envelope_hash == hash)
+                    .map(|(_, r)| r.flagged)
+                    .unwrap_or(false);
+                update(state, Message::ToggleStar(acct, hash, !flagged))
+            } else {
+                Task::none()
             }
         }
         Key::Named(iced::keyboard::key::Named::Delete) => {

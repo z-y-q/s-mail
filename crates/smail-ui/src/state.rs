@@ -126,6 +126,8 @@ pub(crate) struct Prefs {
     pub(crate) layout: u8,
     /// 顶栏隐藏按钮 id（自定义工具栏）
     pub(crate) hidden_toolbar: Vec<String>,
+    /// 动作快捷键覆盖（动作名→单字符键；空=内建默认）
+    pub(crate) keys: std::collections::HashMap<String, String>,
     /// 本地旗标颜色（键=邮件 hash 字符串，值=色名；IMAP 无色旗标，本地属性）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -475,6 +477,7 @@ impl State {
                         undo_secs: bp.undo_secs,
                         layout: bp.layout,
                         hidden_toolbar: bp.hidden_toolbar,
+                        keys: bp.keys,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: accounts2,
@@ -649,6 +652,7 @@ impl State {
                         undo_secs: bp.undo_secs,
                         layout: bp.layout,
                         hidden_toolbar: bp.hidden_toolbar,
+                        keys: bp.keys,
                         flag_colors: bp.flag_colors,
                     },
                     accounts: vec![],
@@ -779,6 +783,7 @@ impl State {
             undo_secs: self.prefs.undo_secs,
             layout: self.prefs.layout,
             hidden_toolbar: self.prefs.hidden_toolbar.clone(),
+            keys: self.prefs.keys.clone(),
             flag_colors: self.prefs.flag_colors.clone(),
         }
     }
@@ -1206,6 +1211,8 @@ pub(crate) struct BootPrefs {
     pub(crate) layout: u8,
     /// 顶栏隐藏按钮 id（自定义工具栏）
     pub(crate) hidden_toolbar: Vec<String>,
+    /// 动作快捷键覆盖（动作名→单字符键；空=内建默认）
+    pub(crate) keys: std::collections::HashMap<String, String>,
     /// 本地旗标颜色（键=hash 字符串）
     pub(crate) flag_colors: std::collections::HashMap<String, String>,
 }
@@ -1235,6 +1242,7 @@ pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
         undo_secs: prefs.undo_secs,
         layout: prefs.layout,
         hidden_toolbar: prefs.hidden_toolbar,
+        keys: prefs.keys,
         flag_colors: prefs.flag_colors,
     }
 }

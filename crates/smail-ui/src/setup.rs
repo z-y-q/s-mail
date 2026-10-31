@@ -1172,6 +1172,44 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         .width(Length::Fill)
         .style(theme::reader_meta);
 
+    // 快捷键自定义：动作→单字符键（空输入=恢复内建默认）
+    const KEY_ITEMS: [(&str, &str, &str); 6] = [
+        ("archive", "归档", "e"),
+        ("ai", "AI 摘要", "i"),
+        ("reply", "回复", "r"),
+        ("reply_all", "回复全部", "a"),
+        ("forward", "转发", "f"),
+        ("star", "星标", "s"),
+    ];
+    let mut keys_col = column![text(state.l().keys_hdr).size(13)].spacing(4);
+    for (action, label, def) in KEY_ITEMS {
+        let cur = state
+            .prefs
+            .keys
+            .get(action)
+            .cloned()
+            .unwrap_or_else(|| def.to_string());
+        keys_col = keys_col.push(
+            row![
+                text(label).size(12),
+                Space::new().width(Length::Fill),
+                text(format!("默认 {def}"))
+                    .size(11)
+                    .style(theme::secondary_text),
+                iced::widget::text_input("", &cur)
+                    .on_input(move |v| Message::KeyBindInput(action.into(), v))
+                    .size(12)
+                    .width(60)
+                    .padding([2, 6]),
+            ]
+            .spacing(8),
+        );
+    }
+    let keys_card = container(keys_col)
+        .padding(8)
+        .width(Length::Fill)
+        .style(theme::reader_meta);
+
     let mut page = column![page_header, form_card].spacing(20).max_width(640);
     if !first_run {
         page = page.push(list_col);
@@ -1179,6 +1217,7 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         page = page.push(templates_col);
         page = page.push(undo_card);
         page = page.push(tb_card);
+        page = page.push(keys_card);
         page = page.push(stats_col);
     }
     page = page.push(ai_col);

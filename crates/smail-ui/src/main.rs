@@ -243,6 +243,8 @@ pub(crate) enum Message {
     ToggleLayout,
     /// 设置页：顶栏按钮显隐切换（参数=按钮 id）
     ToolbarToggle(String),
+    /// 设置页：动作快捷键改键（参数=动作名, 新键字符；空=恢复默认）
+    KeyBindInput(String, String),
     /// vCard 导入/导出（通讯录区；参数=所选文件路径）
     VcardImportPick,
     VcardImportPicked(String),
