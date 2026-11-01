@@ -23,8 +23,7 @@ impl Store {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(envelope_hash) DO UPDATE SET
                 seen = excluded.seen,
-                flagged = excluded.flagged,
-                size = excluded.size",
+                flagged = excluded.flagged",
             (
                 row.envelope_hash,
                 &row.folder,
@@ -56,8 +55,7 @@ impl Store {
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                      ON CONFLICT(envelope_hash) DO UPDATE SET
                         seen = excluded.seen,
-                        flagged = excluded.flagged,
-                        size = excluded.size",
+                        flagged = excluded.flagged",
                 )?;
                 let mut fts_del = tx.prepare("DELETE FROM messages_fts WHERE rowid = ?1")?;
                 let mut fts_ins = tx.prepare(

@@ -841,4 +841,29 @@ mod tests {
         s.delete_folder_probe("INBOX").unwrap();
         assert!(s.get_folder_probe("INBOX").unwrap().is_none());
     }
+
+    /// 信封同步不得清零已回填的 size/att_count（截图回归：每轮同步后
+    /// 列表大小列消失——ON CONFLICT 曾把 size 覆盖成信封行的 0）
+    #[test]
+    fn envelope_upsert_preserves_backfilled_size() {
+        let s = mem("size-preserve");
+        let mut r0 = row(1, "INBOX", "带大小");
+        s.upsert(&r0).unwrap();
+        // Reader 回填
+        s.set_message_size(1, 9000).unwrap();
+        s.set_attachment_count(1, 2).unwrap();
+        // 下一轮同步：信封行 size=0 再写（同 hash 同文件夹）
+        r0.size = 0;
+        s.upsert(&r0).unwrap();
+        let got = s.get(1).unwrap().unwrap();
+        assert_eq!(got.size, 9000, "信封同步不清零已回填大小");
+        assert_eq!(got.att_count, 2, "附件计数不受信封同步影响");
+        // 批量路径同语义
+        let mut b = row(2, "INBOX", "批量");
+        s.upsert_new_batch(&[b.clone()]).unwrap();
+        s.set_message_size(2, 500).unwrap();
+        b.size = 0;
+        s.upsert_new_batch(&[b]).unwrap();
+        assert_eq!(s.get(2).unwrap().unwrap().size, 500, "批量同步同不清零");
+    }
 }
