@@ -19,7 +19,7 @@ const ROW_H: f32 = list::ROW_H;
 const BUFFER: usize = 12;
 const MAIL_LIST_ID: &str = list::MAIL_LIST_ID;
 
-use list::clean_subject;
+use list::{clean_subject, one_line};
 pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
     // 投放目标命中表清空：本帧绘制期由 hit_target 包装组件重新登记
     //（拖放命中测试永远看当前帧几何，无跨帧残留）
@@ -1051,7 +1051,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                         if *unseen { "●" } else { "" },
                                     ))
                                     .size(13),
-                                    text(clean_subject(&r.subject))
+                                    text(one_line(&clean_subject(&r.subject), 26))
                                         .size(13)
                                         .font(theme::ui_font(if *unseen {
                                             iced::font::Weight::Semibold
@@ -1061,10 +1061,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     Space::new().width(Length::Fill),
                                     text(relative_date(*last_date))
                                         .size(11)
+                                        .width(Length::Shrink)
                                         .style(theme::secondary_text),
                                     Space::new().width(6),
                                     text(crate::format_size(r.size))
                                         .size(10)
+                                        .width(Length::Shrink)
                                         .style(theme::secondary_text),
                                 ],
                                 text(format!("{last_from}{tag}"))
@@ -1132,20 +1134,22 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             column![
                                 row![
                                     star_txt,
-                                    text(subject_line).size(13).font(theme::ui_font(
-                                        if child_unseen {
+                                    text(one_line(&subject_line, 26)).size(13).font(
+                                        theme::ui_font(if child_unseen {
                                             iced::font::Weight::Semibold
                                         } else {
                                             iced::font::Weight::Normal
-                                        }
-                                    )),
+                                        })
+                                    ),
                                     Space::new().width(Length::Fill),
                                     text(relative_date(r.date_unix))
                                         .size(11)
+                                        .width(Length::Shrink)
                                         .style(theme::secondary_text),
                                     Space::new().width(6),
                                     text(crate::format_size(r.size))
                                         .size(10)
+                                        .width(Length::Shrink)
                                         .style(theme::secondary_text),
                                 ],
                                 text(format!("   {}", r.from_addr))
@@ -1236,19 +1240,21 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                     let mut lines = column![
                         row![
                             star_txt,
-                            text(from_name.clone())
+                            text(one_line(&from_name, 22))
                                 .size(13)
                                 .font(theme::ui_font(iced::font::Weight::Semibold)),
                             Space::new().width(Length::Fill),
                             text(relative_date(r.date_unix))
                                 .size(11)
+                                .width(Length::Shrink)
                                 .style(theme::secondary_text),
                             Space::new().width(6),
                             text(crate::format_size(r.size))
                                 .size(10)
+                                .width(Length::Shrink)
                                 .style(theme::secondary_text),
                         ],
-                        row![text(format!("{dot}{}", r.subject))
+                        row![text(format!("{dot}{}", one_line(&r.subject, 30)))
                             .size(13)
                             .font(theme::ui_font(subj_weight)),],
                     ]

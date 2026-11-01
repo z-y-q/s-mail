@@ -159,3 +159,14 @@ pub(crate) fn clean_subject(s: &str) -> String {
         }
     }
 }
+
+/// 单行截断：列表右侧日期/大小占位后，主题过长会挤压换行（「昨/天」拆行）——
+/// 字符级截断保证行内单行显示
+pub(crate) fn one_line(s: &str, max_chars: usize) -> String {
+    if s.chars().count() > max_chars {
+        let t: String = s.chars().take(max_chars).collect();
+        format!("{t}…")
+    } else {
+        s.to_string()
+    }
+}
