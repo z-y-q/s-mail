@@ -838,7 +838,8 @@ impl State {
             .into_iter()
             .map(|(addr, (name, count, last))| (addr, name, count, last))
             .collect();
-        v.sort_by_key(|(_, _, _, last)| std::cmp::Reverse(*last));
+        // 最活跃优先（与标题一致）；同频按最近
+        v.sort_by(|a, b| b.2.cmp(&a.2).then(b.3.cmp(&a.3)));
         self.sender_stats = v.into_iter().take(50).collect();
     }
 
