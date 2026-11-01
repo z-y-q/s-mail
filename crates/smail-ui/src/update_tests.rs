@@ -264,6 +264,7 @@ fn late_body_loaded_dropped_without_body_req() {
                 attachments: vec![],
                 pgp: None,
                 high_priority: false,
+                body_bytes: 0,
             },
         }),
     );
@@ -566,7 +567,33 @@ fn body_loaded(hash: i64) -> Event {
         attachments: vec![],
         pgp: None,
         high_priority: false,
+        body_bytes: 12345,
     }
+}
+
+/// 打开邮件后大小即时回填列表行（不等下一次切文件夹重读）
+#[test]
+fn ui_body_loaded_backfills_row_size() {
+    let mut s = ts();
+    s.rows = vec![(0, row(1, false, false))];
+    s.rows[0].1.size = 0;
+    s.body_req = Some((0, 1));
+    let _ = update(
+        &mut s,
+        Message::Ev(smail_core::TaggedEvent {
+            account: 0,
+            event: body_loaded(1),
+        }),
+    );
+    assert_eq!(s.rows[0].1.size, 12345, "BodyLoaded 即时回填行大小");
+    assert_eq!(
+        s.mail_display
+            .iter()
+            .find(|d| d.row.envelope_hash == 1)
+            .map(|d| d.row.size),
+        Some(12345),
+        "显示缓存同步刷新"
+    );
 }
 
 /// 代转续发：未读邮件右键代转（body_req 为空）时 BodyLoaded 到达必须续发

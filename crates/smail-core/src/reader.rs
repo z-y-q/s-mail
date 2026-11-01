@@ -138,9 +138,16 @@ impl ReaderCtx {
             return;
         };
         let path = self.data_dir.join("bodies").join(format!("{hash}.eml"));
+        let raw_len: i64;
         let bytes = if path.exists() {
             match std::fs::read(&path) {
-                Ok(b) => b,
+                Ok(b) => {
+                    // 缓存命中同样回填大小（历史数据被同步清零后，重开邮件即恢复显示）
+                    let n = b.len() as i64;
+                    store.set_message_size(hash, n).ok();
+                    raw_len = n;
+                    b
+                }
                 Err(e) => {
                     self.emit(Event::Status(self.trf(
                         "读缓存失败：{}",
@@ -225,7 +232,8 @@ impl ReaderCtx {
                 return;
             }
             // 大小回填（缓存字节≈原始邮件字节；列表大小列显示用）
-            store.set_message_size(hash, bytes.len() as i64).ok();
+            raw_len = bytes.len() as i64;
+            store.set_message_size(hash, raw_len).ok();
             store.mark_has_body(hash).ok();
             bytes
         };
@@ -267,6 +275,7 @@ impl ReaderCtx {
             attachments,
             pgp: pgp_status,
             high_priority,
+            body_bytes: raw_len,
         });
     }
 }

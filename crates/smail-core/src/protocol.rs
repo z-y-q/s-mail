@@ -203,6 +203,8 @@ pub enum Event {
         pgp: Option<String>,
         /// 高优先级（X-Priority/Importance/Priority 头命中）
         high_priority: bool,
+        /// 正文字节数（列表大小列即时回填用；缓存命中与拉取同源）
+        body_bytes: i64,
         body: String,
         /// true = body 是 markdown（源自 HTML 邮件，UI 用 markdown widget 渲染）
         is_html: bool,

@@ -133,6 +133,7 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             attachments,
             pgp,
             high_priority,
+            body_bytes,
         } => {
             // 代转挂起续发必须在在途守卫之前：未读邮件右键代转时 body_req
             // 为空（用户没打开过这封信），守卫会提前拦掉 BodyLoaded——
@@ -191,6 +192,15 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
                     high_priority,
                 },
             ));
+            // 大小即时回填列表行（读信即显示，不等下一次切文件夹重读）
+            for (_, r) in state
+                .rows
+                .iter_mut()
+                .filter(|(a, r)| *a == acct && r.envelope_hash == hash)
+            {
+                r.size = body_bytes;
+            }
+            state.rebuild_display();
             // 原样渲染开着：切信即换装（非 HTML 邮件自动回退 markdown 视图）
             crate::webview::apply_reading(state, acct, hash);
             if let Some(src) = md_src {
