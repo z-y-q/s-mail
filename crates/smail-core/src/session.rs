@@ -69,14 +69,29 @@ pub struct Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        let _ = self.cmd_tx.send(SessionCmd::Shutdown);
-        if let Some(h) = self.mux.take() {
-            let _ = h.join();
+        // detached 会话（mux=None，UI 单测用）不投毒命令通道——断言要读它
+        if self.mux.is_some() {
+            let _ = self.cmd_tx.send(SessionCmd::Shutdown);
+            let _ = self.mux.take().map(|h| h.join());
         }
     }
 }
 
 impl Session {
+    /// 无后端会话（UI 单测用）：只有命令通道，不发 Shutdown（mux=None），
+    /// Drop 时把未消费的命令留在对端 receiver 里供断言
+    pub fn detached() -> (Self, std::sync::mpsc::Receiver<SessionCmd>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (
+            Session {
+                cmd_tx: tx,
+                read_txs: Vec::new(),
+                mux: None,
+            },
+            rx,
+        )
+    }
+
     pub fn start(
         cfg_path: &Path,
         data_root: &Path,

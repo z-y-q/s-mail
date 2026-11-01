@@ -534,3 +534,349 @@ fn rule_draft_roundtrip_and_validation() {
     let d3 = RuleDraft::from_rule(adv);
     assert_eq!(d3.rule.all_of.len(), 2, "高级结构原样保留");
 }
+
+// ===========================================================================
+// UI 流程真实验证（本轮补：此前只有编译+服务层 e2e，UI 路径没跑过）
+// 每条测试驱动真实 update()，断言状态迁移与外发命令——不是编译即通过
+// ===========================================================================
+
+use std::sync::mpsc;
+
+/// 挂真实命令通道的基座：state.cmd_tx 指向测试 receiver，外发命令可断言
+fn ts_with_cmds() -> (State, mpsc::Receiver<smail_core::SessionCmd>) {
+    let mut s = ts();
+    let (tx, rx) = mpsc::channel();
+    s.cmd_tx = Some(tx);
+    (s, rx)
+}
+
+fn body_loaded(hash: i64) -> Event {
+    Event::BodyLoaded {
+        hash,
+        attachment_images: vec![],
+        attachment_previews: vec![],
+        subject: "s".into(),
+        body: "b".into(),
+        to_addrs: String::new(),
+        cc_addrs: String::new(),
+        unsubscribe: None,
+        inline_images: vec![],
+        remote_images: vec![],
+        is_html: false,
+        attachments: vec![],
+        pgp: None,
+        high_priority: false,
+    }
+}
+
+/// 代转续发：未读邮件右键代转（body_req 为空）时 BodyLoaded 到达必须续发
+/// RedirectNow——此前被在途守卫提前拦截，续发永远走不到（真实缺陷）
+#[test]
+fn ui_redirect_pending_continues_without_body_req() {
+    let mut s = ts();
+    s.batch.redirect_pending = Some((0, 1, "x@y".into()));
+    s.body_req = None; // 用户没打开过这封信
+    let _ = update(
+        &mut s,
+        Message::Ev(smail_core::TaggedEvent {
+            account: 0,
+            event: body_loaded(1),
+        }),
+    );
+    assert!(
+        s.batch.redirect_pending.is_none(),
+        "挂起被消费=续发路径走到；否则 body_req 守卫仍在上游拦截"
+    );
+}
+
+/// 撤销发送全流程：点发送 → QueueHold 外发+挂起+关窗；撤销 → 删行+快照恢复
+#[test]
+fn ui_undo_send_roundtrip() {
+    let (mut s, rx) = ts_with_cmds();
+    s.prefs.undo_secs = 5;
+    s.compose = Some(crate::compose::Compose {
+        ai_instruction: String::new(),
+        ai_busy: false,
+        ai_overwrite_ask: false,
+        ai_pending: None,
+        ai_rewrite_mode: false,
+        ai_prev: None,
+        autosave_at: None,
+        draft_id: None,
+        account: 0,
+        pgp_sign: false,
+        pgp_encrypt: false,
+        high_priority: false,
+        confirm_discard: false,
+        schedule_open: false,
+        schedule_input: String::new(),
+        to: "x@y".into(),
+        cc: String::new(),
+        bcc: String::new(),
+        subject: "撤销测试".into(),
+        body: {
+            let mut c = iced::widget::text_editor::Content::new();
+            c.perform(iced::widget::text_editor::Action::Edit(
+                iced::widget::text_editor::Edit::Paste(std::sync::Arc::new("正文内容".into())),
+            ));
+            c
+        },
+        attachments: vec![],
+        preview: false,
+        preview_md: None,
+    });
+    let _ = update(&mut s, Message::SendClicked);
+    assert!(s.compose.is_none(), "发送后关写信窗");
+    let u = s.undo_send.as_ref().expect("撤销挂起已建");
+    let hold_id = u.id;
+    let held = rx.try_recv().expect("QueueHold 已外发");
+    let smail_core::SessionCmd::Route { cmd, .. } = held else {
+        panic!("应为 Route 命令");
+    };
+    let smail_core::Cmd::QueueHold {
+        id, to, subject, ..
+    } = cmd
+    else {
+        panic!("应为 QueueHold 命令");
+    };
+    assert_eq!(id, hold_id);
+    assert_eq!(to, "x@y");
+    assert_eq!(subject, "撤销测试");
+
+    // 撤销：删行命令 + 快照恢复写信窗
+    let _ = update(&mut s, Message::UndoSendClicked);
+    assert!(s.undo_send.is_none(), "挂起已清");
+    let c = s.compose.as_ref().expect("快照已恢复");
+    assert_eq!(c.to, "x@y");
+    assert_eq!(c.body.text(), "正文内容");
+    let smail_core::SessionCmd::Route { cmd, .. } = rx.try_recv().expect("删行命令已外发")
+    else {
+        panic!("应为 Route");
+    };
+    assert!(matches!(cmd, smail_core::Cmd::DiscardOutbox(id) if id == hold_id));
+}
+
+/// 定时发送：合法时刻入 hold（send_at=解析值）；格式错/过去时刻快速失败
+#[test]
+fn ui_schedule_confirm_flows() {
+    let (mut s, rx) = ts_with_cmds();
+    s.compose = Some(crate::compose::Compose {
+        ai_instruction: String::new(),
+        ai_busy: false,
+        ai_overwrite_ask: false,
+        ai_pending: None,
+        ai_rewrite_mode: false,
+        ai_prev: None,
+        autosave_at: None,
+        draft_id: None,
+        account: 0,
+        pgp_sign: false,
+        pgp_encrypt: false,
+        high_priority: false,
+        confirm_discard: false,
+        schedule_open: true,
+        schedule_input: "2030-01-01 09:30".into(),
+        to: "x@y".into(),
+        cc: String::new(),
+        bcc: String::new(),
+        subject: "定时".into(),
+        body: iced::widget::text_editor::Content::new(),
+        attachments: vec![],
+        preview: false,
+        preview_md: None,
+    });
+    let _ = update(&mut s, Message::ScheduleConfirm);
+    assert!(s.compose.is_none(), "定时后关窗");
+    let smail_core::SessionCmd::Route { cmd, .. } = rx.try_recv().expect("QueueHold 已外发")
+    else {
+        panic!("应为 Route");
+    };
+    let smail_core::Cmd::QueueHold { send_at, .. } = cmd else {
+        panic!("应为 QueueHold");
+    };
+    assert_eq!(send_at, crate::civil_to_unix(2030, 1, 1, 9, 30));
+
+    // 过去时刻：快速失败不关窗不外发
+    let (mut s2, rx2) = ts_with_cmds();
+    s2.compose = Some(crate::compose::Compose {
+        ai_instruction: String::new(),
+        ai_busy: false,
+        ai_overwrite_ask: false,
+        ai_pending: None,
+        ai_rewrite_mode: false,
+        ai_prev: None,
+        autosave_at: None,
+        draft_id: None,
+        account: 0,
+        pgp_sign: false,
+        pgp_encrypt: false,
+        high_priority: false,
+        confirm_discard: false,
+        schedule_open: true,
+        schedule_input: "2020-01-01 09:30".into(),
+        to: "x@y".into(),
+        cc: String::new(),
+        bcc: String::new(),
+        subject: "过去".into(),
+        body: iced::widget::text_editor::Content::new(),
+        attachments: vec![],
+        preview: false,
+        preview_md: None,
+    });
+    let _ = update(&mut s2, Message::ScheduleConfirm);
+    assert!(s2.compose.is_some(), "失败时面板保留");
+    assert!(s2.error.is_some(), "报具体原因");
+    assert!(rx2.try_recv().is_err(), "不外发");
+}
+
+/// 自定义工具栏/快捷键/布局切换：状态与持久化载荷真实翻转
+#[test]
+fn ui_toolbar_keybind_layout_toggles() {
+    let mut s = ts();
+    let _ = update(&mut s, Message::ToolbarToggle("theme".into()));
+    assert!(s.prefs.hidden_toolbar.contains(&"theme".into()));
+    let _ = update(&mut s, Message::ToolbarToggle("theme".into()));
+    assert!(!s.prefs.hidden_toolbar.contains(&"theme".into()));
+
+    let _ = update(&mut s, Message::KeyBindInput("reply".into(), "w".into()));
+    assert_eq!(s.prefs.keys.get("reply").map(String::as_str), Some("w"));
+    let _ = update(&mut s, Message::KeyBindInput("reply".into(), String::new()));
+    assert!(!s.prefs.keys.contains_key("reply"), "清空=恢复默认");
+
+    assert_eq!(s.prefs.layout, 0);
+    let _ = update(&mut s, Message::ToggleLayout);
+    assert_eq!(s.prefs.layout, 1);
+    let _ = update(&mut s, Message::ToggleLayout);
+    assert_eq!(s.prefs.layout, 0);
+}
+
+/// 模板插入：贴到光标处 + Esc 确认丢弃置位
+#[test]
+fn ui_template_insert_pastes() {
+    let mut s = ts();
+    s.prefs.templates = vec![crate::lang::TemplateCfg {
+        name: "t".into(),
+        body: "HELLO".into(),
+    }];
+    s.compose = Some(crate::compose::Compose {
+        ai_instruction: String::new(),
+        ai_busy: false,
+        ai_overwrite_ask: false,
+        ai_pending: None,
+        ai_rewrite_mode: false,
+        ai_prev: None,
+        autosave_at: None,
+        draft_id: None,
+        account: 0,
+        pgp_sign: false,
+        pgp_encrypt: false,
+        high_priority: false,
+        confirm_discard: false,
+        schedule_open: false,
+        schedule_input: String::new(),
+        to: "x@y".into(),
+        cc: String::new(),
+        bcc: String::new(),
+        subject: String::new(),
+        body: {
+            let mut c = iced::widget::text_editor::Content::new();
+            c.perform(iced::widget::text_editor::Action::Edit(
+                iced::widget::text_editor::Edit::Paste(std::sync::Arc::new("abc".into())),
+            ));
+            c
+        },
+        attachments: vec![],
+        preview: false,
+        preview_md: None,
+    });
+    let _ = update(&mut s, Message::TemplateInsert(0));
+    let c = s.compose.as_ref().unwrap();
+    assert_eq!(c.body.text(), "abcHELLO", "贴到光标（粘贴后光标在尾）");
+    assert!(c.confirm_discard, "有内容后 Esc 先确认丢弃");
+}
+
+/// VIP/忽略/旗标：右键动作真实改变过滤与渲染载荷
+#[test]
+fn ui_vip_ignore_flag_actions() {
+    let mut s = ts();
+    s.rows = vec![(0, row(1, false, false))];
+    s.rows[0].1.subject = "Re: 项目进度".into();
+    s.rebuild_display();
+    assert_eq!(s.mail_display.len(), 1);
+
+    let _ = update(&mut s, Message::VipAdd("a@x".into()));
+    assert!(s.prefs.vip.contains(&"a@x".into()));
+    let _ = update(&mut s, Message::VipRemove("a@x".into()));
+    assert!(!s.prefs.vip.contains(&"a@x".into()));
+
+    // 忽略：按规范主题键过滤列表；取消忽略恢复
+    let _ = update(
+        &mut s,
+        Message::IgnoreThread(crate::subject_key("Re: 项目进度")),
+    );
+    assert!(s.mail_display.is_empty(), "忽略后列表隐藏");
+    let _ = update(
+        &mut s,
+        Message::UnignoreThread(crate::subject_key("转发: Re: 项目进度")),
+    );
+    assert_eq!(s.mail_display.len(), 1, "取消忽略（嵌套前缀同键）恢复");
+
+    // 旗标颜色循环：无→red→…→gray→移除
+    let _ = update(&mut s, Message::CycleFlagColor(0, 1));
+    assert_eq!(
+        s.prefs.flag_colors.get("1").map(String::as_str),
+        Some("red")
+    );
+    for _ in 0..6 {
+        let _ = update(&mut s, Message::CycleFlagColor(0, 1));
+    }
+    assert!(
+        !s.prefs.flag_colors.contains_key("1"),
+        "循环一圈回到无=移除"
+    );
+}
+
+/// 布局+优先级+PGP 开关：撰写窗开关真实翻转
+#[test]
+fn ui_compose_toggles() {
+    let mut s = ts();
+    s.compose = Some(crate::compose::Compose {
+        ai_instruction: String::new(),
+        ai_busy: false,
+        ai_overwrite_ask: false,
+        ai_pending: None,
+        ai_rewrite_mode: false,
+        ai_prev: None,
+        autosave_at: None,
+        draft_id: None,
+        account: 0,
+        pgp_sign: false,
+        pgp_encrypt: false,
+        high_priority: false,
+        confirm_discard: false,
+        schedule_open: false,
+        schedule_input: String::new(),
+        to: "x@y".into(),
+        cc: String::new(),
+        bcc: String::new(),
+        subject: String::new(),
+        body: iced::widget::text_editor::Content::new(),
+        attachments: vec![],
+        preview: false,
+        preview_md: None,
+    });
+    let _ = update(&mut s, Message::ToggleHighPriority);
+    assert!(s.compose.as_ref().unwrap().high_priority);
+    let _ = update(&mut s, Message::TogglePgpEncrypt);
+    let c = s.compose.as_ref().unwrap();
+    assert!(c.pgp_encrypt && c.pgp_sign, "加密隐含签名");
+    // 分屏态编辑正文 → 触发实时解析（preview_md 回填路径）；空正文合理拒绝入分屏
+    let _ = update(&mut s, Message::ComposePreviewToggle);
+    assert!(!s.compose.as_ref().unwrap().preview, "空正文不入分屏");
+    let c = s.compose.as_mut().unwrap();
+    c.body.perform(iced::widget::text_editor::Action::Edit(
+        iced::widget::text_editor::Edit::Paste(std::sync::Arc::new("有内容".into())),
+    ));
+    let _ = update(&mut s, Message::ComposePreviewToggle);
+    assert!(s.compose.as_ref().unwrap().preview, "有正文可入分屏");
+}

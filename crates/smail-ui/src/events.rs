@@ -134,6 +134,19 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             pgp,
             high_priority,
         } => {
+            // 代转挂起续发必须在在途守卫之前：未读邮件右键代转时 body_req
+            // 为空（用户没打开过这封信），守卫会提前拦掉 BodyLoaded——
+            // 续发永远走不到（UI 流程缺陷，单测 m-ui-redirect 钉住）
+            let redirect_due = state
+                .batch
+                .redirect_pending
+                .as_ref()
+                .map(|(a, h, _)| *a == acct && *h == hash)
+                .unwrap_or(false);
+            if redirect_due {
+                let (pa, ph, to) = state.batch.redirect_pending.take().unwrap();
+                return Task::done(Message::RedirectNow(pa, ph, to));
+            }
             // 在途守卫：请求后用户可能已切文件夹/删信/另选——迟到的正文
             // 不覆写阅读器（否则弹开一封不在当前列表的邮件，快捷键随之误作用）
             if state.body_req != Some((acct, hash)) {
@@ -180,17 +193,6 @@ pub(crate) fn handle_event(state: &mut State, ev: TaggedEvent) -> Task<Message> 
             ));
             // 原样渲染开着：切信即换装（非 HTML 邮件自动回退 markdown 视图）
             crate::webview::apply_reading(state, acct, hash);
-            // 代转挂起：正文已取回落缓存，续发重投（cmd 内部走已缓存的快路径）
-            let redirect_due = state
-                .batch
-                .redirect_pending
-                .as_ref()
-                .map(|(a, h, _)| *a == acct && *h == hash)
-                .unwrap_or(false);
-            if redirect_due {
-                let (pa, ph, to) = state.batch.redirect_pending.take().unwrap();
-                return Task::done(Message::RedirectNow(pa, ph, to));
-            }
             if let Some(src) = md_src {
                 return Task::perform(
                     async move {

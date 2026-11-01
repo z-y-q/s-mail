@@ -845,7 +845,16 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::RuleEditDelete(..)
         | Message::RuleEditSave
         | Message::RuleEditCancel
-        | Message::KeychainMove(..)) => account_setup::handle(state, m),
+        | Message::KeychainMove(..)
+        // 模板管理/撤销窗口时长：处理器在 account_setup（设置屏）
+        | Message::TemplateNew
+        | Message::TemplateEditOpen(..)
+        | Message::TemplateNameInput(..)
+        | Message::TemplateBodyEdit(..)
+        | Message::TemplateSave
+        | Message::TemplateDelete(..)
+        | Message::TemplateCancel
+        | Message::UndoSecsPick(..)) => account_setup::handle(state, m),
         m @ (Message::AiSummarize(..)
         | Message::AiSummaryReady { .. }
         | Message::AiSummaryClose
@@ -898,7 +907,14 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::TogglePgpEncrypt
         | Message::ToggleHighPriority
         | Message::ComposeDiscardConfirm
-        | Message::ComposeDiscardCancel) => compose_ops::handle(state, m),
+        | Message::ComposeDiscardCancel
+        // 写信窗动作：撤销发送/定时发送/模板插入（处理器在 compose_ops）
+        | Message::TemplateInsert(..)
+        | Message::UndoSendClicked
+        | Message::UndoSendExpire(..)
+        | Message::ScheduleToggle
+        | Message::ScheduleInput(..)
+        | Message::ScheduleConfirm) => compose_ops::handle(state, m),
         m @ (Message::Reply(..)
         | Message::ReplyAll(..)
         | Message::Forward(..)
@@ -914,24 +930,10 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::UnignoreThread(..)
         | Message::VipAdd(..)
         | Message::VipRemove(..)
-        | Message::TemplateNew
-        | Message::TemplateEditOpen(..)
-        | Message::TemplateNameInput(..)
-        | Message::TemplateBodyEdit(..)
-        | Message::TemplateSave
-        | Message::TemplateDelete(..)
-        | Message::TemplateCancel
-        | Message::TemplateInsert(..)
-        | Message::UndoSendClicked
-        | Message::UndoSendExpire(..)
-        | Message::UndoSecsPick(..)
         | Message::VcardImportPick
         | Message::VcardImportPicked(..)
         | Message::VcardExportPick
         | Message::VcardExportPicked(..)
-        | Message::ScheduleToggle
-        | Message::ScheduleInput(..)
-        | Message::ScheduleConfirm
         | Message::CycleFlagColor(..)
         | Message::RedirectPrompt(..)
         | Message::RedirectToInput(..)
