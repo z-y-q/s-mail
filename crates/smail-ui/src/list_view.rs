@@ -1062,6 +1062,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     text(relative_date(*last_date))
                                         .size(11)
                                         .style(theme::secondary_text),
+                                    Space::new().width(6),
                                     text(crate::format_size(r.size))
                                         .size(10)
                                         .style(theme::secondary_text),
@@ -1142,6 +1143,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                                     text(relative_date(r.date_unix))
                                         .size(11)
                                         .style(theme::secondary_text),
+                                    Space::new().width(6),
                                     text(crate::format_size(r.size))
                                         .size(10)
                                         .style(theme::secondary_text),
@@ -1241,6 +1243,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                             text(relative_date(r.date_unix))
                                 .size(11)
                                 .style(theme::secondary_text),
+                            Space::new().width(6),
                             text(crate::format_size(r.size))
                                 .size(10)
                                 .style(theme::secondary_text),
