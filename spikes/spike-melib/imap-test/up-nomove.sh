@@ -11,14 +11,22 @@ sh down.sh >/dev/null 2>&1 || true
 sh up.sh >/dev/null 2>&1
 
 cap=$(python3 - <<'EOF'
-import imaplib
-m = imaplib.IMAP4('127.0.0.1', 1143)
-m.login('test', 'testpass')
-typ, data = m.capability()
-caps = data[0]
-caps = caps.decode() if isinstance(caps, bytes) else caps
-print(caps.strip())
-m.logout()
+import imaplib, time
+# 容器刚起时 dovecot 可能未就绪（EOF/拒连）：重试 15 次×1s
+for i in range(15):
+    try:
+        m = imaplib.IMAP4('127.0.0.1', 1143)
+        m.login('test', 'testpass')
+        typ, data = m.capability()
+        caps = data[0]
+        caps = caps.decode() if isinstance(caps, bytes) else caps
+        print(caps.strip())
+        m.logout()
+        break
+    except Exception:
+        if i == 14:
+            raise
+        time.sleep(1)
 EOF
 )
 nomove=$(printf '%s' "$cap" | tr ' ' '\n' | grep -iv '^MOVE$' | tr '\n' ' ' | sed 's/ $//')
@@ -41,14 +49,22 @@ done
 
 # 自检：服务器必须已不报 MOVE
 cap2=$(python3 - <<'EOF'
-import imaplib
-m = imaplib.IMAP4('127.0.0.1', 1143)
-m.login('test', 'testpass')
-typ, data = m.capability()
-caps = data[0]
-caps = caps.decode() if isinstance(caps, bytes) else caps
-print(caps.strip())
-m.logout()
+import imaplib, time
+# 容器重启后 dovecot 就绪有竞态：同款重试
+for i in range(15):
+    try:
+        m = imaplib.IMAP4('127.0.0.1', 1143)
+        m.login('test', 'testpass')
+        typ, data = m.capability()
+        caps = data[0]
+        caps = caps.decode() if isinstance(caps, bytes) else caps
+        print(caps.strip())
+        m.logout()
+        break
+    except Exception:
+        if i == 14:
+            raise
+        time.sleep(1)
 EOF
 )
 if printf '%s' "$cap2" | tr ' ' '\n' | grep -iq '^MOVE$'; then
