@@ -766,6 +766,13 @@ fn ui_toolbar_keybind_layout_toggles() {
     let _ = update(&mut s, Message::ToolbarToggle("theme".into()));
     assert!(!s.prefs.hidden_toolbar.contains(&"theme".into()));
 
+    // 设置入口不可隐藏（唯一入口，藏掉=死锁）
+    let _ = update(&mut s, Message::ToolbarToggle("settings".into()));
+    assert!(
+        !s.prefs.hidden_toolbar.contains(&"settings".into()),
+        "settings 守卫：不允许写入隐藏表"
+    );
+
     let _ = update(&mut s, Message::KeyBindInput("reply".into(), "w".into()));
     assert_eq!(s.prefs.keys.get("reply").map(String::as_str), Some("w"));
     let _ = update(&mut s, Message::KeyBindInput("reply".into(), String::new()));

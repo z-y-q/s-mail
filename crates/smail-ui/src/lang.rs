@@ -191,6 +191,8 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
                 .iter()
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect();
+            // 设置入口不可隐藏（唯一入口，藏掉=死锁）：存量数据兜底恢复
+            prefs.hidden_toolbar.retain(|h| h != "settings");
         }
         if let Some(obj) = v.get("keys").and_then(|x| x.as_object()) {
             for (k, val) in obj {

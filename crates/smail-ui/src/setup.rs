@@ -1138,7 +1138,8 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         .style(theme::reader_meta);
 
     // 自定义工具栏：顶栏按钮显隐开关（点按钮切换，灰=已隐藏）
-    const TB_ITEMS: [(&str, &str); 9] = [
+    // 「设置」是配置页唯一入口，不允许隐藏（防死锁：藏掉后无法再进设置）
+    const TB_ITEMS: [(&str, &str); 8] = [
         ("compose", "写信"),
         ("threads", "会话/平铺"),
         ("expand", "展开折叠"),
@@ -1147,7 +1148,6 @@ pub(crate) fn setup_view<'a>(state: &'a State, f: &'a SetupForm) -> Element<'a, 
         ("refresh", "刷新"),
         ("theme", "主题"),
         ("lang", "语言"),
-        ("settings", "设置"),
     ];
     let mut tb_row = row![text(state.l().toolbar_hdr).size(13)].spacing(6);
     for (id, label) in TB_ITEMS {

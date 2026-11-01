@@ -199,6 +199,10 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToolbarToggle(id) => {
+            // 设置入口不可隐藏（唯一入口，藏掉=死锁）
+            if id == "settings" {
+                return Task::none();
+            }
             // 显隐切换：在隐藏表中则移出（显示），否则加入（隐藏）
             if let Some(pos) = state.prefs.hidden_toolbar.iter().position(|h| h == &id) {
                 state.prefs.hidden_toolbar.remove(pos);
