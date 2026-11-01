@@ -1380,6 +1380,12 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             .height(Length::Fixed(bottom_pad)),
     );
 
+    // 底部预览模式：列表撑满除侧栏外全部宽度（三栏模式维持拖拽记忆宽）
+    let list_width = if state.prefs.layout == 1 {
+        Length::Fill
+    } else {
+        Length::Fixed(state.list_w)
+    };
     let mail_list = container(
         scrollable(list)
             .direction(theme::scroller())
@@ -1389,7 +1395,7 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
                 Message::ListScrolled(vp.absolute_offset().y, vp.bounds().height)
             }),
     )
-    .width(state.list_w);
+    .width(list_width);
 
     let reader: Element<Message> = crate::reader::reader_view(state);
 
