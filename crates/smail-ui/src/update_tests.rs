@@ -51,6 +51,7 @@ fn ts() -> State {
             templates: vec![],
             undo_secs: 0,
             layout: 0,
+            reader_h: 320.0,
             hidden_toolbar: vec![],
             keys: Default::default(),
             flag_colors: Default::default(),

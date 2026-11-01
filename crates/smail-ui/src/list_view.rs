@@ -1514,8 +1514,10 @@ pub(crate) fn main_view(state: &State) -> Element<'_, Message> {
             let body: Element<'_, Message> = if state.prefs.layout == 1 {
                 column![
                     row![sidebar, split_sidebar, mail_list],
+                    // 垂直分割条：上下拖调节底部阅读窗高度（记忆进 ui.json）
+                    split_handle_v(crate::SplitKind::ReaderH),
                     container(reader)
-                        .height(Length::Fixed(320.0))
+                        .height(Length::Fixed(state.prefs.reader_h))
                         .width(Length::Fill)
                         .style(|t| container::Style {
                             border: iced::Border {
@@ -1554,6 +1556,22 @@ fn split_handle(kind: crate::SplitKind) -> Element<'static, Message> {
     )
     .on_press(Message::SplitPress(kind))
     .interaction(iced::mouse::Interaction::ResizingHorizontally)
+    .into()
+}
+
+/// 垂直分割条（底部预览：列表↔阅读）：上下拖调节阅读窗高度
+fn split_handle_v(kind: crate::SplitKind) -> Element<'static, Message> {
+    mouse_area(
+        container(Space::new().height(Length::Fill))
+            .width(Length::Fill)
+            .height(8)
+            .style(|t| container::Style {
+                background: Some(theme::hover_tint(t).into()),
+                ..Default::default()
+            }),
+    )
+    .on_press(Message::SplitPress(kind))
+    .interaction(iced::mouse::Interaction::ResizingVertically)
     .into()
 }
 

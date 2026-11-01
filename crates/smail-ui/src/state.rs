@@ -124,6 +124,8 @@ pub(crate) struct Prefs {
     pub(crate) undo_secs: u64,
     /// 布局模式（0=三栏，1=列表+底部预览）
     pub(crate) layout: u8,
+    /// 底部预览阅读窗高度（拖拽记忆，px）
+    pub(crate) reader_h: f32,
     /// 顶栏隐藏按钮 id（自定义工具栏）
     pub(crate) hidden_toolbar: Vec<String>,
     /// 动作快捷键覆盖（动作名→单字符键；空=内建默认）
@@ -389,11 +391,12 @@ impl SortKey {
     }
 }
 
-/// 可拖拽的分割条：侧栏↔列表、列表↔阅读
+/// 可拖拽的分割条：侧栏↔列表、列表↔阅读、底部预览的列表↔阅读（垂直）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SplitKind {
     Sidebar,
     List,
+    ReaderH,
 }
 
 /// 邮件提醒（右键「提醒我」设置；到期发系统通知，点击跳转该邮件）
@@ -422,10 +425,13 @@ pub(crate) struct UndoSend {
 }
 
 impl SplitKind {
-    pub(crate) fn clamp_width(&self, w: f32) -> f32 {
+    /// Sidebar/List 拖的是宽度，ReaderH 拖的是高度（同一 clamp 方法，
+    /// 上下限按 kind 区分）
+    pub(crate) fn clamp_size(&self, v: f32) -> f32 {
         match self {
-            SplitKind::Sidebar => w.clamp(150.0, 320.0),
-            SplitKind::List => w.clamp(300.0, 560.0),
+            SplitKind::Sidebar => v.clamp(150.0, 320.0),
+            SplitKind::List => v.clamp(300.0, 560.0),
+            SplitKind::ReaderH => v.clamp(160.0, 900.0),
         }
     }
 }
@@ -476,6 +482,7 @@ impl State {
                         templates: bp.templates,
                         undo_secs: bp.undo_secs,
                         layout: bp.layout,
+                        reader_h: bp.reader_h,
                         hidden_toolbar: bp.hidden_toolbar,
                         keys: bp.keys,
                         flag_colors: bp.flag_colors,
@@ -651,6 +658,7 @@ impl State {
                         templates: bp.templates,
                         undo_secs: bp.undo_secs,
                         layout: bp.layout,
+                        reader_h: bp.reader_h,
                         hidden_toolbar: bp.hidden_toolbar,
                         keys: bp.keys,
                         flag_colors: bp.flag_colors,
@@ -782,6 +790,7 @@ impl State {
             templates: self.prefs.templates.clone(),
             undo_secs: self.prefs.undo_secs,
             layout: self.prefs.layout,
+            reader_h: self.prefs.reader_h,
             hidden_toolbar: self.prefs.hidden_toolbar.clone(),
             keys: self.prefs.keys.clone(),
             flag_colors: self.prefs.flag_colors.clone(),
@@ -1210,6 +1219,8 @@ pub(crate) struct BootPrefs {
     pub(crate) undo_secs: u64,
     /// 布局模式（0=三栏，1=底部预览）
     pub(crate) layout: u8,
+    /// 底部预览阅读窗高度（px）
+    pub(crate) reader_h: f32,
     /// 顶栏隐藏按钮 id（自定义工具栏）
     pub(crate) hidden_toolbar: Vec<String>,
     /// 动作快捷键覆盖（动作名→单字符键；空=内建默认）
@@ -1242,6 +1253,7 @@ pub(crate) fn boot_prefs(data_root: &std::path::Path) -> BootPrefs {
         templates: prefs.templates,
         undo_secs: prefs.undo_secs,
         layout: prefs.layout,
+        reader_h: prefs.reader_h,
         hidden_toolbar: prefs.hidden_toolbar,
         keys: prefs.keys,
         flag_colors: prefs.flag_colors,

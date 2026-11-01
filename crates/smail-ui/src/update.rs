@@ -417,24 +417,32 @@ pub(crate) fn update(state: &mut State, message: Message) -> Task<Message> {
             let start_w = match kind {
                 crate::SplitKind::Sidebar => state.sidebar_w,
                 crate::SplitKind::List => state.list_w,
+                crate::SplitKind::ReaderH => state.prefs.reader_h,
             };
             state.split_drag = Some((kind, None, start_w));
             Task::none()
         }
-        Message::SplitMoved(x) => {
+        Message::SplitMoved(v) => {
             if let Some((kind, start_x, start_w)) = &mut state.split_drag {
                 // 起点 x 由拖拽后的第一条 CursorMoved 填充
                 let sx = match start_x {
                     Some(v) => *v,
                     None => {
-                        *start_x = Some(x);
-                        x
+                        *start_x = Some(v);
+                        v
                     }
                 };
-                let new_w = kind.clamp_width(*start_w + (x - sx));
                 match kind {
-                    crate::SplitKind::Sidebar => state.sidebar_w = new_w,
-                    crate::SplitKind::List => state.list_w = new_w,
+                    crate::SplitKind::Sidebar => {
+                        state.sidebar_w = kind.clamp_size(*start_w + (v - sx));
+                    }
+                    crate::SplitKind::List => {
+                        state.list_w = kind.clamp_size(*start_w + (v - sx));
+                    }
+                    // 垂直分割：上拖(delta 为负) = 阅读窗变高
+                    crate::SplitKind::ReaderH => {
+                        state.prefs.reader_h = kind.clamp_size(*start_w - (v - sx));
+                    }
                 }
             }
             Task::none()

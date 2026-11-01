@@ -627,18 +627,32 @@ fn subscription(state: &State) -> Subscription<Message> {
     } else {
         Subscription::none()
     };
-    // 分割条拖拽：仅拖拽态订阅全局鼠标流（CursorMoved 更新列宽，
-    // ButtonReleased 结束；平时零订阅零开销）
+    // 分割条拖拽：仅拖拽态订阅全局鼠标流（CursorMoved 更新列宽/阅读高，
+    // ButtonReleased 结束；平时零订阅零开销）。垂直分割（ReaderH）发 y，
+    // 水平分割发 x——listen_with 收函数指针，按方向分支成两个无捕获闭包
     let split_sub = if state.split_drag.is_some() {
-        iced::event::listen_with(|event, _status, _id| match event {
-            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                Some(Message::SplitMoved(position.x))
-            }
-            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                Some(Message::SplitReleased)
-            }
-            _ => None,
-        })
+        let vertical_drag = matches!(state.split_drag, Some((crate::SplitKind::ReaderH, _, _)));
+        if vertical_drag {
+            iced::event::listen_with(|event, _status, _id| match event {
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                    Some(Message::SplitMoved(position.y))
+                }
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::SplitReleased),
+                _ => None,
+            })
+        } else {
+            iced::event::listen_with(|event, _status, _id| match event {
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                    Some(Message::SplitMoved(position.x))
+                }
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::SplitReleased),
+                _ => None,
+            })
+        }
     } else {
         Subscription::none()
     };

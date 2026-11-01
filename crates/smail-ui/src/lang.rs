@@ -90,6 +90,8 @@ pub(crate) struct UiPrefs {
     pub(crate) undo_secs: u64,
     /// 布局模式（0=三栏，1=列表+底部预览）
     pub(crate) layout: u8,
+    /// 底部预览阅读窗高度（拖拽记忆，px）
+    pub(crate) reader_h: f32,
     /// 顶栏隐藏的按钮 id（自定义工具栏；可选 id 见 TB_* 常量）
     pub(crate) hidden_toolbar: Vec<String>,
     /// 动作快捷键覆盖（动作名→单字符键；空值/缺省=内建默认）
@@ -112,6 +114,7 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         templates: vec![],
         undo_secs: 10,
         layout: 0,
+        reader_h: 320.0,
         hidden_toolbar: vec![],
         keys: std::collections::HashMap::new(),
         flag_colors: std::collections::HashMap::new(),
@@ -180,6 +183,9 @@ pub(crate) fn load_prefs(data_root: &std::path::Path) -> UiPrefs {
         if let Some(n) = v.get("layout").and_then(|x| x.as_u64()) {
             prefs.layout = n as u8;
         }
+        if let Some(n) = v.get("reader_h").and_then(|x| x.as_f64()) {
+            prefs.reader_h = n as f32;
+        }
         if let Some(a) = v.get("hidden_toolbar").and_then(|x| x.as_array()) {
             prefs.hidden_toolbar = a
                 .iter()
@@ -218,6 +224,7 @@ pub(crate) fn save_prefs(data_root: &std::path::Path, p: &UiPrefs) {
         "templates": p.templates,
         "undo_secs": p.undo_secs,
         "layout": p.layout,
+        "reader_h": p.reader_h,
         "hidden_toolbar": p.hidden_toolbar,
         "keys": p.keys,
         "flag_colors": p.flag_colors,
@@ -1179,6 +1186,7 @@ mod tests {
             }],
             undo_secs: 20,
             layout: 0,
+            reader_h: 320.0,
             hidden_toolbar: vec![],
             keys: std::collections::HashMap::new(),
             flag_colors: std::collections::HashMap::new(),
