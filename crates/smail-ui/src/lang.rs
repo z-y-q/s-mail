@@ -296,7 +296,7 @@ pub(crate) struct Lex {
     pub(crate) hold_hint: &'static str,
     /// 设置页发件人统计区
     pub(crate) stats_hdr: &'static str,
-    pub(crate) stats_n: &'static str, // {n}
+    pub(crate) stats_n: &'static str, // {}
     /// vCard 导入导出按钮
     pub(crate) vcard_import: &'static str,
     pub(crate) vcard_export: &'static str,
@@ -597,7 +597,7 @@ pub(crate) const ZH: Lex = Lex {
     schedule_confirm: "定时发送",
     hold_hint: "计划投递",
     stats_hdr: "发件人统计（最活跃前 50）",
-    stats_n: "{n} 封",
+    stats_n: "{} 封",
     vcard_import: "导入 vCard",
     vcard_export: "导出 vCard",
     toolbar_hdr: "顶栏按钮（点按切换显隐）",
@@ -882,7 +882,7 @@ pub(crate) const EN: Lex = Lex {
     schedule_confirm: "Schedule send",
     hold_hint: "Scheduled for",
     stats_hdr: "Sender stats (top 50)",
-    stats_n: "{n} mails",
+    stats_n: "{} mails",
     vcard_import: "Import vCard",
     vcard_export: "Export vCard",
     toolbar_hdr: "Toolbar buttons (click to show/hide)",
